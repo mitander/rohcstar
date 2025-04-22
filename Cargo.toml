@@ -1,0 +1,10 @@
+[package]
+name = "rohcstar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cargo-husky = "1"
+
+[dev-dependencies]
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
