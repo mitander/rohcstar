@@ -1,14 +1,14 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod error;
+pub mod packet_processor;
+pub mod protocol_types;
+// pub mod context; // Will be added in next steps
+// pub mod context_manager;
+// pub mod profiles;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// Re-export key types for public API (will expand significantly)
+pub use error::RohcError;
+pub use protocol_types::RtpUdpIpv4Headers;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// Example of what the public API might look like eventually
+// pub struct RohcCompressor { /* ... */ }
+// pub struct RohcDecompressor { /* ... */ }
