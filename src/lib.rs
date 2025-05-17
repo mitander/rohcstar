@@ -1,4 +1,5 @@
 pub mod context;
+pub mod context_manager;
 pub mod crc;
 pub mod encodings;
 pub mod error;
