@@ -1,3 +1,4 @@
+pub mod context;
 pub mod crc;
 pub mod encodings;
 pub mod error;
