@@ -3,6 +3,7 @@ pub mod context_manager;
 pub mod crc;
 pub mod encodings;
 pub mod error;
+pub mod fuzz_harnesses;
 pub mod packet_processor;
 pub mod profiles;
 pub mod protocol_types;
