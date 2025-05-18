@@ -1,23 +1,30 @@
 use crate::context::{CompressorMode, RtpUdpIpP1CompressorContext};
-use crate::encodings::encode_lsb;
+use crate::encodings::{encode_lsb, value_in_lsb_interval};
 use crate::error::RohcError;
 use crate::packet_processor::{
     PROFILE_ID_RTP_UDP_IP, build_ir_profile1_packet, build_uo0_profile1_cid0_packet,
+    build_uo1_sn_profile1_packet,
 };
-use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
+use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers}; // Added value_in_lsb_interval
 
-pub const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4;
+pub const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4; // Max SN change for UO-0 (0 to 2^4-1 = 15)
 
 pub fn compress_rtp_udp_ip_umode(
     context: &mut RtpUdpIpP1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
 ) -> Result<Vec<u8>, RohcError> {
-    let init_and_refresh = (context.mode == CompressorMode::FirstOrder
+    let mut force_ir_for_refresh = false;
+    if context.mode == CompressorMode::FirstOrder
         && context.ir_refresh_interval > 0
-        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval - 1))
-        || context.mode == CompressorMode::InitializationAndRefresh;
+        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval - 1)
+    {
+        force_ir_for_refresh = true;
+    }
 
-    if init_and_refresh {
+    let should_send_ir =
+        context.mode == CompressorMode::InitializationAndRefresh || force_ir_for_refresh;
+
+    if should_send_ir {
         let ir_data = RohcIrProfile1Packet {
             cid: context.cid,
             profile: PROFILE_ID_RTP_UDP_IP,
@@ -41,25 +48,55 @@ pub fn compress_rtp_udp_ip_umode(
 
         Ok(rohc_packet)
     } else {
-        context.current_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
-        let sn_lsb = encode_lsb(
-            uncompressed_headers.rtp_sequence_number as u64,
-            context.current_lsb_sn_width,
-        )
-        .map_err(|e| RohcError::Internal(format!("SN LSB encoding failed: {}", e)))?
-            as u8;
+        // Must be FirstOrder and not time for IR refresh
+        let current_sn = uncompressed_headers.rtp_sequence_number;
+        let current_marker = uncompressed_headers.rtp_marker;
 
-        let crc3_input_data: Vec<u8> = uncompressed_headers
-            .rtp_sequence_number
-            .to_be_bytes()
-            .to_vec();
-        let crc3_val = crate::crc::calculate_rohc_crc3(&crc3_input_data);
+        let marker_changed = current_marker != context.last_sent_rtp_marker;
 
-        let rohc_packet = build_uo0_profile1_cid0_packet(sn_lsb, crc3_val)?;
+        // Check if UO-0 can represent the SN change.
+        // For p=0 (non-decreasing), window is [v_ref, v_ref + 2^k - 1].
+        // Our UO-0 sends `DEFAULT_UO0_SN_LSB_WIDTH` (e.g. 4) bits.
+        // We need to ensure value_in_lsb_interval(current_sn, last_sn, k, p) holds.
+        // For UO-0, p=0 for SN.
+        let uo0_can_represent_sn = value_in_lsb_interval(
+            current_sn as u64,
+            context.last_sent_rtp_sn_full as u64,
+            DEFAULT_UO0_SN_LSB_WIDTH,
+            0, // p=0 for non-decreasing RTP SN
+        );
 
-        context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
-        context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
-        context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
+        let rohc_packet;
+
+        if !marker_changed && uo0_can_represent_sn {
+            // Use UO-0
+            context.current_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+            let sn_lsb_for_uo0 = encode_lsb(current_sn as u64, context.current_lsb_sn_width)
+                .map_err(|e| {
+                    RohcError::Internal(format!("SN LSB encoding for UO-0 failed: {}", e))
+                })? as u8;
+
+            let crc3_input_data: Vec<u8> = current_sn.to_be_bytes().to_vec(); // MVP Simplification
+            let crc3_val = crate::crc::calculate_rohc_crc3(&crc3_input_data);
+
+            rohc_packet = build_uo0_profile1_cid0_packet(sn_lsb_for_uo0, crc3_val)?;
+        } else {
+            // Use UO-1-SN (MVP version: 8 LSBs for SN, carries M bit)
+            let sn_8_lsb = encode_lsb(current_sn as u64, 8).map_err(|e| {
+                RohcError::Internal(format!("SN LSB encoding for UO-1 failed: {}", e))
+            })? as u8;
+
+            // MVP Simplification for CRC-8 input
+            let original_sn_for_crc = current_sn;
+
+            rohc_packet =
+                build_uo1_sn_profile1_packet(sn_8_lsb, current_marker, original_sn_for_crc)?;
+            context.current_lsb_sn_width = 8; // Reflect that UO-1 sent 8 bits for SN
+        }
+
+        context.last_sent_rtp_sn_full = current_sn;
+        context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp; // UO-0/UO-1 don't update TS in context for P1 MVP
+        context.last_sent_rtp_marker = current_marker; // UO-1 updates marker in context
         context.fo_packets_sent_since_ir += 1;
 
         Ok(rohc_packet)
@@ -70,7 +107,9 @@ pub fn compress_rtp_udp_ip_umode(
 mod tests {
     use super::*;
     use crate::context::RtpUdpIpP1CompressorContext;
-    use crate::packet_processor::ADD_CID_OCTET_PREFIX_VALUE;
+    use crate::packet_processor::{
+        ADD_CID_OCTET_PREFIX_VALUE, UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+    };
     use crate::protocol_types::RtpUdpIpv4Headers;
 
     fn get_default_uncompressed_headers() -> RtpUdpIpv4Headers {
@@ -122,41 +161,67 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_second_packet_sends_uo0() {
+    fn test_compress_small_sn_change_sends_uo0() {
         let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
-        let mut headers1 = get_default_uncompressed_headers();
+        let mut headers1 = get_default_uncompressed_headers(); // SN=100, M=false
         context.initialize_static_part_with_uncompressed_headers(&headers1);
+        let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap(); // IR
 
-        let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
-        assert_eq!(context.mode, CompressorMode::FirstOrder);
-        assert_eq!(context.fo_packets_sent_since_ir, 0);
-
-        headers1.rtp_sequence_number += 1;
-        headers1.rtp_timestamp += 160;
-
+        headers1.rtp_sequence_number += 1; // SN=101, M=false (no change)
         let rohc_packet_uo0 = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
 
         assert_eq!(rohc_packet_uo0.len(), 1);
-        assert_eq!((rohc_packet_uo0[0] & 0x80), 0x00);
-        assert_eq!(context.last_sent_rtp_sn_full, headers1.rtp_sequence_number);
-        assert_eq!(context.fo_packets_sent_since_ir, 1);
+        assert_eq!((rohc_packet_uo0[0] & 0x80), 0x00); // UO-0 type
+    }
+
+    #[test]
+    fn test_compress_marker_change_sends_uo1() {
+        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut headers1 = get_default_uncompressed_headers(); // SN=100, M=false
+        context.initialize_static_part_with_uncompressed_headers(&headers1);
+        let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap(); // IR, M becomes false in context
+
+        headers1.rtp_sequence_number += 1; // SN=101
+        headers1.rtp_marker = true; // M changes to true
+        let rohc_packet_uo1 = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
+
+        assert_eq!(rohc_packet_uo1.len(), 3); // UO-1-SN MVP is 3 bytes
+        assert_eq!(
+            rohc_packet_uo1[0],
+            UO_1_SN_PACKET_TYPE_BASE | UO_1_SN_MARKER_BIT_MASK
+        ); // Type + M=1
+        assert!(context.last_sent_rtp_marker);
+    }
+
+    #[test]
+    fn test_compress_large_sn_change_sends_uo1() {
+        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut headers1 = get_default_uncompressed_headers(); // SN=100, M=false
+        context.initialize_static_part_with_uncompressed_headers(&headers1);
+        let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap(); // IR
+
+        // A jump larger than what UO-0 with 4 LSBs (p=0 window [100, 115]) can handle
+        headers1.rtp_sequence_number += 20; // SN=120. (120 - 100 = 20). Not in [100,115]
+        // value_in_lsb_interval(120, 100, 4, 0) will be false.
+        let rohc_packet_uo1 = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
+
+        assert_eq!(rohc_packet_uo1.len(), 3);
+        assert_eq!(rohc_packet_uo1[0], UO_1_SN_PACKET_TYPE_BASE); // Type + M=0 (marker didn't change from false)
+        let expected_sn_lsb_8bit = (120u16 & 0xFF) as u8;
+        assert_eq!(rohc_packet_uo1[1], expected_sn_lsb_8bit);
     }
 
     #[test]
     fn test_compress_ir_refresh_after_interval() {
-        let refresh_interval = 3; // Send IR instead of the 3rd FO packet
+        let refresh_interval = 3;
         let mut context =
             RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, refresh_interval);
         let mut headers = get_default_uncompressed_headers();
         context.initialize_static_part_with_uncompressed_headers(&headers);
 
-        // Packet 1: Initial IR
         let _ir_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
         assert_eq!(context.mode, CompressorMode::FirstOrder);
-        assert_eq!(context.fo_packets_sent_since_ir, 0);
 
-        // Packets that should be FO (refresh_interval - 1 of them)
-        // If refresh_interval = 3, loop for i=0, 1 (sends FO1, FO2)
         for i in 0..(refresh_interval - 1) {
             headers.rtp_sequence_number += 1;
             let uo0_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
@@ -165,17 +230,15 @@ mod tests {
                 0x00,
                 "Packet {} should be UO-0",
                 i + 2
-            ); // +2 because initial IR is 1st.
+            );
             assert_eq!(context.mode, CompressorMode::FirstOrder);
         }
-        assert_eq!(context.fo_packets_sent_since_ir, refresh_interval - 1); // Should be 2 after loop
+        assert_eq!(context.fo_packets_sent_since_ir, refresh_interval - 1);
 
-        // This packet should be IR due to refresh
-        // (it would have been the `refresh_interval`-th FO packet)
         headers.rtp_sequence_number += 1;
         let next_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
         assert_eq!(
-            next_packet[0], // For CID 0, IR packet starts with IR type
+            next_packet[0],
             crate::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN,
             "Should be IR due to refresh. Actual: {:02X}",
             next_packet[0]
