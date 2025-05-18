@@ -212,3 +212,63 @@ fn test_p1_umode_ir_then_uo0_flow_cid5() {
     );
     assert!(!decompressor_context.last_reconstructed_rtp_marker);
 }
+
+#[test]
+fn test_p1_umode_sn_jump_triggers_uo1() {
+    let cid: u16 = 0;
+    let ir_refresh_interval = 10; // High enough to not interfere
+
+    let mut compressor_context =
+        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP);
+
+    // --- Packet 1: IR ---
+    let original_headers1 = create_sample_rtp_packet(500, 5000, false);
+    compressor_context.initialize_static_part_with_uncompressed_headers(&original_headers1);
+    let rohc_packet1 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers1).unwrap();
+    let _decompressed_headers1 =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet1).unwrap();
+    // Contexts are now established, compressor in FO, decompressor in FC.
+    // last_sent_rtp_sn_full = 500, last_reconstructed_rtp_sn_full = 500
+    // last_sent_rtp_marker = false, last_reconstructed_rtp_marker = false
+
+    // --- Packet 2: SN jump small, Marker same -> UO-0 ---
+    let original_headers2 = create_sample_rtp_packet(501, 5160, false); // SN +1, M same
+    let rohc_packet2 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers2).unwrap();
+    assert_eq!(rohc_packet2.len(), 1, "Packet 2 should be UO-0");
+    let decompressed_headers2 =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet2).unwrap();
+    assert_eq!(decompressed_headers2.rtp_sequence_number, 501);
+    assert!(!decompressed_headers2.rtp_marker);
+
+    // --- Packet 3: SN jump large for UO-0, Marker same -> UO-1 ---
+    // UO-0 uses DEFAULT_UO0_SN_LSB_WIDTH = 4 bits. Max non-wrapping positive delta for p=0 is 2^k - 1 = 15.
+    // last_reconstructed_rtp_sn_full = 501.
+    // If next SN is 501 + 16 = 517.
+    // value_in_lsb_interval(517, 501, 4, 0) should be false. (Window [501, 501+15=516])
+    let original_headers3 = create_sample_rtp_packet(517, 5320, false); // SN +16 from P2, M same
+    let rohc_packet3 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
+
+    assert_eq!(
+        rohc_packet3.len(),
+        3,
+        "Packet 3 should be UO-1 due to large SN jump"
+    );
+    assert_eq!(
+        (rohc_packet3[0] & 0xF0),
+        rohcstar::packet_processor::UO_1_SN_PACKET_TYPE_BASE
+    );
+    assert_eq!(
+        (rohc_packet3[0] & rohcstar::packet_processor::UO_1_SN_MARKER_BIT_MASK),
+        0
+    ); // Marker is false
+
+    let decompressed_headers3 =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();
+    assert_eq!(decompressed_headers3.rtp_sequence_number, 517);
+    assert!(!decompressed_headers3.rtp_marker);
+    assert_eq!(decompressor_context.last_reconstructed_rtp_sn_full, 517);
+}
