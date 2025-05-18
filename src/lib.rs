@@ -4,6 +4,7 @@ pub mod crc;
 pub mod encodings;
 pub mod error;
 pub mod packet_processor;
+pub mod profiles;
 pub mod protocol_types;
 
 pub use error::RohcError;
