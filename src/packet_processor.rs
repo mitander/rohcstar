@@ -1,5 +1,6 @@
 use crate::crc::calculate_rohc_crc8;
 use crate::error::{RohcBuildingError, RohcParsingError};
+use crate::protocol_types::RohcUo1PacketProfile1;
 use crate::protocol_types::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RtpUdpIpv4Headers};
 use std::net::Ipv4Addr;
 
@@ -16,6 +17,9 @@ pub const ROHC_IR_PACKET_TYPE_WITH_DYN: u8 =
 pub const ADD_CID_OCTET_PREFIX_MASK: u8 = 0b1111_0000;
 pub const ADD_CID_OCTET_PREFIX_VALUE: u8 = 0b1110_0000;
 pub const ADD_CID_OCTET_CID_MASK: u8 = 0x0F;
+
+pub const UO_1_SN_PACKET_TYPE_BASE: u8 = 0b10100000; // 0xA0
+pub const UO_1_SN_MARKER_BIT_MASK: u8 = 0b00000001;
 
 pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < 20 {
@@ -393,6 +397,68 @@ pub fn parse_uo0_profile1_cid0_packet(
     })
 }
 
+pub fn build_uo1_sn_profile1_packet(
+    sn_8_lsb: u8,
+    marker_bit: bool,
+    // Original header data needed for CRC calculation
+    // Simplified: only use SN for CRC for now for UO-1
+    original_sn_for_crc: u16,
+) -> Result<Vec<u8>, RohcBuildingError> {
+    let mut packet_bytes = Vec::with_capacity(3);
+
+    let type_byte = UO_1_SN_PACKET_TYPE_BASE
+        | (if marker_bit {
+            UO_1_SN_MARKER_BIT_MASK
+        } else {
+            0
+        });
+
+    // The CRC-8 for UO-1 covers fields from the original uncompressed header.
+    // For this MVP, we are simplifying and calculating it only over the original full SN.
+    // A full implementation would construct a byte sequence from several original header fields
+    // based on context and RFC 3095 section 5.9.2.
+    let crc_val = calculate_rohc_crc8(&original_sn_for_crc.to_be_bytes());
+
+    packet_bytes.push(type_byte);
+    packet_bytes.push(sn_8_lsb);
+    packet_bytes.push(crc_val);
+
+    Ok(packet_bytes)
+}
+
+pub fn parse_uo1_sn_profile1_packet(
+    data: &[u8],
+) -> Result<RohcUo1PacketProfile1, RohcParsingError> {
+    if data.len() < 3 {
+        return Err(RohcParsingError::NotEnoughData {
+            needed: 3,
+            got: data.len(),
+        });
+    }
+
+    let type_byte = data[0];
+    if (type_byte & 0xF0) != UO_1_SN_PACKET_TYPE_BASE {
+        // Check leading 4 bits `1010`
+        return Err(RohcParsingError::InvalidPacketType(type_byte));
+    }
+
+    let marker_bit_changed = Some((type_byte & UO_1_SN_MARKER_BIT_MASK) != 0);
+    let sn_lsb_val = data[1] as u16; // This is 8 bits
+    let received_crc8 = data[2];
+
+    // CRC Verification: For UO-1, CRC is on original headers. Decompressor needs context
+    // to reconstruct those original headers and then verify CRC.
+    // The parser's role is to extract the fields including the received_crc8.
+    // CRC verification happens in the main decompressor logic.
+
+    Ok(RohcUo1PacketProfile1 {
+        sn_lsb: sn_lsb_val,
+        num_sn_lsb_bits: 8, // Fixed for this MVP UO-1 type
+        rtp_marker_bit_changed: marker_bit_changed,
+        crc8: received_crc8,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +614,30 @@ mod tests {
             Err(RohcParsingError::InvalidPacketType(0x80)) => {}
             res => panic!("Expected InvalidPacketType, got {:?}", res),
         }
+    }
+
+    #[test]
+    fn test_build_and_parse_uo1_sn_packet() {
+        let sn_lsbs: u8 = 0xAB;
+        let marker = true;
+        let original_sn_for_crc: u16 = 0x12AB; // Example full SN
+
+        let built_packet =
+            build_uo1_sn_profile1_packet(sn_lsbs, marker, original_sn_for_crc).unwrap();
+        assert_eq!(built_packet.len(), 3);
+        assert_eq!(
+            built_packet[0],
+            UO_1_SN_PACKET_TYPE_BASE | UO_1_SN_MARKER_BIT_MASK
+        );
+        assert_eq!(built_packet[1], sn_lsbs);
+
+        let expected_crc = calculate_rohc_crc8(&original_sn_for_crc.to_be_bytes());
+        assert_eq!(built_packet[2], expected_crc);
+
+        let parsed_packet = parse_uo1_sn_profile1_packet(&built_packet).unwrap();
+        assert_eq!(parsed_packet.sn_lsb, sn_lsbs as u16);
+        assert_eq!(parsed_packet.num_sn_lsb_bits, 8);
+        assert_eq!(parsed_packet.rtp_marker_bit_changed, Some(marker));
+        assert_eq!(parsed_packet.crc8, expected_crc);
     }
 }

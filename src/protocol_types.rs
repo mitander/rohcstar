@@ -104,3 +104,20 @@ pub struct RohcUo0PacketProfile1 {
     pub sn_lsb: u8,
     pub crc3: u8,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RohcUo1PacketProfile1 {
+    // For UO-1, CID is usually implicit (0) or handled by Add-CID octet if present.
+    // The packet type itself (e.g., 100000xx for base UO-1) implies Profile 1 specific fields.
+    // We'll represent the most common fields for a UO-1 that primarily updates SN.
+    // Other variants (UO-1-TS, UO-1-ID) would have Option<u16/u32> for those.
+    pub sn_lsb: u16,         // The LSBs of the sequence number.
+    pub num_sn_lsb_bits: u8, // Actual number of LSBs for SN present in the packet.
+
+    // For Profile 1 UO-1, M (Marker) bit might be conveyed.
+    // Let's add it. Often packed with SN or as an extension bit.
+    pub rtp_marker_bit_changed: Option<bool>, // None if not present/changed, Some(new_val) if present
+
+    // UO-1 packets for Profile 1 typically have an 8-bit CRC.
+    pub crc8: u8,
+}
