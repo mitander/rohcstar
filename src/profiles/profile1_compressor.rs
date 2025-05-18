@@ -6,24 +6,18 @@ use crate::packet_processor::{
 };
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
-const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4;
+pub const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4;
 
 pub fn compress_rtp_udp_ip_umode(
     context: &mut RtpUdpIpP1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
 ) -> Result<Vec<u8>, RohcError> {
-    let mut force_ir_for_refresh = false;
-    if context.mode == CompressorMode::FirstOrder
+    let init_and_refresh = (context.mode == CompressorMode::FirstOrder
         && context.ir_refresh_interval > 0
-        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval - 1)
-    {
-        force_ir_for_refresh = true;
-    }
+        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval - 1))
+        || context.mode == CompressorMode::InitializationAndRefresh;
 
-    let should_send_ir =
-        context.mode == CompressorMode::InitializationAndRefresh || force_ir_for_refresh;
-
-    if should_send_ir {
+    if init_and_refresh {
         let ir_data = RohcIrProfile1Packet {
             cid: context.cid,
             profile: PROFILE_ID_RTP_UDP_IP,

@@ -15,12 +15,10 @@ pub struct RtpUdpIpv4Headers {
     pub ip_checksum: u16,
     pub ip_src: Ipv4Addr,
     pub ip_dst: Ipv4Addr,
-
     pub udp_src_port: u16,
     pub udp_dst_port: u16,
     pub udp_length: u16,
     pub udp_checksum: u16,
-
     pub rtp_version: u8,
     pub rtp_padding: bool,
     pub rtp_extension: bool,
@@ -87,7 +85,7 @@ impl Default for RohcIrProfile1Packet {
         Self {
             cid: 0,
             profile: 0x01, // ROHC Profile 1 for RTP/UDP/IP
-            crc8: 0,       // CRC typically calculated during packet building
+            crc8: 0,
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
             static_udp_src_port: 0,
