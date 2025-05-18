@@ -5,9 +5,24 @@ use crate::packet_processor::{
     PROFILE_ID_RTP_UDP_IP, build_ir_profile1_packet, build_uo0_profile1_cid0_packet,
     build_uo1_sn_profile1_packet,
 };
-use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers}; // Added value_in_lsb_interval
+use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
 pub const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4; // Max SN change for UO-0 (0 to 2^4-1 = 15)
+fn create_crc_input_from_original_headers(
+    static_context_ssrc: u32,
+    current_headers: &RtpUdpIpv4Headers,
+) -> Vec<u8> {
+    let mut crc_input = Vec::with_capacity(4 + 2 + 1); // SSRC (u32), SN (u16), M (u8)
+    crc_input.extend_from_slice(&static_context_ssrc.to_be_bytes());
+    crc_input.extend_from_slice(&current_headers.rtp_sequence_number.to_be_bytes());
+    crc_input.push(if current_headers.rtp_marker {
+        0x01
+    } else {
+        0x00
+    });
+    // Timestamp is NOT included for UO-0/UO-1-SN CRC in this simplified model
+    crc_input
+}
 
 pub fn compress_rtp_udp_ip_umode(
     context: &mut RtpUdpIpP1CompressorContext,
@@ -38,6 +53,13 @@ pub fn compress_rtp_udp_ip_umode(
             dyn_rtp_timestamp: uncompressed_headers.rtp_timestamp,
             dyn_rtp_marker: uncompressed_headers.rtp_marker,
         };
+        if context.mode == CompressorMode::InitializationAndRefresh {
+            context.ip_source = uncompressed_headers.ip_src;
+            context.ip_destination = uncompressed_headers.ip_dst;
+            context.udp_source_port = uncompressed_headers.udp_src_port;
+            context.udp_destination_port = uncompressed_headers.udp_dst_port;
+            context.rtp_ssrc = uncompressed_headers.rtp_ssrc;
+        }
         let rohc_packet = build_ir_profile1_packet(&ir_data)?;
 
         context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
@@ -48,55 +70,42 @@ pub fn compress_rtp_udp_ip_umode(
 
         Ok(rohc_packet)
     } else {
-        // Must be FirstOrder and not time for IR refresh
         let current_sn = uncompressed_headers.rtp_sequence_number;
         let current_marker = uncompressed_headers.rtp_marker;
-
         let marker_changed = current_marker != context.last_sent_rtp_marker;
 
-        // Check if UO-0 can represent the SN change.
-        // For p=0 (non-decreasing), window is [v_ref, v_ref + 2^k - 1].
-        // Our UO-0 sends `DEFAULT_UO0_SN_LSB_WIDTH` (e.g. 4) bits.
-        // We need to ensure value_in_lsb_interval(current_sn, last_sn, k, p) holds.
-        // For UO-0, p=0 for SN.
         let uo0_can_represent_sn = value_in_lsb_interval(
             current_sn as u64,
             context.last_sent_rtp_sn_full as u64,
             DEFAULT_UO0_SN_LSB_WIDTH,
-            0, // p=0 for non-decreasing RTP SN
+            0,
         );
 
         let rohc_packet;
+        // Corrected: Pass context.rtp_ssrc and uncompressed_headers
+        let crc_input_bytes =
+            create_crc_input_from_original_headers(context.rtp_ssrc, uncompressed_headers);
 
         if !marker_changed && uo0_can_represent_sn {
-            // Use UO-0
             context.current_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
             let sn_lsb_for_uo0 = encode_lsb(current_sn as u64, context.current_lsb_sn_width)
                 .map_err(|e| {
                     RohcError::Internal(format!("SN LSB encoding for UO-0 failed: {}", e))
                 })? as u8;
-
-            let crc3_input_data: Vec<u8> = current_sn.to_be_bytes().to_vec(); // MVP Simplification
-            let crc3_val = crate::crc::calculate_rohc_crc3(&crc3_input_data);
-
+            let crc3_val = crate::crc::calculate_rohc_crc3(&crc_input_bytes);
             rohc_packet = build_uo0_profile1_cid0_packet(sn_lsb_for_uo0, crc3_val)?;
         } else {
-            // Use UO-1-SN (MVP version: 8 LSBs for SN, carries M bit)
             let sn_8_lsb = encode_lsb(current_sn as u64, 8).map_err(|e| {
                 RohcError::Internal(format!("SN LSB encoding for UO-1 failed: {}", e))
             })? as u8;
-
-            // MVP Simplification for CRC-8 input
-            let original_sn_for_crc = current_sn;
-
-            rohc_packet =
-                build_uo1_sn_profile1_packet(sn_8_lsb, current_marker, original_sn_for_crc)?;
-            context.current_lsb_sn_width = 8; // Reflect that UO-1 sent 8 bits for SN
+            let crc8_val = crate::crc::calculate_rohc_crc8(&crc_input_bytes);
+            rohc_packet = build_uo1_sn_profile1_packet(sn_8_lsb, current_marker, crc8_val)?;
+            context.current_lsb_sn_width = 8;
         }
 
         context.last_sent_rtp_sn_full = current_sn;
-        context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp; // UO-0/UO-1 don't update TS in context for P1 MVP
-        context.last_sent_rtp_marker = current_marker; // UO-1 updates marker in context
+        context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
+        context.last_sent_rtp_marker = current_marker;
         context.fo_packets_sent_since_ir += 1;
 
         Ok(rohc_packet)

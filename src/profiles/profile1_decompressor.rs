@@ -10,6 +10,20 @@ use crate::packet_processor::{
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
 const DECOMPRESSOR_K1_THRESHOLD: u8 = 3;
+
+fn create_crc_input_for_verification(
+    context: &RtpUdpIpP1DecompressorContext,
+    reconstructed_sn: u16,
+    reconstructed_marker: bool,
+) -> Vec<u8> {
+    let mut crc_input = Vec::with_capacity(4 + 2 + 1); // SSRC, SN, M
+    crc_input.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
+    crc_input.extend_from_slice(&reconstructed_sn.to_be_bytes());
+    crc_input.push(if reconstructed_marker { 0x01 } else { 0x00 });
+    // Timestamp is NOT included
+    crc_input
+}
+
 pub fn decompress_rtp_udp_ip_umode(
     context: &mut RtpUdpIpP1DecompressorContext,
     rohc_packet_bytes: &[u8],
@@ -21,76 +35,58 @@ pub fn decompress_rtp_udp_ip_umode(
         }));
     }
 
-    let mut packet_cursor = 0;
-    let mut parsed_effective_cid = context.cid;
+    let mut cursor: usize = 0;
+    let mut effective_cid_for_context: u16 = context.cid;
 
-    if (rohc_packet_bytes[0] & ADD_CID_OCTET_PREFIX_MASK) == ADD_CID_OCTET_PREFIX_VALUE {
-        let cid_val = rohc_packet_bytes[0] & ADD_CID_OCTET_CID_MASK;
+    if (rohc_packet_bytes[cursor] & ADD_CID_OCTET_PREFIX_MASK) == ADD_CID_OCTET_PREFIX_VALUE {
+        let cid_val = rohc_packet_bytes[cursor] & ADD_CID_OCTET_CID_MASK;
         if cid_val == 0 {
             return Err(RohcError::Parsing(RohcParsingError::InvalidPacketType(
-                rohc_packet_bytes[0],
+                rohc_packet_bytes[cursor],
             )));
         }
-        parsed_effective_cid = cid_val as u16;
-        packet_cursor += 1;
-        if packet_cursor >= rohc_packet_bytes.len() {
+        effective_cid_for_context = cid_val as u16;
+        cursor += 1;
+        if cursor >= rohc_packet_bytes.len() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
-                needed: packet_cursor + 1,
+                needed: cursor + 1,
                 got: rohc_packet_bytes.len(),
             }));
         }
     }
 
-    let remaining_packet_slice = &rohc_packet_bytes[packet_cursor..];
-    if remaining_packet_slice.is_empty() {
+    let core_packet_slice = &rohc_packet_bytes[cursor..];
+    if core_packet_slice.is_empty() {
         return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
             needed: 1,
             got: 0,
         }));
     }
-    let first_byte_of_rohc_packet = remaining_packet_slice[0];
+    let type_determining_byte = core_packet_slice[0];
 
-    if (first_byte_of_rohc_packet & !ROHC_IR_PACKET_TYPE_D_BIT_MASK) == ROHC_IR_PACKET_TYPE_BASE {
-        // --- IR Packet ---
-        match parse_ir_profile1_packet(remaining_packet_slice) {
+    if (type_determining_byte & !ROHC_IR_PACKET_TYPE_D_BIT_MASK) == ROHC_IR_PACKET_TYPE_BASE {
+        match parse_ir_profile1_packet(core_packet_slice) {
             Ok(mut parsed_ir) => {
-                parsed_ir.cid = parsed_effective_cid;
-                if context.cid != parsed_effective_cid
-                    || context.mode == DecompressorMode::NoContext
-                {
-                    context.cid = parsed_effective_cid;
-                }
-                if context.cid != parsed_effective_cid {
-                    context.cid = parsed_effective_cid;
-                }
+                parsed_ir.cid = effective_cid_for_context; // Set the CID from Add-CID or context default
+
+                context.cid = parsed_ir.cid;
                 context.initialize_from_ir_packet(&parsed_ir);
                 context.consecutive_crc_failures_in_fc = 0;
                 Ok(reconstruct_uncompressed_headers_from_ir(&parsed_ir))
             }
             Err(e) => Err(RohcError::Parsing(e)),
         }
-    } else if (first_byte_of_rohc_packet & 0xF0) == UO_1_SN_PACKET_TYPE_BASE {
-        // Check for UO-1 (1010xxxx)
-        // --- UO-1-SN Packet ---
-        if context.cid != parsed_effective_cid {
-            // Similar CID check as for UO-0
-            if context.mode == DecompressorMode::NoContext
-                || context.mode == DecompressorMode::StaticContext
-            {
-                return Err(RohcError::InvalidState(format!(
-                    "Received UO-1 for CID {} but context not established or not for this CID.",
-                    parsed_effective_cid
-                )));
-            }
-            return Err(RohcError::ContextNotFound(parsed_effective_cid));
+    } else if (type_determining_byte & 0xF0) == UO_1_SN_PACKET_TYPE_BASE {
+        if context.cid != effective_cid_for_context && context.mode != DecompressorMode::NoContext {
+            return Err(RohcError::ContextNotFound(effective_cid_for_context));
         }
         if context.mode != DecompressorMode::FullContext {
             return Err(RohcError::InvalidState(
-                "Received UO-1 packet but decompressor not in Full Context state".to_string(),
+                "Received UO-1 but not in Full Context".to_string(),
             ));
         }
 
-        match parse_uo1_sn_profile1_packet(remaining_packet_slice) {
+        match parse_uo1_sn_profile1_packet(core_packet_slice) {
             Ok(parsed_uo1) => {
                 let reconstructed_sn = decode_lsb(
                     parsed_uo1.sn_lsb as u64,
@@ -99,11 +95,10 @@ pub fn decompress_rtp_udp_ip_umode(
                     context.p_sn,
                 )
                 .map_err(RohcError::Parsing)? as u16;
-
                 let new_marker = parsed_uo1
                     .rtp_marker_bit_changed
                     .unwrap_or(context.last_reconstructed_rtp_marker);
-
+                let current_ts_for_reconstruction = context.last_reconstructed_rtp_ts_full;
                 let reconstructed_headers = RtpUdpIpv4Headers {
                     ip_src: context.ip_source,
                     ip_dst: context.ip_destination,
@@ -111,7 +106,7 @@ pub fn decompress_rtp_udp_ip_umode(
                     udp_dst_port: context.udp_destination_port,
                     rtp_ssrc: context.rtp_ssrc,
                     rtp_sequence_number: reconstructed_sn,
-                    rtp_timestamp: context.last_reconstructed_rtp_ts_full, // UO-1-SN MVP doesn't update TS
+                    rtp_timestamp: current_ts_for_reconstruction,
                     rtp_marker: new_marker,
                     ip_protocol: IP_PROTOCOL_UDP,
                     rtp_version: RTP_VERSION,
@@ -119,37 +114,14 @@ pub fn decompress_rtp_udp_ip_umode(
                     ip_ttl: 64,
                     ..Default::default()
                 };
-
-                // CRC-8 Verification for UO-1
-                // Simplified for MVP: based on reconstructed SN and Marker.
-                // A full version considers more original header fields.
-                let mut crc8_input_data_original = Vec::new();
-                // Type byte (M-bit from new_marker, other bits from type constant)
-                crc8_input_data_original.push(
-                    UO_1_SN_PACKET_TYPE_BASE
-                        | (if new_marker {
-                            crate::packet_processor::UO_1_SN_MARKER_BIT_MASK
-                        } else {
-                            0
-                        }),
-                );
-                // SN (8 LSBs)
-                crc8_input_data_original.push((reconstructed_sn & 0xFF) as u8);
-                // This CRC input is based on *compressed* fields, which is wrong for UO-1.
-                // UO-1 CRC is over ORIGINAL header fields.
-                // SIMPLIFICATION: use original_sn_for_crc as in builder.
-                // The decompressor has to reconstruct what it believes this value was.
-                let original_sn_for_crc_reconstructed = reconstructed_sn;
-
-                let calculated_crc8 = crate::crc::calculate_rohc_crc8(
-                    &original_sn_for_crc_reconstructed.to_be_bytes(),
-                );
-
+                let crc_input_bytes =
+                    create_crc_input_for_verification(context, reconstructed_sn, new_marker);
+                let calculated_crc8 = crate::crc::calculate_rohc_crc8(&crc_input_bytes);
                 if calculated_crc8 == parsed_uo1.crc8 {
                     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
                     context.last_reconstructed_rtp_marker = new_marker;
                     context.consecutive_crc_failures_in_fc = 0;
-                    // context.cid = parsed_effective_cid; // CID already confirmed
+                    context.cid = effective_cid_for_context;
                     Ok(reconstructed_headers)
                 } else {
                     context.consecutive_crc_failures_in_fc += 1;
@@ -164,26 +136,16 @@ pub fn decompress_rtp_udp_ip_umode(
             }
             Err(e) => Err(RohcError::Parsing(e)),
         }
-    } else if (first_byte_of_rohc_packet & 0x80) == 0x00 {
-        // --- UO-0 Packet ---
-        // (Rest of UO-0 logic remains the same)
-        if context.cid != parsed_effective_cid {
-            if context.mode == DecompressorMode::NoContext
-                || context.mode == DecompressorMode::StaticContext
-            {
-                return Err(RohcError::InvalidState(format!(
-                    "Received UO-0 for CID {} but context not established or not for this CID.",
-                    parsed_effective_cid
-                )));
-            }
-            return Err(RohcError::ContextNotFound(parsed_effective_cid));
+    } else if (type_determining_byte & 0x80) == 0x00 {
+        if context.cid != effective_cid_for_context && context.mode != DecompressorMode::NoContext {
+            return Err(RohcError::ContextNotFound(effective_cid_for_context));
         }
         if context.mode != DecompressorMode::FullContext {
             return Err(RohcError::InvalidState(
-                "Received UO-0 packet but decompressor not in Full Context state".to_string(),
+                "Received UO-0 but not in Full Context".to_string(),
             ));
         }
-        match parse_uo0_profile1_cid0_packet(remaining_packet_slice) {
+        match parse_uo0_profile1_cid0_packet(core_packet_slice) {
             Ok(parsed_uo0) => {
                 let reconstructed_sn = decode_lsb(
                     parsed_uo0.sn_lsb as u64,
@@ -192,7 +154,8 @@ pub fn decompress_rtp_udp_ip_umode(
                     context.p_sn,
                 )
                 .map_err(RohcError::Parsing)? as u16;
-
+                let current_ts_for_reconstruction = context.last_reconstructed_rtp_ts_full;
+                let current_marker_for_reconstruction = context.last_reconstructed_rtp_marker;
                 let reconstructed_headers = RtpUdpIpv4Headers {
                     ip_src: context.ip_source,
                     ip_dst: context.ip_destination,
@@ -200,21 +163,24 @@ pub fn decompress_rtp_udp_ip_umode(
                     udp_dst_port: context.udp_destination_port,
                     rtp_ssrc: context.rtp_ssrc,
                     rtp_sequence_number: reconstructed_sn,
-                    rtp_timestamp: context.last_reconstructed_rtp_ts_full,
-                    rtp_marker: context.last_reconstructed_rtp_marker,
+                    rtp_timestamp: current_ts_for_reconstruction,
+                    rtp_marker: current_marker_for_reconstruction,
                     ip_protocol: IP_PROTOCOL_UDP,
                     rtp_version: RTP_VERSION,
                     ip_ihl: 5,
                     ip_ttl: 64,
                     ..Default::default()
                 };
-
-                let crc3_input_data: Vec<u8> = reconstructed_sn.to_be_bytes().to_vec();
-                let calculated_crc3 = crate::crc::calculate_rohc_crc3(&crc3_input_data);
-
+                let crc_input_bytes = create_crc_input_for_verification(
+                    context,
+                    reconstructed_sn,
+                    current_marker_for_reconstruction,
+                );
+                let calculated_crc3 = crate::crc::calculate_rohc_crc3(&crc_input_bytes);
                 if calculated_crc3 == parsed_uo0.crc3 {
                     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
                     context.consecutive_crc_failures_in_fc = 0;
+                    context.cid = effective_cid_for_context;
                     Ok(reconstructed_headers)
                 } else {
                     context.consecutive_crc_failures_in_fc += 1;
@@ -231,7 +197,7 @@ pub fn decompress_rtp_udp_ip_umode(
         }
     } else {
         Err(RohcError::Parsing(RohcParsingError::InvalidPacketType(
-            first_byte_of_rohc_packet,
+            type_determining_byte,
         )))
     }
 }
@@ -274,8 +240,9 @@ mod tests {
             udp_dst_port: 5678,
             rtp_ssrc: 0x11223344,
             rtp_sequence_number: sn,
-            rtp_timestamp: 1000 + (sn as u32 * 160),
+            rtp_timestamp: 1000 + (sn.wrapping_sub(100) as u32 * 160),
             rtp_marker: false,
+            ip_ttl: 64,
             ..Default::default()
         }
     }
@@ -284,11 +251,9 @@ mod tests {
     fn test_decompress_ir_packet_cid0() {
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
         let headers = get_default_uncompressed_headers_for_decomp_test(100);
-
         let ir_data_to_build = RohcIrProfile1Packet {
-            cid: 0, // IR for CID 0 doesn't have Add-CID octet from build_ir_profile1_packet
+            cid: 0,
             profile: PROFILE_ID_RTP_UDP_IP,
-            crc8: 0,
             static_ip_src: headers.ip_src,
             static_ip_dst: headers.ip_dst,
             static_udp_src_port: headers.udp_src_port,
@@ -297,14 +262,13 @@ mod tests {
             dyn_rtp_sn: headers.rtp_sequence_number,
             dyn_rtp_timestamp: headers.rtp_timestamp,
             dyn_rtp_marker: headers.rtp_marker,
+            ..Default::default()
         };
         let ir_packet_bytes = build_ir_profile1_packet(&ir_data_to_build).unwrap();
-
         let decompressed_headers =
             decompress_rtp_udp_ip_umode(&mut decompressor_context, &ir_packet_bytes).unwrap();
-
         assert_eq!(decompressor_context.mode, DecompressorMode::FullContext);
-        assert_eq!(decompressor_context.cid, 0); // Context CID should be 0
+        assert_eq!(decompressor_context.cid, 0);
         assert_eq!(decompressed_headers.rtp_ssrc, headers.rtp_ssrc);
         assert_eq!(
             decompressed_headers.rtp_sequence_number,
@@ -315,15 +279,11 @@ mod tests {
     #[test]
     fn test_decompress_ir_packet_with_add_cid() {
         let cid_val: u16 = 7;
-        // Decompressor context might start as NoContext for CID 0, or be specifically for CID 7.
-        // Let's simulate it starting fresh and learning the CID from the packet.
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
         decompressor_context.mode = DecompressorMode::NoContext;
-
         let headers = get_default_uncompressed_headers_for_decomp_test(100);
-
         let ir_data_to_build = RohcIrProfile1Packet {
-            cid: cid_val, // This CID will be used by build_ir to prepend Add-CID
+            cid: cid_val,
             profile: PROFILE_ID_RTP_UDP_IP,
             static_ip_src: headers.ip_src,
             static_ip_dst: headers.ip_dst,
@@ -333,16 +293,12 @@ mod tests {
             dyn_rtp_sn: headers.rtp_sequence_number,
             dyn_rtp_timestamp: headers.rtp_timestamp,
             dyn_rtp_marker: headers.rtp_marker,
-            ..Default::default() // crc8 will be calculated
+            ..Default::default()
         };
         let ir_packet_bytes = build_ir_profile1_packet(&ir_data_to_build).unwrap();
-        // build_ir_profile1_packet prepends Add-CID if cid is 1-15.
-        // `ir_packet_bytes` now starts with Add-CID for 7, then the IR type.
-
         let decompressed_headers =
             decompress_rtp_udp_ip_umode(&mut decompressor_context, &ir_packet_bytes).unwrap();
-
-        assert_eq!(decompressor_context.cid, cid_val); // This was failing (left: 0, right: 7)
+        assert_eq!(decompressor_context.cid, cid_val);
         assert_eq!(decompressor_context.mode, DecompressorMode::FullContext);
         assert_eq!(decompressed_headers.rtp_ssrc, headers.rtp_ssrc);
     }
@@ -352,20 +308,16 @@ mod tests {
         let mut compressor_context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
         decompressor_context.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
-
         let headers1 = get_default_uncompressed_headers_for_decomp_test(100);
         compressor_context.initialize_static_part_with_uncompressed_headers(&headers1);
         let ir_packet_bytes =
             compress_rtp_udp_ip_umode(&mut compressor_context, &headers1).unwrap();
         let _ = decompress_rtp_udp_ip_umode(&mut decompressor_context, &ir_packet_bytes).unwrap();
-
         let headers2 = get_default_uncompressed_headers_for_decomp_test(101);
         let uo0_packet_bytes =
             compress_rtp_udp_ip_umode(&mut compressor_context, &headers2).unwrap();
-
         let decompressed_headers =
             decompress_rtp_udp_ip_umode(&mut decompressor_context, &uo0_packet_bytes).unwrap();
-
         assert_eq!(decompressor_context.cid, 0);
         assert_eq!(
             decompressed_headers.rtp_sequence_number,
@@ -378,16 +330,26 @@ mod tests {
     #[test]
     fn test_decompress_uo0_crc_failure_leads_to_sc() {
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+        let ir_headers = get_default_uncompressed_headers_for_decomp_test(99);
+        decompressor_context.ip_source = ir_headers.ip_src;
+        decompressor_context.ip_destination = ir_headers.ip_dst;
+        decompressor_context.udp_source_port = ir_headers.udp_src_port;
+        decompressor_context.udp_destination_port = ir_headers.udp_dst_port;
+        decompressor_context.rtp_ssrc = ir_headers.rtp_ssrc;
+        decompressor_context.last_reconstructed_rtp_sn_full = ir_headers.rtp_sequence_number;
+        decompressor_context.last_reconstructed_rtp_ts_full = ir_headers.rtp_timestamp;
+        decompressor_context.last_reconstructed_rtp_marker = ir_headers.rtp_marker;
         decompressor_context.mode = DecompressorMode::FullContext;
-        decompressor_context.last_reconstructed_rtp_sn_full = 99;
         decompressor_context.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
-
         let sn_lsb = crate::encodings::encode_lsb(100_u64, DEFAULT_UO0_SN_LSB_WIDTH).unwrap() as u8;
-        let correct_crc3 = crate::crc::calculate_rohc_crc3(&100u16.to_be_bytes());
+        let crc_input_for_correct = create_crc_input_for_verification(
+            &decompressor_context,
+            100,
+            decompressor_context.last_reconstructed_rtp_marker,
+        );
+        let correct_crc3 = crate::crc::calculate_rohc_crc3(&crc_input_for_correct);
         let corrupted_crc3 = correct_crc3.wrapping_add(1) & 0x07;
-
         let uo0_packet_bytes = build_uo0_profile1_cid0_packet(sn_lsb, corrupted_crc3).unwrap();
-
         for i in 0..DECOMPRESSOR_K1_THRESHOLD {
             let result = decompress_rtp_udp_ip_umode(&mut decompressor_context, &uo0_packet_bytes);
             assert!(
@@ -395,8 +357,9 @@ mod tests {
                     result,
                     Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. }))
                 ),
-                "Iteration {} failed to produce CrcMismatch",
-                i
+                "Iteration {} failed to produce CrcMismatch. Got: {:?}",
+                i,
+                result
             );
         }
         assert_eq!(decompressor_context.mode, DecompressorMode::StaticContext);

@@ -400,12 +400,8 @@ pub fn parse_uo0_profile1_cid0_packet(
 pub fn build_uo1_sn_profile1_packet(
     sn_8_lsb: u8,
     marker_bit: bool,
-    // Original header data needed for CRC calculation
-    // Simplified: only use SN for CRC for now for UO-1
-    original_sn_for_crc: u16,
+    crc8_val: u8, // Changed: take pre-calculated CRC
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut packet_bytes = Vec::with_capacity(3);
-
     let type_byte = UO_1_SN_PACKET_TYPE_BASE
         | (if marker_bit {
             UO_1_SN_MARKER_BIT_MASK
@@ -413,17 +409,7 @@ pub fn build_uo1_sn_profile1_packet(
             0
         });
 
-    // The CRC-8 for UO-1 covers fields from the original uncompressed header.
-    // For this MVP, we are simplifying and calculating it only over the original full SN.
-    // A full implementation would construct a byte sequence from several original header fields
-    // based on context and RFC 3095 section 5.9.2.
-    let crc_val = calculate_rohc_crc8(&original_sn_for_crc.to_be_bytes());
-
-    packet_bytes.push(type_byte);
-    packet_bytes.push(sn_8_lsb);
-    packet_bytes.push(crc_val);
-
-    Ok(packet_bytes)
+    Ok(vec![type_byte, sn_8_lsb, crc8_val])
 }
 
 pub fn parse_uo1_sn_profile1_packet(
@@ -620,18 +606,28 @@ mod tests {
     fn test_build_and_parse_uo1_sn_packet() {
         let sn_lsbs: u8 = 0xAB;
         let marker = true;
-        let original_sn_for_crc: u16 = 0x12AB; // Example full SN
 
-        let built_packet =
-            build_uo1_sn_profile1_packet(sn_lsbs, marker, original_sn_for_crc).unwrap();
+        // Simulate CRC calculation as compressor would do
+        let original_sn_for_crc: u16 = 0x12AB;
+        let original_ts_for_crc: u32 = 5000;
+        let original_marker_for_crc = true;
+        let original_ssrc_for_crc: u32 = 0xDEADBEEF;
+
+        let mut crc_input_test = Vec::new();
+        crc_input_test.extend_from_slice(&original_ssrc_for_crc.to_be_bytes());
+        crc_input_test.extend_from_slice(&original_sn_for_crc.to_be_bytes());
+        crc_input_test.extend_from_slice(&original_ts_for_crc.to_be_bytes());
+        crc_input_test.push(if original_marker_for_crc { 0x01 } else { 0x00 });
+        let expected_crc = calculate_rohc_crc8(&crc_input_test);
+
+        // Pass the pre-calculated CRC to the builder
+        let built_packet = build_uo1_sn_profile1_packet(sn_lsbs, marker, expected_crc).unwrap();
         assert_eq!(built_packet.len(), 3);
         assert_eq!(
             built_packet[0],
             UO_1_SN_PACKET_TYPE_BASE | UO_1_SN_MARKER_BIT_MASK
         );
         assert_eq!(built_packet[1], sn_lsbs);
-
-        let expected_crc = calculate_rohc_crc8(&original_sn_for_crc.to_be_bytes());
         assert_eq!(built_packet[2], expected_crc);
 
         let parsed_packet = parse_uo1_sn_profile1_packet(&built_packet).unwrap();

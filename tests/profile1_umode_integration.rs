@@ -75,9 +75,18 @@ fn test_p1_umode_ir_then_uo0_flow_cid0() {
     let decompressed_headers3 =
         decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();
     assert_eq!(
+        decompressed_headers3.rtp_sequence_number,
+        original_headers3.rtp_sequence_number
+    );
+    assert_eq!(
+        decompressed_headers3.rtp_timestamp,
+        original_headers1.rtp_timestamp // UO-1-SN doesn't carry TS, so this uses context's last TS
+    );
+    // Corrected assertion for marker:
+    assert_eq!(
         decompressed_headers3.rtp_marker,
-        original_headers3.rtp_marker // UO-1 updates marker to true. THIS IS THE FIX.
-    ); // true == true. This was failing.
+        original_headers3.rtp_marker // UO-1 correctly updates marker from packet
+    );
 
     // --- Packet 4: Marker changed back to false
     let original_headers4 = create_sample_rtp_packet(103, 1480, false);
