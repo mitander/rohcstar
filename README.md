@@ -4,10 +4,6 @@
 
 **Rohcstar is a modern, memory-safe, and performant Rust implementation of the Robust Header Compression (ROHC) framework.**
 
-The primary goal of Rohcstar is to provide a reliable, extensible, and thoroughly-tested library for header compression, with an initial focus on profiles critical for **LTE/5G networks (e.g., IP/UDP/RTP for VoNR, general UDP/IP traffic)** and other bandwidth-constrained or lossy wireless environments where efficient spectrum use is paramount.
-
-Rohcstar is being built with a strong emphasis on correctness, security, and resilience against challenging link conditions. Its development is tightly coupled with its dedicated fuzzing companion [Drifter](https://github.com/mitander/drifter), ensuring continuous validation from the earliest stages.
-
 ## Vision & Philosophy
 
 *   **RFC Adherence & Robustness:** Faithfully implement ROHC standards, focusing on robust context synchronization and recovery mechanisms under packet loss and reordering, critical for wireless network performance.
@@ -16,7 +12,7 @@ Rohcstar is being built with a strong emphasis on correctness, security, and res
 *   **Modularity & Testability:** Employ a clean, modular architecture for easy maintenance, extension with new ROHC profiles (e.g., ROHCv2, ROHC-TCP), and comprehensive validation.
 *   **Fuzz-Driven Development:** Utilize Drifter extensively from day one to continuously test for correctness, security vulnerabilities, and protocol conformance.
 
-## Core Features (MVP)
+## Core Features (Conceptual / In Development)
 
 *   **ROHC Profiles:**
     *   **MVP:** Profile 0x0001 (RTP/UDP/IP).
@@ -28,33 +24,42 @@ Rohcstar is being built with a strong emphasis on correctness, security, and res
 *   **Packet Processing:** Efficient and RFC-compliant parsing and building of ROHC packets and relevant L3/L4 headers.
 *   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC) and transitions.
 
-## Current Status (MVP)
+## Current Status
 
-Rohcstar is in the early stages of development. The current focus is on establishing the core architecture and implementing the MVP for ROHC Profile 1 (RTP/UDP/IP) in U-mode.
+Rohcstar is currently in the early stages of development (MVP for ROHC Profile 1 (RTP/UDP/IP) in U-mode).
 
-*   [ ] Detailed Design Document ([docs/DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md)).
-*   [ ] Core data structures for ROHC contexts and packet representations defined.
-*   [ ] Initial parser/builder for Profile 1 IR and UO-0 packets.
-*   [ ] Basic U-mode compressor logic for Profile 1 (IR <-> FO transitions).
-*   [ ] Basic U-mode decompressor logic for Profile 1.
-*   [ ] Unit tests for packet processing, LSB encoding, CRC, and state transitions.
-*   [ ] Initial fuzzing harness for the decompressor using Drifter.
+*   [x] **Detailed Design Document:** Initial version drafted ([docs/DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md)).
+*   [x] **Core Data Structures:**
+    *   [x] For uncompressed L3/L4 headers (`RtpUdpIpv4Headers`).
+    *   [x] For ROHC contexts (`RtpUdpIpP1CompressorContext`, `RtpUdpIpP1DecompressorContext`).
+    *   [x] For internal ROHC packet representations (MVP versions of `RohcIrProfile1Packet`, `RohcUo0PacketProfile1`, `RohcUo1PacketProfile1`).
+*   [x] **Packet Processing Utilities:**
+    *   [x] Parser for uncompressed IPv4/UDP/RTP headers.
+    *   [x] LSB encoding/decoding functions.
+    *   [x] CRC-3 and CRC-8 calculation functions (using `crc` crate).
+*   [x] **ROHC Packet Parsers/Builders (Profile 1, U-mode MVP):**
+    *   [x] IR packet builder and parser.
+    *   [x] UO-0 packet builder and parser (basic version for CID 0).
+    *   [x] UO-1-SN packet builder and parser (basic version for SN and Marker bit).
+*   [x] **Profile 1 U-mode Logic (MVP):**
+    *   [x] Basic compressor logic (`compress_rtp_udp_ip_umode`) handling IR/FO (UO-0, UO-1-SN) transitions and IR refresh.
+    *   [x] Basic decompressor logic (`decompress_rtp_udp_ip_umode`) handling IR/FO (UO-0, UO-1-SN) packets, context updates, and basic CRC verification state changes (FC->SC).
+*   [x] **Context Management (MVP):**
+    *   [x] `SimpleContextManager` for single CID (0) operation.
+*   [x] **Unit Tests:** For packet processing, LSB encoding, CRC, context initialization, and individual profile logic components.
+*   [x] **Integration Tests:** For end-to-end compress/decompress flow for IR -> UO-0/UO-1 sequences, including CID 0 and small non-zero CIDs.
+*   [ ] **Initial Fuzzing Harness (Next Major Step):**
+    *   [ ] Decompressor fuzz target using Drifter.
 
 *(This section will be updated regularly to reflect development progress.)*
 
-## Why Rohcstar?
+## Design
 
-In an era of ever-increasing mobile data and diverse network applications (VoNR, IoT, Industrial 5G), efficient use of constrained wireless spectrum is paramount. Robust Header Compression (ROHC) plays a critical role in reducing protocol overhead, especially for small packets common in real-time and IoT traffic, directly impacting QoS and network capacity.
-
-Rohcstar aims to be a high-quality, open-source Rust alternative in this space, prioritizing safety, correctness, and modern development practices. It directly addresses the demanding requirements of 5G PDCP layers and other environments where robust and efficient header compression is essential.
-
-## Design & Architecture
-
-For a comprehensive understanding of Rohcstar's design, including its components, state machine modeling, RFC conformance strategy, testing strategy, and integration with the Drifter fuzzer, please consult the [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md).
+For a in-depth understanding of Rohcstar's architecture, components and roadmap, please refer to the [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md).
 
 ## Integration with Drifter Fuzzer
 
-The co-development of Rohcstar with its fuzzing counterpart, Drifter, is a core principle. Drifter will be instrumental in:
+The co-development of Rohcstar with its fuzzing counterpart, [Drifter](https://github.com/mitander/drifter), is a core principle and will be instrumental in:
 *   **Decompressor Validation:** Sending malformed, unexpected, and state-conflicting ROHC packet sequences.
 *   **Compressor Validation:** Feeding diverse and edge-case uncompressed packet streams.
 *   **State Machine Integrity:** Generating sequences to explore and validate ROHC state transitions and context synchronization logic rigorously.
