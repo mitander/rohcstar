@@ -1,3 +1,6 @@
+use crate::constants::{
+    DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP,
+};
 use crate::protocol_types::RtpUdpIpv4Headers;
 use std::net::Ipv4Addr;
 
@@ -69,7 +72,7 @@ impl RtpUdpIpP1CompressorContext {
 
 impl Default for RtpUdpIpP1CompressorContext {
     fn default() -> Self {
-        Self::new(0, crate::packet_processor::PROFILE_ID_RTP_UDP_IP, 20)
+        Self::new(0, PROFILE_ID_RTP_UDP_IP, DEFAULT_IR_REFRESH_INTERVAL)
     }
 }
 
@@ -117,7 +120,7 @@ impl RtpUdpIpP1DecompressorContext {
             last_reconstructed_rtp_sn_full: 0,
             last_reconstructed_rtp_ts_full: 0,
             last_reconstructed_rtp_marker: false,
-            expected_lsb_sn_width: 4,
+            expected_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH,
             p_sn: 0,
             consecutive_crc_failures_in_fc: 0,
         }
@@ -144,7 +147,7 @@ impl RtpUdpIpP1DecompressorContext {
 
 impl Default for RtpUdpIpP1DecompressorContext {
     fn default() -> Self {
-        Self::new(0, crate::packet_processor::PROFILE_ID_RTP_UDP_IP)
+        Self::new(0, PROFILE_ID_RTP_UDP_IP)
     }
 }
 

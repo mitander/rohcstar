@@ -1,9 +1,7 @@
+use crate::constants::{DEFAULT_IR_REFRESH_INTERVAL, PROFILE_ID_RTP_UDP_IP};
 use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
-use crate::packet_processor::PROFILE_ID_RTP_UDP_IP;
 use crate::protocol_types::RohcIrProfile1Packet;
 use crate::protocol_types::RtpUdpIpv4Headers;
-
-const DEFAULT_IR_REFRESH_INTERVAL: u32 = 20;
 
 #[derive(Debug, Default)]
 pub struct SimpleContextManager {

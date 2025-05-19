@@ -1,13 +1,12 @@
+use crate::constants::{DEFAULT_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP};
 use crate::context::{CompressorMode, RtpUdpIpP1CompressorContext};
 use crate::encodings::{encode_lsb, value_in_lsb_interval};
 use crate::error::RohcError;
 use crate::packet_processor::{
-    PROFILE_ID_RTP_UDP_IP, build_ir_profile1_packet, build_uo0_profile1_cid0_packet,
-    build_uo1_sn_profile1_packet,
+    build_ir_profile1_packet, build_uo0_profile1_cid0_packet, build_uo1_sn_profile1_packet,
 };
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
-pub const DEFAULT_UO0_SN_LSB_WIDTH: u8 = 4; // Max SN change for UO-0 (0 to 2^4-1 = 15)
 fn create_crc_input_from_original_headers(
     static_context_ssrc: u32,
     current_headers: &RtpUdpIpv4Headers,
@@ -20,7 +19,6 @@ fn create_crc_input_from_original_headers(
     } else {
         0x00
     });
-    // Timestamp is NOT included for UO-0/UO-1-SN CRC in this simplified model
     crc_input
 }
 
@@ -82,7 +80,6 @@ pub fn compress_rtp_udp_ip_umode(
         );
 
         let rohc_packet;
-        // Corrected: Pass context.rtp_ssrc and uncompressed_headers
         let crc_input_bytes =
             create_crc_input_from_original_headers(context.rtp_ssrc, uncompressed_headers);
 
@@ -115,10 +112,11 @@ pub fn compress_rtp_udp_ip_umode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::RtpUdpIpP1CompressorContext;
-    use crate::packet_processor::{
-        ADD_CID_OCTET_PREFIX_VALUE, UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+    use crate::constants::{
+        ADD_CID_OCTET_PREFIX_VALUE, ROHC_IR_PACKET_TYPE_WITH_DYN, UO_1_SN_MARKER_BIT_MASK,
+        UO_1_SN_PACKET_TYPE_BASE,
     };
+    use crate::context::RtpUdpIpP1CompressorContext;
     use crate::protocol_types::RtpUdpIpv4Headers;
 
     fn get_default_uncompressed_headers() -> RtpUdpIpv4Headers {
@@ -144,10 +142,7 @@ mod tests {
         let rohc_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
 
         assert!(!rohc_packet.is_empty());
-        assert_eq!(
-            rohc_packet[0],
-            crate::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN
-        );
+        assert_eq!(rohc_packet[0], ROHC_IR_PACKET_TYPE_WITH_DYN);
         assert_eq!(context.mode, CompressorMode::FirstOrder);
         assert_eq!(context.last_sent_rtp_sn_full, headers.rtp_sequence_number);
     }
@@ -162,10 +157,7 @@ mod tests {
 
         assert!(!rohc_packet.is_empty());
         assert_eq!(rohc_packet[0], ADD_CID_OCTET_PREFIX_VALUE | 5);
-        assert_eq!(
-            rohc_packet[1],
-            crate::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN
-        );
+        assert_eq!(rohc_packet[1], ROHC_IR_PACKET_TYPE_WITH_DYN);
         assert_eq!(context.mode, CompressorMode::FirstOrder);
     }
 
@@ -211,7 +203,6 @@ mod tests {
 
         // A jump larger than what UO-0 with 4 LSBs (p=0 window [100, 115]) can handle
         headers1.rtp_sequence_number += 20; // SN=120. (120 - 100 = 20). Not in [100,115]
-        // value_in_lsb_interval(120, 100, 4, 0) will be false.
         let rohc_packet_uo1 = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
 
         assert_eq!(rohc_packet_uo1.len(), 3);
@@ -247,8 +238,7 @@ mod tests {
         headers.rtp_sequence_number += 1;
         let next_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
         assert_eq!(
-            next_packet[0],
-            crate::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN,
+            next_packet[0], ROHC_IR_PACKET_TYPE_WITH_DYN,
             "Should be IR due to refresh. Actual: {:02X}",
             next_packet[0]
         );

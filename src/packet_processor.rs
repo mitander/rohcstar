@@ -1,30 +1,23 @@
+use crate::constants::{
+    ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_MASK, ADD_CID_OCTET_PREFIX_VALUE, IP_PROTOCOL_UDP,
+    PROFILE_ID_RTP_UDP_IP, ROHC_IR_PACKET_TYPE_BASE, ROHC_IR_PACKET_TYPE_D_BIT_MASK,
+    ROHC_IR_PACKET_TYPE_WITH_DYN, RTP_VERSION, UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+};
 use crate::crc::calculate_rohc_crc8;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::protocol_types::RohcUo1PacketProfile1;
 use crate::protocol_types::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RtpUdpIpv4Headers};
 use std::net::Ipv4Addr;
 
-pub const IP_PROTOCOL_UDP: u8 = 17;
-pub const RTP_VERSION: u8 = 2;
-pub const PROFILE_ID_RTP_UDP_IP: u8 = 0x01;
-
-pub const ROHC_IR_PACKET_TYPE_D_BIT_MASK: u8 = 0x01;
-pub const ROHC_IR_PACKET_TYPE_BASE: u8 = 0b1111_1100;
-pub const ROHC_IR_PACKET_TYPE_STATIC_ONLY: u8 = ROHC_IR_PACKET_TYPE_BASE;
-pub const ROHC_IR_PACKET_TYPE_WITH_DYN: u8 =
-    ROHC_IR_PACKET_TYPE_BASE | ROHC_IR_PACKET_TYPE_D_BIT_MASK;
-
-pub const ADD_CID_OCTET_PREFIX_MASK: u8 = 0b1111_0000;
-pub const ADD_CID_OCTET_PREFIX_VALUE: u8 = 0b1110_0000;
-pub const ADD_CID_OCTET_CID_MASK: u8 = 0x0F;
-
-pub const UO_1_SN_PACKET_TYPE_BASE: u8 = 0b10100000; // 0xA0
-pub const UO_1_SN_MARKER_BIT_MASK: u8 = 0b00000001;
+const IPV4_MIN_HEADER_LEN: usize = 20;
+const UDP_HEADER_LEN: usize = 8;
+const RTP_MIN_HEADER_LEN: usize = 12; // Base RTP header without CSRCs
+const IPV4_IHL_MULTIPLIER: usize = 4;
 
 pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
-    if data.len() < 20 {
+    if data.len() < IPV4_MIN_HEADER_LEN {
         return Err(RohcParsingError::NotEnoughData {
-            needed: 20,
+            needed: IPV4_MIN_HEADER_LEN,
             got: data.len(),
         });
     }
@@ -67,9 +60,9 @@ pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingE
     let ip_dst = Ipv4Addr::new(data[16], data[17], data[18], data[19]);
 
     let udp_offset = ip_header_len_bytes;
-    if data.len() < udp_offset + 8 {
+    if data.len() < udp_offset + UDP_HEADER_LEN {
         return Err(RohcParsingError::NotEnoughData {
-            needed: udp_offset + 8,
+            needed: udp_offset + UDP_HEADER_LEN,
             got: data.len(),
         });
     }
@@ -78,10 +71,10 @@ pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingE
     let udp_length = u16::from_be_bytes([data[udp_offset + 4], data[udp_offset + 5]]);
     let udp_checksum = u16::from_be_bytes([data[udp_offset + 6], data[udp_offset + 7]]);
 
-    let rtp_offset = udp_offset + 8;
-    if data.len() < rtp_offset + 12 {
+    let rtp_offset = udp_offset + UDP_HEADER_LEN;
+    if data.len() < rtp_offset + RTP_MIN_HEADER_LEN {
         return Err(RohcParsingError::NotEnoughData {
-            needed: rtp_offset + 12,
+            needed: rtp_offset + RTP_MIN_HEADER_LEN,
             got: data.len(),
         });
     }
@@ -113,7 +106,7 @@ pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingE
     ]);
 
     let mut rtp_csrc_list = Vec::new();
-    let mut current_csrc_offset = rtp_offset + 12;
+    let mut current_csrc_offset = rtp_offset + RTP_MIN_HEADER_LEN;
     for _ in 0..rtp_csrc_count {
         if data.len() < current_csrc_offset + 4 {
             return Err(RohcParsingError::NotEnoughData {
@@ -180,7 +173,7 @@ pub fn build_ir_profile1_packet(
 
     // Profile ID is the first byte of the CRC payload AND part of framing after Type
     packet_framing.push(ir_data.profile);
-    crc_payload.push(ir_data.profile); // Start CRC payload with Profile
+    crc_payload.push(ir_data.profile);
 
     if ir_data.profile != PROFILE_ID_RTP_UDP_IP {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -194,16 +187,14 @@ pub fn build_ir_profile1_packet(
     crc_payload.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
     crc_payload.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
     crc_payload.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
-
     crc_payload.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
     crc_payload.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
-    let rtp_flags: u8 = if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 };
-    crc_payload.push(rtp_flags);
+    crc_payload.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 });
 
     let crc_val = calculate_rohc_crc8(&crc_payload);
 
     let mut final_packet = packet_framing;
-    final_packet.extend_from_slice(&crc_payload[1..]); // Append rest of crc_payload (Static + Dynamic)
+    final_packet.extend_from_slice(&crc_payload[1..]);
     final_packet.push(crc_val);
 
     Ok(final_packet)
@@ -400,7 +391,7 @@ pub fn parse_uo0_profile1_cid0_packet(
 pub fn build_uo1_sn_profile1_packet(
     sn_8_lsb: u8,
     marker_bit: bool,
-    crc8_val: u8, // Changed: take pre-calculated CRC
+    crc8_val: u8,
 ) -> Result<Vec<u8>, RohcBuildingError> {
     let type_byte = UO_1_SN_PACKET_TYPE_BASE
         | (if marker_bit {
@@ -439,7 +430,7 @@ pub fn parse_uo1_sn_profile1_packet(
 
     Ok(RohcUo1PacketProfile1 {
         sn_lsb: sn_lsb_val,
-        num_sn_lsb_bits: 8, // Fixed for this MVP UO-1 type
+        num_sn_lsb_bits: 8,
         rtp_marker_bit_changed: marker_bit_changed,
         crc8: received_crc8,
     })
@@ -452,21 +443,24 @@ mod tests {
 
     #[test]
     fn test_parse_basic_rtp_udp_ipv4() {
-        let mut ip_header: [u8; 20] = [0; 20];
+        let mut ip_header: [u8; IPV4_MIN_HEADER_LEN] = [0; IPV4_MIN_HEADER_LEN];
         ip_header[0] = 0x45;
         ip_header[1] = 0x00;
-        ip_header[2..4].copy_from_slice(&((20 + 8 + 12) as u16).to_be_bytes());
+        ip_header[2..4].copy_from_slice(
+            &((IPV4_MIN_HEADER_LEN + UDP_HEADER_LEN + RTP_MIN_HEADER_LEN) as u16).to_be_bytes(),
+        );
         ip_header[8] = 64;
         ip_header[9] = 17;
         ip_header[12..16].copy_from_slice(&[192, 168, 1, 1]);
         ip_header[16..20].copy_from_slice(&[192, 168, 1, 2]);
 
-        let mut udp_header: [u8; 8] = [0; 8];
+        let mut udp_header: [u8; UDP_HEADER_LEN] = [0; UDP_HEADER_LEN];
         udp_header[0..2].copy_from_slice(&12345u16.to_be_bytes());
         udp_header[2..4].copy_from_slice(&54321u16.to_be_bytes());
-        udp_header[4..6].copy_from_slice(&((8 + 12) as u16).to_be_bytes());
+        udp_header[4..6]
+            .copy_from_slice(&((UDP_HEADER_LEN + RTP_MIN_HEADER_LEN) as u16).to_be_bytes());
 
-        let mut rtp_header: [u8; 12] = [0; 12];
+        let mut rtp_header: [u8; RTP_MIN_HEADER_LEN] = [0; RTP_MIN_HEADER_LEN];
         rtp_header[0] = 0x80;
         rtp_header[1] = 0x60;
         rtp_header[2..4].copy_from_slice(&1001u16.to_be_bytes());

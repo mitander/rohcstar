@@ -1,15 +1,15 @@
+use crate::constants::{
+    ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_MASK, ADD_CID_OCTET_PREFIX_VALUE,
+    DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, IP_PROTOCOL_UDP, ROHC_IR_PACKET_TYPE_BASE,
+    ROHC_IR_PACKET_TYPE_D_BIT_MASK, RTP_VERSION, UO_1_SN_PACKET_TYPE_BASE,
+};
 use crate::context::{DecompressorMode, RtpUdpIpP1DecompressorContext};
 use crate::encodings::decode_lsb;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_processor::{
-    ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_MASK, ADD_CID_OCTET_PREFIX_VALUE, IP_PROTOCOL_UDP,
-    ROHC_IR_PACKET_TYPE_BASE, ROHC_IR_PACKET_TYPE_D_BIT_MASK, RTP_VERSION,
-    UO_1_SN_PACKET_TYPE_BASE, parse_ir_profile1_packet, parse_uo0_profile1_cid0_packet,
-    parse_uo1_sn_profile1_packet,
+    parse_ir_profile1_packet, parse_uo0_profile1_cid0_packet, parse_uo1_sn_profile1_packet,
 };
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
-
-const DECOMPRESSOR_K1_THRESHOLD: u8 = 3;
 
 fn create_crc_input_for_verification(
     context: &RtpUdpIpP1DecompressorContext,
@@ -20,7 +20,6 @@ fn create_crc_input_for_verification(
     crc_input.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
     crc_input.extend_from_slice(&reconstructed_sn.to_be_bytes());
     crc_input.push(if reconstructed_marker { 0x01 } else { 0x00 });
-    // Timestamp is NOT included
     crc_input
 }
 
@@ -125,7 +124,9 @@ pub fn decompress_rtp_udp_ip_umode(
                     Ok(reconstructed_headers)
                 } else {
                     context.consecutive_crc_failures_in_fc += 1;
-                    if context.consecutive_crc_failures_in_fc >= DECOMPRESSOR_K1_THRESHOLD {
+                    if context.consecutive_crc_failures_in_fc
+                        >= DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
+                    {
                         context.mode = DecompressorMode::StaticContext;
                     }
                     Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -184,7 +185,9 @@ pub fn decompress_rtp_udp_ip_umode(
                     Ok(reconstructed_headers)
                 } else {
                     context.consecutive_crc_failures_in_fc += 1;
-                    if context.consecutive_crc_failures_in_fc >= DECOMPRESSOR_K1_THRESHOLD {
+                    if context.consecutive_crc_failures_in_fc
+                        >= DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
+                    {
                         context.mode = DecompressorMode::StaticContext;
                     }
                     Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -223,13 +226,11 @@ fn reconstruct_uncompressed_headers_from_ir(ir_packet: &RohcIrProfile1Packet) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::DEFAULT_UO0_SN_LSB_WIDTH;
+    use crate::constants::PROFILE_ID_RTP_UDP_IP;
     use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
-    use crate::packet_processor::{
-        PROFILE_ID_RTP_UDP_IP, build_ir_profile1_packet, build_uo0_profile1_cid0_packet,
-    };
-    use crate::profiles::profile1_compressor::{
-        DEFAULT_UO0_SN_LSB_WIDTH, compress_rtp_udp_ip_umode,
-    };
+    use crate::packet_processor::{build_ir_profile1_packet, build_uo0_profile1_cid0_packet};
+    use crate::profiles::profile1_compressor::compress_rtp_udp_ip_umode;
     use crate::protocol_types::RtpUdpIpv4Headers;
 
     fn get_default_uncompressed_headers_for_decomp_test(sn: u16) -> RtpUdpIpv4Headers {
@@ -350,7 +351,7 @@ mod tests {
         let correct_crc3 = crate::crc::calculate_rohc_crc3(&crc_input_for_correct);
         let corrupted_crc3 = correct_crc3.wrapping_add(1) & 0x07;
         let uo0_packet_bytes = build_uo0_profile1_cid0_packet(sn_lsb, corrupted_crc3).unwrap();
-        for i in 0..DECOMPRESSOR_K1_THRESHOLD {
+        for i in 0..DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
             let result = decompress_rtp_udp_ip_umode(&mut decompressor_context, &uo0_packet_bytes);
             assert!(
                 matches!(

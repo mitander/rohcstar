@@ -1,7 +1,10 @@
+use rohcstar::constants::{
+    ADD_CID_OCTET_PREFIX_VALUE, PROFILE_ID_RTP_UDP_IP, ROHC_IR_PACKET_TYPE_WITH_DYN,
+    UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+};
 use rohcstar::context::{
     DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,
 };
-use rohcstar::packet_processor::{ADD_CID_OCTET_PREFIX_VALUE, PROFILE_ID_RTP_UDP_IP};
 use rohcstar::profiles::profile1_compressor::compress_rtp_udp_ip_umode;
 use rohcstar::profiles::profile1_decompressor::decompress_rtp_udp_ip_umode;
 use rohcstar::protocol_types::RtpUdpIpv4Headers;
@@ -37,10 +40,7 @@ fn test_p1_umode_ir_then_uo0_flow_cid0() {
     compressor_context.initialize_static_part_with_uncompressed_headers(&original_headers1);
     let rohc_packet1 =
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers1).unwrap();
-    assert_eq!(
-        rohc_packet1[0],
-        rohcstar::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN
-    );
+    assert_eq!(rohc_packet1[0], ROHC_IR_PACKET_TYPE_WITH_DYN);
     let decompressed_headers1 =
         decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet1).unwrap();
     assert_eq!(
@@ -63,14 +63,8 @@ fn test_p1_umode_ir_then_uo0_flow_cid0() {
     let rohc_packet3 =
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
     assert_eq!(rohc_packet3.len(), 3);
-    assert_eq!(
-        (rohc_packet3[0] & 0xF0),
-        rohcstar::packet_processor::UO_1_SN_PACKET_TYPE_BASE
-    );
-    assert_ne!(
-        (rohc_packet3[0] & rohcstar::packet_processor::UO_1_SN_MARKER_BIT_MASK),
-        0
-    );
+    assert_eq!((rohc_packet3[0] & 0xF0), UO_1_SN_PACKET_TYPE_BASE);
+    assert_ne!((rohc_packet3[0] & UO_1_SN_MARKER_BIT_MASK), 0);
 
     let decompressed_headers3 =
         decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();
@@ -116,10 +110,7 @@ fn test_p1_umode_ir_then_uo0_flow_cid0() {
     let original_headers6 = create_sample_rtp_packet(105, 1800, true);
     let rohc_packet6 =
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers6).unwrap();
-    assert_eq!(
-        rohc_packet6[0],
-        rohcstar::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN
-    );
+    assert_eq!(rohc_packet6[0], ROHC_IR_PACKET_TYPE_WITH_DYN);
     let decompressed_headers6 =
         decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet6).unwrap();
     assert_eq!(
@@ -167,14 +158,8 @@ fn test_p1_umode_ir_then_uo0_flow_cid5() {
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
     assert_eq!(compressor_context.fo_packets_sent_since_ir, 2);
     assert_eq!(uo1_core_packet3.len(), 3, "Packet 3 core should be UO-1");
-    assert_eq!(
-        (uo1_core_packet3[0] & 0xF0),
-        rohcstar::packet_processor::UO_1_SN_PACKET_TYPE_BASE
-    );
-    assert_ne!(
-        (uo1_core_packet3[0] & rohcstar::packet_processor::UO_1_SN_MARKER_BIT_MASK),
-        0
-    );
+    assert_eq!((uo1_core_packet3[0] & 0xF0), UO_1_SN_PACKET_TYPE_BASE);
+    assert_ne!((uo1_core_packet3[0] & UO_1_SN_MARKER_BIT_MASK), 0);
 
     let mut rohc_packet3_framed = vec![ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)];
     rohc_packet3_framed.extend_from_slice(&uo1_core_packet3);
@@ -198,10 +183,7 @@ fn test_p1_umode_ir_then_uo0_flow_cid5() {
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers4).unwrap();
 
     assert_eq!(rohc_packet4[0], ADD_CID_OCTET_PREFIX_VALUE | (cid as u8));
-    assert_eq!(
-        rohc_packet4[1],
-        rohcstar::packet_processor::ROHC_IR_PACKET_TYPE_WITH_DYN
-    );
+    assert_eq!(rohc_packet4[1], ROHC_IR_PACKET_TYPE_WITH_DYN);
     assert_eq!(compressor_context.fo_packets_sent_since_ir, 0);
 
     let decompressed_headers4 =
@@ -266,14 +248,8 @@ fn test_p1_umode_sn_jump_triggers_uo1() {
         3,
         "Packet 3 should be UO-1 due to large SN jump"
     );
-    assert_eq!(
-        (rohc_packet3[0] & 0xF0),
-        rohcstar::packet_processor::UO_1_SN_PACKET_TYPE_BASE
-    );
-    assert_eq!(
-        (rohc_packet3[0] & rohcstar::packet_processor::UO_1_SN_MARKER_BIT_MASK),
-        0
-    ); // Marker is false
+    assert_eq!((rohc_packet3[0] & 0xF0), UO_1_SN_PACKET_TYPE_BASE);
+    assert_eq!((rohc_packet3[0] & UO_1_SN_MARKER_BIT_MASK), 0); // Marker is false
 
     let decompressed_headers3 =
         decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();

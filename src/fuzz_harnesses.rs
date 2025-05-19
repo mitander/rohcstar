@@ -1,6 +1,7 @@
+use crate::constants::PROFILE_ID_RTP_UDP_IP;
 use crate::context::RtpUdpIpP1DecompressorContext;
 use crate::decompress_rtp_udp_ip_umode;
-use crate::packet_processor::{PROFILE_ID_RTP_UDP_IP, build_ir_profile1_packet};
+use crate::packet_processor::build_ir_profile1_packet;
 use crate::protocol_types::RohcIrProfile1Packet;
 
 pub fn rohc_decompressor_harness(data: &[u8]) {
