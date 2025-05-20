@@ -12,7 +12,6 @@ use std::net::Ipv4Addr;
 const IPV4_MIN_HEADER_LEN: usize = 20;
 const UDP_HEADER_LEN: usize = 8;
 const RTP_MIN_HEADER_LEN: usize = 12; // Base RTP header without CSRCs
-const IPV4_IHL_MULTIPLIER: usize = 4;
 
 pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < IPV4_MIN_HEADER_LEN {

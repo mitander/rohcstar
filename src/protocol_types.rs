@@ -1,6 +1,9 @@
+use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use std::net::Ipv4Addr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtpUdpIpv4Headers {
     pub ip_ihl: u8,
     pub ip_dscp: u8,
@@ -13,7 +16,9 @@ pub struct RtpUdpIpv4Headers {
     pub ip_ttl: u8,
     pub ip_protocol: u8,
     pub ip_checksum: u16,
+    #[serde_as(as = "DisplayFromStr")]
     pub ip_src: Ipv4Addr,
+    #[serde_as(as = "DisplayFromStr")]
     pub ip_dst: Ipv4Addr,
     pub udp_src_port: u16,
     pub udp_dst_port: u16,
@@ -43,7 +48,7 @@ impl Default for RtpUdpIpv4Headers {
             ip_more_fragments: false,
             ip_fragment_offset: 0,
             ip_ttl: 64,
-            ip_protocol: 17, // Default to UDP
+            ip_protocol: 17,
             ip_checksum: 0,
             ip_src: Ipv4Addr::UNSPECIFIED,
             ip_dst: Ipv4Addr::UNSPECIFIED,
@@ -65,12 +70,15 @@ impl Default for RtpUdpIpv4Headers {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RohcIrProfile1Packet {
     pub cid: u16,
     pub profile: u8,
     pub crc8: u8,
+    #[serde_as(as = "DisplayFromStr")]
     pub static_ip_src: Ipv4Addr,
+    #[serde_as(as = "DisplayFromStr")]
     pub static_ip_dst: Ipv4Addr,
     pub static_udp_src_port: u16,
     pub static_udp_dst_port: u16,
@@ -84,7 +92,7 @@ impl Default for RohcIrProfile1Packet {
     fn default() -> Self {
         Self {
             cid: 0,
-            profile: 0x01, // ROHC Profile 1 for RTP/UDP/IP
+            profile: 0x01,
             crc8: 0,
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
@@ -98,26 +106,78 @@ impl Default for RohcIrProfile1Packet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RohcUo0PacketProfile1 {
     pub cid: Option<u8>,
     pub sn_lsb: u8,
     pub crc3: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RohcUo1PacketProfile1 {
-    // For UO-1, CID is usually implicit (0) or handled by Add-CID octet if present.
-    // The packet type itself (e.g., 100000xx for base UO-1) implies Profile 1 specific fields.
-    // We'll represent the most common fields for a UO-1 that primarily updates SN.
-    // Other variants (UO-1-TS, UO-1-ID) would have Option<u16/u32> for those.
-    pub sn_lsb: u16,         // The LSBs of the sequence number.
-    pub num_sn_lsb_bits: u8, // Actual number of LSBs for SN present in the packet.
-
-    // For Profile 1 UO-1, M (Marker) bit might be conveyed.
-    // Let's add it. Often packed with SN or as an extension bit.
-    pub rtp_marker_bit_changed: Option<bool>, // None if not present/changed, Some(new_val) if present
-
-    // UO-1 packets for Profile 1 typically have an 8-bit CRC.
+    pub sn_lsb: u16,
+    pub num_sn_lsb_bits: u8,
+    pub rtp_marker_bit_changed: Option<bool>,
     pub crc8: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rtp_udp_ipv4_headers_serde_roundtrip() {
+        let original = RtpUdpIpv4Headers {
+            ip_src: "1.2.3.4".parse().unwrap(),
+            ip_dst: "5.6.7.8".parse().unwrap(),
+            rtp_sequence_number: 12345,
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        println!("Serialized RtpUdpIpv4Headers: {}", serialized);
+        let deserialized: RtpUdpIpv4Headers = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_rohc_ir_profile1_packet_serde_roundtrip() {
+        let original = RohcIrProfile1Packet {
+            static_ip_src: "10.0.0.1".parse().unwrap(),
+            dyn_rtp_sn: 555,
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        println!("Serialized RohcIrProfile1Packet: {}", serialized);
+        let deserialized: RohcIrProfile1Packet = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_rohc_uo0_profile1_packet_serde_roundtrip() {
+        let original = RohcUo0PacketProfile1 {
+            cid: Some(1),
+            sn_lsb: 0x0A,
+            crc3: 0x05,
+        };
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: RohcUo0PacketProfile1 = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_rohc_uo1_profile1_packet_serde_roundtrip() {
+        let original = RohcUo1PacketProfile1 {
+            sn_lsb: 0xABCD,
+            num_sn_lsb_bits: 16,
+            rtp_marker_bit_changed: Some(true),
+            crc8: 0xFF,
+        };
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: RohcUo1PacketProfile1 = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
 }
