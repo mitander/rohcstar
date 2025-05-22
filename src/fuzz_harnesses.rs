@@ -1,6 +1,6 @@
-use crate::constants::PROFILE_ID_RTP_UDP_IP;
 use crate::context::RtpUdpIpP1DecompressorContext;
 use crate::decompress_rtp_udp_ip_umode;
+use crate::packet_defs::RohcProfile;
 use crate::packet_processor::build_ir_profile1_packet;
 use crate::protocol_types::RohcIrProfile1Packet;
 
@@ -30,13 +30,13 @@ use crate::protocol_types::RohcIrProfile1Packet;
 /// * `data`: A byte slice containing the fuzzer-generated input, treated as a ROHC packet.
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     // Initialize a decompressor context for Profile 1, CID 0.
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
 
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
     // This makes fuzzing of UO-0/UO-1 packets more meaningful.
     let sample_ir_data = RohcIrProfile1Packet {
         cid: 0,
-        profile: PROFILE_ID_RTP_UDP_IP,
+        profile: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1"
             .parse()
             .expect("Static IP parsing failed in harness"),

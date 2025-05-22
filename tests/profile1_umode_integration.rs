@@ -1,10 +1,11 @@
 use rohcstar::constants::{
-    ADD_CID_OCTET_PREFIX_VALUE, PROFILE_ID_RTP_UDP_IP, ROHC_IR_PACKET_TYPE_WITH_DYN,
-    UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
+    ADD_CID_OCTET_PREFIX_VALUE, ROHC_IR_PACKET_TYPE_WITH_DYN, UO_1_SN_P1_MARKER_BIT_MASK,
+    UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use rohcstar::context::{
     DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,
 };
+use rohcstar::packet_defs::RohcProfile;
 use rohcstar::profiles::profile1_compressor::compress_rtp_udp_ip_umode;
 use rohcstar::profiles::profile1_decompressor::decompress_rtp_udp_ip_umode;
 use rohcstar::protocol_types::RtpUdpIpv4Headers;
@@ -36,8 +37,8 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     let ir_refresh_interval = 5; // Refresh after 4 FO packets
 
     let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP);
+        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
 
     // Packet 1: IR
     // SN=100, M=false
@@ -177,9 +178,9 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     let ir_refresh_interval = 3; // Refresh after 2 FO packets
 
     let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
+        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
     // Decompressor context starts with CID 0 or an irrelevant CID to simulate NoContext for CID `cid`.
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
     decompressor_context.mode = DecompressorMode::NoContext; // Ensure it needs IR to establish context for `cid`
 
     // Packet 1 (IR): SN=200, M=true
@@ -322,8 +323,8 @@ fn p1_umode_sn_jump_triggers_uo1() {
     let ir_refresh_interval = 10; // High enough not to interfere with this specific test
 
     let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP);
+        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
 
     // Packet 1: IR to establish context
     // SN=500, M=false
@@ -405,8 +406,8 @@ fn p1_umode_uo0_sn_decoding_with_simulated_packet_loss() {
     let ir_refresh_interval = 20; // Keep high to avoid IR refresh interfering
 
     let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP);
+        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
     // Decompressor p_sn is initialized to DEFAULT_P_SN_OFFSET (0) by new()
 
     // Packet 1: IR to establish context

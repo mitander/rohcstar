@@ -1,7 +1,8 @@
-use crate::constants::{
-    DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP,
-};
+use crate::constants::{DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH};
+use crate::packet_defs::RohcProfile;
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
+use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+use std::any::Any;
 use std::net::Ipv4Addr;
 
 /// Defines the operational modes for a ROHC compressor.
@@ -21,7 +22,7 @@ pub enum CompressorMode {
 #[derive(Debug, Clone)]
 pub struct RtpUdpIpP1CompressorContext {
     /// ROHC Profile Identifier used by this context (e.g., 0x01 for RTP/UDP/IP).
-    pub profile_id: u8,
+    pub profile_id: RohcProfile,
     /// Context Identifier (CID) for this ROHC flow.
     pub cid: u16,
     /// Source IP Address.
@@ -66,7 +67,7 @@ impl RtpUdpIpP1CompressorContext {
     /// * `cid`: The Context Identifier for this flow.
     /// * `profile_id`: The ROHC Profile ID (e.g., `PROFILE_ID_RTP_UDP_IP`).
     /// * `ir_refresh_interval`: How often (in terms of FO packets) to send an IR refresh.
-    pub fn new(cid: u16, profile_id: u8, ir_refresh_interval: u32) -> Self {
+    pub fn new(cid: u16, profile_id: RohcProfile, ir_refresh_interval: u32) -> Self {
         Self {
             profile_id,
             cid,
@@ -119,7 +120,25 @@ impl Default for RtpUdpIpP1CompressorContext {
     /// Creates a default `RtpUdpIpP1CompressorContext`.
     /// Uses CID 0, Profile 1, and a default IR refresh interval.
     fn default() -> Self {
-        Self::new(0, PROFILE_ID_RTP_UDP_IP, DEFAULT_IR_REFRESH_INTERVAL)
+        Self::new(0, RohcProfile::RtpUdpIp, DEFAULT_IR_REFRESH_INTERVAL)
+    }
+}
+
+impl RohcCompressorContext for RtpUdpIpP1CompressorContext {
+    fn profile_id(&self) -> RohcProfile {
+        self.profile_id // Already a RohcProfile enum
+    }
+
+    fn cid(&self) -> u16 {
+        self.cid
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -147,7 +166,7 @@ const DEFAULT_P_SN_OFFSET: i64 = 0;
 #[derive(Debug, Clone)]
 pub struct RtpUdpIpP1DecompressorContext {
     /// ROHC Profile Identifier used by this context (e.g., 0x01 for RTP/UDP/IP).
-    pub profile_id: u8,
+    pub profile_id: RohcProfile,
     /// Context Identifier (CID) for this ROHC flow.
     pub cid: u16,
     /// Source IP Address.
@@ -189,7 +208,7 @@ impl RtpUdpIpP1DecompressorContext {
     /// # Arguments
     /// * `cid`: The Context Identifier for this flow.
     /// * `profile_id`: The ROHC Profile ID (e.g., `PROFILE_ID_RTP_UDP_IP`).
-    pub fn new(cid: u16, profile_id: u8) -> Self {
+    pub fn new(cid: u16, profile_id: RohcProfile) -> Self {
         Self {
             profile_id,
             cid,
@@ -239,7 +258,29 @@ impl Default for RtpUdpIpP1DecompressorContext {
     /// Creates a default `RtpUdpIpP1DecompressorContext`.
     /// Uses CID 0, Profile 1, and default `p_sn`. Mode is `NoContext`.
     fn default() -> Self {
-        Self::new(0, PROFILE_ID_RTP_UDP_IP)
+        Self::new(0, RohcProfile::RtpUdpIp)
+    }
+}
+
+impl RohcDecompressorContext for RtpUdpIpP1DecompressorContext {
+    fn profile_id(&self) -> RohcProfile {
+        self.profile_id
+    }
+
+    fn cid(&self) -> u16 {
+        self.cid
+    }
+
+    fn set_cid(&mut self, cid: u16) {
+        self.cid = cid;
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -258,7 +299,7 @@ mod tests {
             rtp_marker: false,
             ..Default::default()
         };
-        let mut context = RtpUdpIpP1CompressorContext::new(1, PROFILE_ID_RTP_UDP_IP, 50);
+        let mut context = RtpUdpIpP1CompressorContext::new(1, RohcProfile::RtpUdpIp, 50);
         assert_eq!(context.mode, CompressorMode::InitializationAndRefresh);
         assert_eq!(context.ip_source, Ipv4Addr::UNSPECIFIED);
 
@@ -278,7 +319,7 @@ mod tests {
     fn decompressor_context_initialization_from_ir() {
         let ir_packet_data = RohcIrProfile1Packet {
             cid: 5,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_ip_src: "10.0.0.1".parse().unwrap(),
             static_ip_dst: "10.0.0.2".parse().unwrap(),
             static_udp_src_port: 1000,
@@ -289,7 +330,7 @@ mod tests {
             dyn_rtp_marker: true,
             crc8: 0,
         };
-        let mut context = RtpUdpIpP1DecompressorContext::new(5, PROFILE_ID_RTP_UDP_IP);
+        let mut context = RtpUdpIpP1DecompressorContext::new(5, RohcProfile::RtpUdpIp);
         assert_eq!(context.mode, DecompressorMode::NoContext);
         assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
 
@@ -324,7 +365,7 @@ mod tests {
     fn decompressor_context_default_values() {
         let context = RtpUdpIpP1DecompressorContext::default();
         assert_eq!(context.cid, 0);
-        assert_eq!(context.profile_id, PROFILE_ID_RTP_UDP_IP);
+        assert_eq!(context.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(context.mode, DecompressorMode::NoContext);
         assert_eq!(
             context.expected_lsb_sn_width,
@@ -338,7 +379,7 @@ mod tests {
     fn compressor_context_default_values() {
         let context = RtpUdpIpP1CompressorContext::default();
         assert_eq!(context.cid, 0);
-        assert_eq!(context.profile_id, PROFILE_ID_RTP_UDP_IP);
+        assert_eq!(context.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(context.mode, CompressorMode::InitializationAndRefresh);
         assert_eq!(
             context.current_lsb_sn_width,

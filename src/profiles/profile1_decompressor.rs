@@ -359,8 +359,8 @@ pub fn decompress_rtp_udp_ip_umode(
 mod tests {
     use super::*;
     use crate::constants::DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
-    use crate::constants::PROFILE_ID_RTP_UDP_IP;
     use crate::context::RtpUdpIpP1CompressorContext;
+    use crate::packet_defs::RohcProfile;
     use crate::packet_processor::build_ir_profile1_packet;
     use crate::packet_processor::build_uo0_profile1_cid0_packet;
     use crate::profiles::profile1_compressor::compress_rtp_udp_ip_umode;
@@ -382,11 +382,11 @@ mod tests {
 
     #[test]
     fn decompress_ir_packet_cid0() {
-        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
         let headers = default_uncompressed_headers_for_decomp_test(100);
         let ir_data_to_build = RohcIrProfile1Packet {
             cid: 0, // Implicit CID 0
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_ip_src: headers.ip_src,
             static_ip_dst: headers.ip_dst,
             static_udp_src_port: headers.udp_src_port,
@@ -415,7 +415,7 @@ mod tests {
     fn decompress_ir_packet_with_add_cid() {
         let cid_val: u16 = 7;
         // Decompressor context might be for CID 0 initially or not yet existing for CID 7
-        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
 
         // Simulate initial state
         decompressor_context.mode = DecompressorMode::NoContext;
@@ -423,7 +423,7 @@ mod tests {
         let headers = default_uncompressed_headers_for_decomp_test(100);
         let ir_data_to_build = RohcIrProfile1Packet {
             cid: cid_val, // This CID will be encoded in Add-CID octet by builder
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_ip_src: headers.ip_src,
             static_ip_dst: headers.ip_dst,
             ..headers.clone().into()
@@ -446,7 +446,7 @@ mod tests {
         fn from(h: RtpUdpIpv4Headers) -> Self {
             RohcIrProfile1Packet {
                 cid: 0,
-                profile: PROFILE_ID_RTP_UDP_IP,
+                profile: RohcProfile::RtpUdpIp,
                 crc8: 0,
                 static_ip_src: h.ip_src,
                 static_ip_dst: h.ip_dst,
@@ -462,8 +462,8 @@ mod tests {
 
     #[test]
     fn decompress_uo0_packet_cid0_success() {
-        let mut compressor_context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
-        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+        let mut compressor_context = RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, 10);
+        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
         decompressor_context.expected_lsb_sn_width = DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
         let headers1 = default_uncompressed_headers_for_decomp_test(100);
 
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn decompress_uo0_crc_failure_leads_to_static_context_mode() {
-        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
+        let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
 
         let ir_headers = default_uncompressed_headers_for_decomp_test(99);
         decompressor_context.ip_source = ir_headers.ip_src;

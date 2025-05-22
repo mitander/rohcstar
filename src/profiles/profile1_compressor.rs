@@ -1,7 +1,8 @@
-use crate::constants::{DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP};
+use crate::constants::DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
 use crate::context::{CompressorMode, RtpUdpIpP1CompressorContext};
 use crate::encodings::{encode_lsb, value_in_lsb_interval};
 use crate::error::RohcError;
+use crate::packet_defs::RohcProfile;
 use crate::packet_processor::{
     build_ir_profile1_packet, build_uo0_profile1_cid0_packet, build_uo1_sn_profile1_packet,
 };
@@ -34,7 +35,7 @@ pub fn compress_rtp_udp_ip_umode(
     if should_send_ir_packet {
         let ir_data = RohcIrProfile1Packet {
             cid: context.cid,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             crc8: 0,
             static_ip_src: uncompressed_headers.ip_src,
             static_ip_dst: uncompressed_headers.ip_dst,
@@ -152,7 +153,7 @@ mod tests {
 
     #[test]
     fn compress_first_packet_sends_ir() {
-        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut context = RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, 10);
         let headers = default_uncompressed_headers();
 
         let rohc_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
@@ -169,7 +170,7 @@ mod tests {
     #[test]
     fn compress_first_packet_sends_ir_with_cid() {
         let cid_value = 5;
-        let mut context = RtpUdpIpP1CompressorContext::new(cid_value, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut context = RtpUdpIpP1CompressorContext::new(cid_value, RohcProfile::RtpUdpIp, 10);
         let headers = default_uncompressed_headers();
 
         let rohc_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();
@@ -182,7 +183,7 @@ mod tests {
 
     #[test]
     fn compress_small_sn_change_sends_uo0() {
-        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut context = RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, 10);
         let mut headers1 = default_uncompressed_headers(); // SN=100, TS=1000, M=false
 
         let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
@@ -206,7 +207,7 @@ mod tests {
 
     #[test]
     fn compress_marker_change_sends_uo1() {
-        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut context = RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, 10);
         let mut headers1 = default_uncompressed_headers(); // SN=100, TS=1000, M=false
 
         let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
@@ -235,7 +236,7 @@ mod tests {
     }
     #[test]
     fn compress_large_sn_change_sends_uo1() {
-        let mut context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
+        let mut context = RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, 10);
         let mut headers1 = default_uncompressed_headers(); // SN=100, TS=1000, M=false
 
         let _ = compress_rtp_udp_ip_umode(&mut context, &headers1).unwrap();
@@ -260,7 +261,7 @@ mod tests {
     fn compress_ir_refresh_triggered_after_interval() {
         let refresh_interval = 3;
         let mut context =
-            RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, refresh_interval);
+            RtpUdpIpP1CompressorContext::new(0, RohcProfile::RtpUdpIp, refresh_interval);
         let mut headers = default_uncompressed_headers(); // SN=100, TS=1000, M=false
 
         let _ir_packet = compress_rtp_udp_ip_umode(&mut context, &headers).unwrap();

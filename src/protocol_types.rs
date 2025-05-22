@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::net::Ipv4Addr;
 
+use crate::packet_defs::{self, RohcProfile};
+
 /// Represents the combined headers of an RTP/UDP/IPv4 packet.
 ///
 /// This structure is used to hold uncompressed header information before compression
@@ -111,7 +113,7 @@ pub struct RohcIrProfile1Packet {
     /// Context Identifier (CID) for this ROHC flow.
     pub cid: u16,
     /// ROHC Profile Identifier (e.g., 0x01 for RTP/UDP/IP).
-    pub profile: u8,
+    pub profile: packet_defs::RohcProfile,
     /// Calculated CRC-8 over the IR packet (excluding Add-CID and Type, but including Profile).
     pub crc8: u8,
     /// Source IP Address. Serialized from/to string.
@@ -138,8 +140,8 @@ impl Default for RohcIrProfile1Packet {
     fn default() -> Self {
         Self {
             cid: 0,
-            profile: crate::constants::PROFILE_ID_RTP_UDP_IP, // Default to Profile 1
-            crc8: 0, // CRC should be calculated before sending
+            profile: RohcProfile::RtpUdpIp, // Default to Profile 1
+            crc8: 0,                        // CRC should be calculated before sending
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
             static_udp_src_port: 0,

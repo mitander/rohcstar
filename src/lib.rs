@@ -15,7 +15,7 @@
 //!     RtpUdpIpP1DecompressorContext,
 //!     compress_rtp_udp_ip_umode,
 //!     decompress_rtp_udp_ip_umode,
-//!     constants::PROFILE_ID_RTP_UDP_IP,
+//!     packet_defs::RohcProfile,
 //!     RohcError,
 //! };
 //! use std::net::Ipv4Addr;
@@ -39,12 +39,12 @@
 //!     let ir_refresh_interval = 20; // Example refresh interval
 //!     let mut compressor_context = RtpUdpIpP1CompressorContext::new(
 //!         cid,
-//!         PROFILE_ID_RTP_UDP_IP,
+//!         RohcProfile::RtpUdpIp,
 //!         ir_refresh_interval
 //!     );
 //!     let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(
 //!         cid,
-//!         PROFILE_ID_RTP_UDP_IP
+//!         RohcProfile::RtpUdpIp
 //!     );
 //!
 //!     // 3. Compress the headers (first packet will be an IR packet)

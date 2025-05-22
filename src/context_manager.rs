@@ -1,5 +1,6 @@
-use crate::constants::{DEFAULT_IR_REFRESH_INTERVAL, PROFILE_ID_RTP_UDP_IP};
+use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
+use crate::packet_defs::RohcProfile;
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
 /// A simple context manager for ROHC Profile 1 (RTP/UDP/IP).
@@ -62,7 +63,7 @@ impl SimpleContextManager {
         if needs_reinitialization {
             let mut new_context = RtpUdpIpP1CompressorContext::new(
                 cid,
-                PROFILE_ID_RTP_UDP_IP, // Assuming Profile 1 for this manager
+                RohcProfile::RtpUdpIp, // Assuming Profile 1 for this manager
                 DEFAULT_IR_REFRESH_INTERVAL, // Default refresh interval
             );
             // This will set mode to InitializationAndRefresh, ensuring IR is sent.
@@ -96,7 +97,7 @@ impl SimpleContextManager {
         if needs_initialization {
             self.decompressor_context = Some(RtpUdpIpP1DecompressorContext::new(
                 cid,
-                PROFILE_ID_RTP_UDP_IP, // Assuming Profile 1
+                RohcProfile::RtpUdpIp, // Assuming Profile 1
             ));
         }
         // `unwrap` is safe here due to the logic above.
@@ -214,7 +215,7 @@ mod tests {
 
         let context1 = manager.get_or_init_decompressor_context(0);
         assert_eq!(context1.cid, 0);
-        assert_eq!(context1.profile_id, PROFILE_ID_RTP_UDP_IP);
+        assert_eq!(context1.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(context1.mode, DecompressorMode::NoContext);
 
         let context1_ptr_before = context1 as *mut _;
@@ -254,7 +255,7 @@ mod tests {
         let mut manager = SimpleContextManager::new();
         let ir_data = RohcIrProfile1Packet {
             cid: 0,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_rtp_ssrc: 999,
             dyn_rtp_sn: 100,
             ..Default::default()
@@ -270,7 +271,7 @@ mod tests {
 
         let ir_data_cid5 = RohcIrProfile1Packet {
             cid: 5,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_rtp_ssrc: 888,
             dyn_rtp_sn: 200,
             ..Default::default()

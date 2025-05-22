@@ -190,9 +190,9 @@ pub fn build_ir_profile1_packet(
     ir_data: &RohcIrProfile1Packet,
 ) -> Result<Vec<u8>, RohcBuildingError> {
     // Estimate capacity: Add-CID (1, optional) + Type (1) + Profile (1) + Static (16) + Dynamic (7) + CRC (1)
-    let mut final_packet_bytes = Vec::with_capacity(1 + 1 + 1 + 16 + 7 + 1);
+    let mut final_packet_bytes: Vec<u8> = Vec::with_capacity(1 + 1 + 1 + 16 + 7 + 1);
     // CRC payload starts *after* Type octet and *includes* Profile octet.
-    let mut crc_payload_bytes = Vec::with_capacity(1 + 16 + 7);
+    let mut crc_payload_bytes: Vec<u8> = Vec::with_capacity(1 + 16 + 7);
 
     if ir_data.cid > 0 && ir_data.cid <= 15 {
         final_packet_bytes
@@ -208,17 +208,18 @@ pub fn build_ir_profile1_packet(
     // Packet type is always IR with dynamic chain for Profile 1 U-mode MVP.
     final_packet_bytes.push(ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-    if ir_data.profile != PROFILE_ID_RTP_UDP_IP {
+    let profile_u8: u8 = ir_data.profile.into();
+    if profile_u8 != PROFILE_ID_RTP_UDP_IP {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "Profile ID".to_string(),
             description: format!(
                 "Expected ROHC Profile 1 (0x{:02X}), got 0x{:02X}",
-                PROFILE_ID_RTP_UDP_IP, ir_data.profile
+                PROFILE_ID_RTP_UDP_IP, profile_u8
             ),
         });
     }
-    final_packet_bytes.push(ir_data.profile);
-    crc_payload_bytes.push(ir_data.profile); // Profile is the first byte of CRC payload
+    final_packet_bytes.push(profile_u8);
+    crc_payload_bytes.push(profile_u8); // Profile is the first byte of CRC payload
 
     crc_payload_bytes.extend_from_slice(&ir_data.static_ip_src.octets());
     crc_payload_bytes.extend_from_slice(&ir_data.static_ip_dst.octets());
@@ -415,7 +416,7 @@ pub fn parse_ir_profile1_packet(data: &[u8]) -> Result<RohcIrProfile1Packet, Roh
 
     Ok(RohcIrProfile1Packet {
         cid: 0, // Caller (dispatcher) should set this based on Add-CID or implicit context
-        profile: profile_octet_value,
+        profile: profile_octet_value.into(),
         crc8: received_crc8_value,
         static_ip_src: static_ip_src_addr,
         static_ip_dst: static_ip_dst_addr,
@@ -546,6 +547,8 @@ pub fn parse_uo1_sn_profile1_packet(
 
 #[cfg(test)]
 mod tests {
+    use crate::packet_defs::RohcProfile;
+
     use super::*;
     use std::net::Ipv4Addr;
 
@@ -598,7 +601,7 @@ mod tests {
     fn build_and_parse_ir_profile1_for_cid0() {
         let ir_data_content = RohcIrProfile1Packet {
             cid: 0,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_ip_src: Ipv4Addr::new(1, 2, 3, 4),
             static_ip_dst: Ipv4Addr::new(5, 6, 7, 8),
             static_udp_src_port: 1000,
@@ -640,7 +643,7 @@ mod tests {
         let cid_value = 7u16;
         let ir_data_content = RohcIrProfile1Packet {
             cid: cid_value,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             static_ip_src: Ipv4Addr::new(10, 0, 0, 1),
             static_ip_dst: Ipv4Addr::new(10, 0, 0, 2),
             ..Default::default()
@@ -673,7 +676,7 @@ mod tests {
     fn parse_ir_packet_handles_crc_error() {
         let ir_data_content = RohcIrProfile1Packet {
             cid: 0,
-            profile: PROFILE_ID_RTP_UDP_IP,
+            profile: RohcProfile::RtpUdpIp,
             ..Default::default()
         };
         let mut built_packet_bytes = build_ir_profile1_packet(&ir_data_content).unwrap();
