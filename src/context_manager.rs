@@ -1,7 +1,7 @@
 use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
-use crate::packet_defs::RohcProfile;
-use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
+use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// A simple context manager for ROHC Profile 1 (RTP/UDP/IP).
 ///

@@ -59,10 +59,6 @@ pub const UO_1_SN_P1_PACKET_TYPE_BASE: u8 = 0b1010_0000;
 /// Mask for the Marker (M) bit in a UO-1-SN (Profile 1) packet's type octet.
 pub const UO_1_SN_P1_MARKER_BIT_MASK: u8 = 0b0000_0001;
 
-// Example for a potential UO-1-TS variant (if you define one)
-// pub const UO_1_TS_P1_PACKET_TYPE_BASE: u8 = 0b1011_0000; // e.g., starts with 1011
-// pub const UO_1_TS_P1_MARKER_BIT_MASK: u8 = 0b0000_0001; // If marker is also LSB
-
 // --- LSB Encoding Related Defaults ---
 
 /// Default number of LSBs used for encoding the RTP Sequence Number in UO-0 packets for Profile 1.
@@ -70,7 +66,7 @@ pub const DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH: u8 = 4;
 /// Default number of LSBs for RTP Sequence Number in UO-1-SN packets for Profile 1.
 pub const DEFAULT_PROFILE1_UO1_SN_LSB_WIDTH: u8 = 8;
 /// Default number of LSBs for RTP Timestamp if/when UO-1-TS is implemented for Profile 1.
-pub const DEFAULT_PROFILE1_UO1_TS_LSB_WIDTH: u8 = 16; // Example, can be tuned
+pub const DEFAULT_PROFILE1_UO1_TS_LSB_WIDTH: u8 = 16;
 
 // --- Decompressor Specific Thresholds ---
 

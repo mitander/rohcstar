@@ -3,11 +3,10 @@ use crate::constants::{
     ROHC_IR_PACKET_TYPE_BASE, ROHC_IR_PACKET_TYPE_D_BIT_MASK, ROHC_IR_PACKET_TYPE_WITH_DYN,
     RTP_VERSION, UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
-use crate::crc::calculate_rohc_crc8; // Assuming CRC-3 is not used directly in packet_processor builders
+use crate::crc::calculate_rohc_crc8;
 use crate::error::{RohcBuildingError, RohcParsingError};
-use crate::protocol_types::{
-    RohcIrProfile1Packet, RohcUo0PacketProfile1, RohcUo1PacketProfile1, RtpUdpIpv4Headers,
-};
+use crate::packet_defs::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RohcUo1PacketProfile1};
+use crate::protocol_types::RtpUdpIpv4Headers;
 use std::net::Ipv4Addr;
 
 /// Minimum length of an IPv4 header in bytes (without options).
@@ -542,6 +541,7 @@ pub fn parse_uo1_sn_profile1_packet(
         num_sn_lsb_bits: 8,
         rtp_marker_bit_value: Some(marker_bit_is_set),
         crc8: received_crc8_val,
+        ..Default::default()
     })
 }
 
@@ -610,7 +610,7 @@ mod tests {
             dyn_rtp_sn: 12345,
             dyn_rtp_timestamp: 543210,
             dyn_rtp_marker: true,
-            ..Default::default()
+            crc8: 0,
         };
 
         let built_packet_bytes = build_ir_profile1_packet(&ir_data_content).unwrap();

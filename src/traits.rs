@@ -58,7 +58,7 @@ pub trait ProfileHandler: Send + Sync {
     ///
     /// # Arguments
     /// * `context`: A mutable reference to a generic `RohcCompressorContext`.
-    ///              The handler must downcast this to its specific context type.
+    ///   The handler must downcast this to its specific context type.
     /// * `headers`: The uncompressed headers to compress.
     ///
     /// # Returns
@@ -73,11 +73,11 @@ pub trait ProfileHandler: Send + Sync {
     ///
     /// # Arguments
     /// * `context`: A mutable reference to a generic `RohcDecompressorContext`.
-    ///              The handler must downcast this to its specific context type.
-    ///              The context's CID should already be set correctly by the caller.
+    ///   The handler must downcast this to its specific context type.
+    ///   The context's CID should already be set correctly by the caller.
     ///
     /// * `rohc_packet_core_bytes`: Packet data starting *after* any Add-CID octet,
-    ///                             beginning with the ROHC packet type discriminator.
+    ///   beginning with the ROHC packet type discriminator.
     ///
     /// # Returns
     /// A `Result` containing the reconstructed `GenericUncompressedHeaders` or a `RohcError`.

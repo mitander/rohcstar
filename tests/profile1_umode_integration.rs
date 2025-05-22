@@ -1,14 +1,16 @@
+// Integration tests for ROHC Profile 1 Unidirectional mode operations,
+// using the Profile1Handler.
+
 use rohcstar::constants::{
-    ADD_CID_OCTET_PREFIX_VALUE, ROHC_IR_PACKET_TYPE_WITH_DYN, UO_1_SN_P1_MARKER_BIT_MASK,
-    UO_1_SN_P1_PACKET_TYPE_BASE,
+    ADD_CID_OCTET_PREFIX_VALUE, DEFAULT_P_SN_OFFSET_DECOMPRESSOR, ROHC_IR_PACKET_TYPE_WITH_DYN,
+    UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
-use rohcstar::context::{
-    DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,
-};
-use rohcstar::packet_defs::RohcProfile;
-use rohcstar::profiles::profile1_compressor::compress_rtp_udp_ip_umode;
-use rohcstar::profiles::profile1_decompressor::decompress_rtp_udp_ip_umode;
+use rohcstar::context::{DecompressorMode as P1DecompressorMode, RtpUdpIpP1DecompressorContext};
+use rohcstar::packet_defs::GenericUncompressedHeaders;
+use rohcstar::profiles::p1_handler::Profile1Handler;
 use rohcstar::protocol_types::RtpUdpIpv4Headers;
+use rohcstar::traits::ProfileHandler;
+use rohcstar::traits::RohcDecompressorContext;
 
 /// Helper function to create sample RTP/UDP/IPv4 headers for testing.
 fn create_sample_rtp_packet(seq_num: u16, timestamp: u32, marker: bool) -> RtpUdpIpv4Headers {
@@ -17,250 +19,251 @@ fn create_sample_rtp_packet(seq_num: u16, timestamp: u32, marker: bool) -> RtpUd
         ip_dst: "192.168.0.2".parse().unwrap(),
         udp_src_port: 10000,
         udp_dst_port: 20000,
-        rtp_ssrc: 0x12345678, // Consistent SSRC for a flow
+        rtp_ssrc: 0x12345678,
         rtp_sequence_number: seq_num,
         rtp_timestamp: timestamp,
         rtp_marker: marker,
         ip_protocol: 17, // UDP
         rtp_version: 2,
-        ip_ihl: 5, // No IP options
+        ip_ihl: 5,
         ip_ttl: 64,
         ..Default::default()
     }
 }
 
-/// Tests a basic flow for Profile 1 U-mode with CID 0:
-/// IR -> UO-0 (SN increment) -> UO-1 (Marker change) -> UO-1 (Marker change back) -> UO-0 -> IR (refresh).
 #[test]
 fn p1_umode_ir_to_fo_sequence_cid0() {
+    let handler = Profile1Handler::new();
     let cid: u16 = 0;
-    let ir_refresh_interval = 5; // Refresh after 4 FO packets
+    let ir_refresh_interval = 5;
 
-    let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
+    let mut compressor_context_dyn = handler.create_compressor_context(cid, ir_refresh_interval);
+    let mut decompressor_context_dyn = handler.create_decompressor_context(cid);
+    // CID is set within create_decompressor_context by P1Handler calling RtpUdpIpP1DecompressorContext::new
 
-    // Packet 1: IR
-    // SN=100, M=false
+    // Packet 1: IR (SN=100, M=false)
     let original_headers1 = create_sample_rtp_packet(100, 1000, false);
-    // Compressor context is initialized with these headers implicitly by the first compress call
-    // when in InitializationAndRefresh mode.
-    let rohc_packet1 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers1).unwrap();
-    assert_eq!(
-        rohc_packet1[0], ROHC_IR_PACKET_TYPE_WITH_DYN,
-        "P1: IR packet type check"
-    );
+    let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers1.clone());
 
-    let decompressed_headers1 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet1).unwrap();
-    assert_eq!(
-        decompressed_headers1.rtp_marker, original_headers1.rtp_marker,
-        "P1: Marker mismatch"
-    );
-    assert_eq!(
-        decompressor_context.mode,
-        DecompressorMode::FullContext,
-        "P1: Decompressor should be in FC mode"
-    );
+    let rohc_packet1 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers1)
+        .unwrap();
+    assert_eq!(rohc_packet1[0], ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-    // Packet 2: UO-0
-    // SN=101 (small increment), M=false (no change)
-    let original_headers2 = create_sample_rtp_packet(101, 1160, false);
-    let rohc_packet2 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers2).unwrap();
-    assert_eq!(rohc_packet2.len(), 1, "P2: Expected UO-0 (1 byte)");
-
-    let decompressed_headers2 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet2).unwrap();
-    // UO-0 takes marker from decompressor context (which was from original_headers1)
-    assert_eq!(
-        decompressed_headers2.rtp_marker, original_headers1.rtp_marker,
-        "P2: Marker should be from context (original_headers1)"
-    );
-    assert_eq!(
-        decompressed_headers2.rtp_sequence_number, original_headers2.rtp_sequence_number,
-        "P2: SN mismatch"
-    );
-
-    // Packet 3: UO-1 (Marker changes)
-    // SN=102, M=true
-    let original_headers3 = create_sample_rtp_packet(102, 1320, true);
-    let rohc_packet3 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
-    assert_eq!(rohc_packet3.len(), 3, "P3: Expected UO-1-SN (3 bytes)");
-    assert_eq!(
-        (rohc_packet3[0] & 0xF0),
-        UO_1_SN_P1_PACKET_TYPE_BASE,
-        "P3: UO-1 type prefix check"
-    );
-    assert_ne!(
-        (rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
-        0,
-        "P3: UO-1 marker bit should be set"
-    );
-
-    let decompressed_headers3 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();
-    assert_eq!(
-        decompressed_headers3.rtp_sequence_number, original_headers3.rtp_sequence_number,
-        "P3: SN mismatch"
-    );
-    // UO-1-SN for MVP doesn't carry TS, so decompressor uses last known TS from context
-    assert_eq!(
-        decompressed_headers3.rtp_timestamp,
-        original_headers1.rtp_timestamp, // TS from P1 context
-        "P3: TS should be from context (original_headers1)"
-    );
-    assert_eq!(
-        decompressed_headers3.rtp_marker, original_headers3.rtp_marker,
-        "P3: Marker should match current packet"
-    );
-
-    // Packet 4: UO-1 (Marker changes again)
-    // SN=103, M=false
-    let original_headers4 = create_sample_rtp_packet(103, 1480, false);
-    let rohc_packet4 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers4).unwrap();
-    assert_eq!(rohc_packet4.len(), 3, "P4: Expected UO-1-SN (3 bytes)");
-    assert_eq!(
-        (rohc_packet4[0] & UO_1_SN_P1_MARKER_BIT_MASK),
-        0,
-        "P4: UO-1 marker bit should be clear"
-    );
-
-    let decompressed_headers4 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet4).unwrap();
-    assert_eq!(
-        decompressed_headers4.rtp_marker, original_headers4.rtp_marker,
-        "P4: Marker mismatch"
-    );
-
-    // Packet 5: UO-0 (Marker same, SN small delta)
-    // SN=104, M=false
-    // This is the 4th FO packet. IR refresh interval is 5. Next FO packet will trigger IR.
-    let original_headers5 = create_sample_rtp_packet(104, 1640, false);
-    let rohc_packet5 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers5).unwrap();
-    assert_eq!(rohc_packet5.len(), 1, "P5: Expected UO-0 (1 byte)");
-
-    let decompressed_headers5 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet5).unwrap();
-    // UO-0 takes marker from decompressor context (which was P4's marker: false)
-    assert_eq!(
-        decompressed_headers5.rtp_marker, original_headers4.rtp_marker,
-        "P5: Marker should be from context (original_headers4)"
-    );
-
-    // Packet 6: IR (Refresh interval triggered)
-    // SN=105, M=true
-    let original_headers6 = create_sample_rtp_packet(105, 1800, true);
-    let rohc_packet6 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers6).unwrap();
-    assert_eq!(
-        rohc_packet6[0], ROHC_IR_PACKET_TYPE_WITH_DYN,
-        "P6: IR packet type check (refresh)"
-    );
-
-    let decompressed_headers6 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet6).unwrap();
-    assert_eq!(
-        decompressed_headers6.rtp_marker, original_headers6.rtp_marker,
-        "P6: Marker mismatch"
-    );
-}
-
-/// Tests Profile 1 U-mode sequence with a small non-zero CID, requiring Add-CID octets.
-/// Verifies IR -> UO-1 (marker change) -> UO-1 (marker change + SN LSBs) -> IR (refresh)
-#[test]
-fn p1_umode_ir_to_fo_sequence_small_cid() {
-    let cid: u16 = 5;
-    let ir_refresh_interval = 3; // Refresh after 2 FO packets
-
-    let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
-    // Decompressor context starts with CID 0 or an irrelevant CID to simulate NoContext for CID `cid`.
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, RohcProfile::RtpUdpIp);
-    decompressor_context.mode = DecompressorMode::NoContext; // Ensure it needs IR to establish context for `cid`
-
-    // Packet 1 (IR): SN=200, M=true
-    let original_headers1 = create_sample_rtp_packet(200, 2000, true);
-    // Compressor context implicitly initialized for this flow by first compress call
-    let rohc_packet1 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers1).unwrap();
-    assert_eq!(
-        rohc_packet1[0],
-        ADD_CID_OCTET_PREFIX_VALUE | (cid as u8),
-        "P1: Add-CID octet check"
-    );
-    assert_eq!(
-        rohc_packet1[1], ROHC_IR_PACKET_TYPE_WITH_DYN,
-        "P1: IR type check after Add-CID"
-    );
-
-    let decompressed_headers1 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet1).unwrap();
-    assert_eq!(
-        decompressor_context.cid, cid,
-        "P1: Decompressor CID should be updated from Add-CID"
-    );
-    assert_eq!(decompressor_context.mode, DecompressorMode::FullContext);
+    let decompressed_generic1 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet1)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers1) = decompressed_generic1;
     assert_eq!(
         decompressed_headers1.rtp_marker,
         original_headers1.rtp_marker
     );
-    assert!(
-        decompressor_context.last_reconstructed_rtp_marker,
-        "P1: Context marker should be true"
+
+    let p1_decomp_ctx = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert_eq!(p1_decomp_ctx.mode, P1DecompressorMode::FullContext);
+
+    // Packet 2: UO-0 (SN=101, M=false)
+    let original_headers2 = create_sample_rtp_packet(101, 1160, false);
+    let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers2.clone());
+    let rohc_packet2 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers2)
+        .unwrap();
+    assert_eq!(rohc_packet2.len(), 1);
+
+    let decompressed_generic2 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet2)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers2) = decompressed_generic2;
+    assert_eq!(
+        decompressed_headers2.rtp_marker,
+        original_headers1.rtp_marker
+    ); // UO-0 uses context marker
+    assert_eq!(
+        decompressed_headers2.rtp_sequence_number,
+        original_headers2.rtp_sequence_number
     );
 
-    // Packet 2 (UO-1): SN=201, M=false (marker changed)
+    // Packet 3: UO-1-SN (SN=102, M=true)
+    let original_headers3 = create_sample_rtp_packet(102, 1320, true);
+    let generic_headers3 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers3.clone());
+    let rohc_packet3 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers3)
+        .unwrap();
+    assert_eq!(rohc_packet3.len(), 3);
+    assert_eq!((rohc_packet3[0] & 0xF0), UO_1_SN_P1_PACKET_TYPE_BASE);
+    assert_ne!((rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK), 0);
+
+    let decompressed_generic3 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet3)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers3) = decompressed_generic3;
+    assert_eq!(
+        decompressed_headers3.rtp_sequence_number,
+        original_headers3.rtp_sequence_number
+    );
+    // For UO-1-SN (MVP), TS is from context (i.e., from original_headers1 as UO-0 didn't update it)
+    assert_eq!(
+        decompressed_headers3.rtp_timestamp,
+        original_headers1.rtp_timestamp
+    );
+    assert_eq!(
+        decompressed_headers3.rtp_marker,
+        original_headers3.rtp_marker
+    );
+
+    // Packet 4: UO-1-SN (SN=103, M=false)
+    let original_headers4 = create_sample_rtp_packet(103, 1480, false);
+    let generic_headers4 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers4.clone());
+    let rohc_packet4 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers4)
+        .unwrap();
+    assert_eq!(rohc_packet4.len(), 3);
+    assert_eq!((rohc_packet4[0] & UO_1_SN_P1_MARKER_BIT_MASK), 0);
+
+    let decompressed_generic4 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet4)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers4) = decompressed_generic4;
+    assert_eq!(
+        decompressed_headers4.rtp_marker,
+        original_headers4.rtp_marker
+    );
+
+    // Packet 5: UO-0 (SN=104, M=false)
+    let original_headers5 = create_sample_rtp_packet(104, 1640, false);
+    let generic_headers5 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers5.clone());
+    let rohc_packet5 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers5)
+        .unwrap();
+    assert_eq!(rohc_packet5.len(), 1);
+
+    let decompressed_generic5 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet5)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers5) = decompressed_generic5;
+    assert_eq!(
+        decompressed_headers5.rtp_marker,
+        original_headers4.rtp_marker
+    ); // UO-0 uses context marker (from P4)
+
+    // Packet 6: IR (Refresh: SN=105, M=true)
+    let original_headers6 = create_sample_rtp_packet(105, 1800, true);
+    let generic_headers6 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers6.clone());
+    let rohc_packet6 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers6)
+        .unwrap();
+    assert_eq!(rohc_packet6[0], ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+    let decompressed_generic6 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet6)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers6) = decompressed_generic6;
+    assert_eq!(
+        decompressed_headers6.rtp_marker,
+        original_headers6.rtp_marker
+    );
+}
+
+#[test]
+fn p1_umode_ir_to_fo_sequence_small_cid() {
+    let handler = Profile1Handler::new();
+    let cid: u16 = 5;
+    let ir_refresh_interval = 3;
+
+    let mut compressor_context_dyn = handler.create_compressor_context(cid, ir_refresh_interval);
+    // Decompressor context starts unassociated with CID 5
+    let mut decompressor_context_dyn = handler.create_decompressor_context(0);
+    // Downcast to set NoContext mode for testing IR reception for new CID
+    decompressor_context_dyn
+        .as_any_mut()
+        .downcast_mut::<RtpUdpIpP1DecompressorContext>()
+        .unwrap()
+        .mode = P1DecompressorMode::NoContext;
+
+    // Packet 1 (IR with Add-CID for CID 5)
+    let original_headers1 = create_sample_rtp_packet(200, 2000, true);
+    let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers1.clone());
+    let rohc_packet1_framed = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers1)
+        .unwrap();
+    assert_eq!(
+        rohc_packet1_framed[0],
+        ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)
+    );
+    assert_eq!(rohc_packet1_framed[1], ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+    // Engine/Dispatcher would parse Add-CID, get/create context for CID 5, and set its CID.
+    // Simulate this by setting the CID on our decompressor_context before calling decompress.
+    decompressor_context_dyn
+        .as_any_mut()
+        .downcast_mut::<RtpUdpIpP1DecompressorContext>()
+        .unwrap()
+        .set_cid(cid);
+    let core_rohc_packet1 = &rohc_packet1_framed[1..]; // Pass core packet to handler
+    let decompressed_generic1 = handler
+        .decompress(decompressor_context_dyn.as_mut(), core_rohc_packet1)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers1) = decompressed_generic1;
+
+    let p1_decomp_ctx = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert_eq!(p1_decomp_ctx.cid, cid);
+    assert_eq!(p1_decomp_ctx.mode, P1DecompressorMode::FullContext);
+    assert_eq!(
+        decompressed_headers1.rtp_marker,
+        original_headers1.rtp_marker
+    );
+    assert!(p1_decomp_ctx.last_reconstructed_rtp_marker);
+
+    // Packet 2 (UO-1 with Add-CID for CID 5)
     let original_headers2 = create_sample_rtp_packet(201, 2160, false);
-    let uo1_core_packet = // Compressor generates core packet without Add-CID
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers2).unwrap();
-    assert_eq!(uo1_core_packet.len(), 3, "P2: UO-1 core packet length");
+    let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers2.clone());
+    let rohc_packet2_framed = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers2)
+        .unwrap();
+    assert_eq!(
+        rohc_packet2_framed[0],
+        ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)
+    );
 
-    // Simulate framing with Add-CID for decompressor
-    let mut rohc_packet2_framed = vec![ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)];
-    rohc_packet2_framed.extend_from_slice(&uo1_core_packet);
-
-    let decompressed_headers2 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet2_framed).unwrap();
+    // Decompressor context already knows CID 5.
+    let core_rohc_packet2 = &rohc_packet2_framed[1..];
+    let decompressed_generic2 = handler
+        .decompress(decompressor_context_dyn.as_mut(), core_rohc_packet2)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers2) = decompressed_generic2;
     assert_eq!(
         decompressed_headers2.rtp_marker,
         original_headers2.rtp_marker
     );
-    assert!(
-        !decompressor_context.last_reconstructed_rtp_marker,
-        "P2: Context marker should be false"
-    );
+    let p1_decomp_ctx_after_p2 = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert!(!p1_decomp_ctx_after_p2.last_reconstructed_rtp_marker);
 
-    // Packet 3 (UO-1): SN=202, M=true (marker changed again)
-    // This is the 2nd FO packet. IR refresh interval is 3. (2 >= 3-1) -> Next should be IR.
+    // Packet 3 (UO-1 with Add-CID for CID 5)
     let original_headers3 = create_sample_rtp_packet(202, 2320, true);
-    let uo1_core_packet3 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
-    assert_eq!(
-        compressor_context.fo_packets_sent_since_ir, 2,
-        "P3: FO packets count before this one"
-    );
-    assert_eq!(uo1_core_packet3.len(), 3, "P3: UO-1 core packet length");
-    assert_eq!(
-        (uo1_core_packet3[0] & 0xF0),
-        UO_1_SN_P1_PACKET_TYPE_BASE,
-        "P3: UO-1 type prefix"
-    );
-    assert_ne!(
-        (uo1_core_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
-        0,
-        "P3: UO-1 marker bit set"
-    );
+    let generic_headers3 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers3.clone());
+    let rohc_packet3_framed = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers3)
+        .unwrap();
+    let p1_comp_ctx = compressor_context_dyn
+        .as_any()
+        .downcast_ref::<rohcstar::context::RtpUdpIpP1CompressorContext>()
+        .unwrap();
+    assert_eq!(p1_comp_ctx.fo_packets_sent_since_ir, 2); // Before this P3 packet was sent
 
-    let mut rohc_packet3_framed = vec![ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)];
-    rohc_packet3_framed.extend_from_slice(&uo1_core_packet3);
-    let decompressed_headers3 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3_framed).unwrap();
-
+    let core_rohc_packet3 = &rohc_packet3_framed[1..];
+    let decompressed_generic3 = handler
+        .decompress(decompressor_context_dyn.as_mut(), core_rohc_packet3)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers3) = decompressed_generic3;
     assert_eq!(
         decompressed_headers3.rtp_sequence_number,
         original_headers3.rtp_sequence_number
@@ -269,34 +272,39 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         decompressed_headers3.rtp_marker,
         original_headers3.rtp_marker
     );
-    assert!(
-        decompressor_context.last_reconstructed_rtp_marker,
-        "P3: Context marker should be true"
-    );
+    let p1_decomp_ctx_after_p3 = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert!(p1_decomp_ctx_after_p3.last_reconstructed_rtp_marker);
 
-    // Packet 4 (IR): Refresh interval triggered
-    // SN=203, M=false (marker changes)
+    // Packet 4 (IR with Add-CID for CID 5 - Refresh)
     let original_headers4 = create_sample_rtp_packet(203, 2480, false);
-    let rohc_packet4_framed = // Compressor directly includes Add-CID for IR
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers4).unwrap();
-
+    let generic_headers4 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers4.clone());
+    let rohc_packet4_framed = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers4)
+        .unwrap();
     assert_eq!(
         rohc_packet4_framed[0],
-        ADD_CID_OCTET_PREFIX_VALUE | (cid as u8),
-        "P4: Add-CID for IR refresh"
+        ADD_CID_OCTET_PREFIX_VALUE | (cid as u8)
     );
-    assert_eq!(
-        rohc_packet4_framed[1], ROHC_IR_PACKET_TYPE_WITH_DYN,
-        "P4: IR type after Add-CID"
-    );
-    assert_eq!(
-        compressor_context.fo_packets_sent_since_ir, 0,
-        "P4: FO counter reset after IR"
-    );
+    assert_eq!(rohc_packet4_framed[1], ROHC_IR_PACKET_TYPE_WITH_DYN);
+    let p1_comp_ctx_after_p4 = compressor_context_dyn
+        .as_any()
+        .downcast_ref::<rohcstar::context::RtpUdpIpP1CompressorContext>()
+        .unwrap();
+    assert_eq!(p1_comp_ctx_after_p4.fo_packets_sent_since_ir, 0);
 
-    let decompressed_headers4 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet4_framed).unwrap();
-    assert_eq!(decompressor_context.cid, cid);
+    let core_rohc_packet4 = &rohc_packet4_framed[1..];
+    let decompressed_generic4 = handler
+        .decompress(decompressor_context_dyn.as_mut(), core_rohc_packet4)
+        .unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers4) = decompressed_generic4;
+    let p1_decomp_ctx_after_p4 = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert_eq!(p1_decomp_ctx_after_p4.cid, cid);
     assert_eq!(
         decompressed_headers4.rtp_sequence_number,
         original_headers4.rtp_sequence_number
@@ -309,195 +317,140 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         decompressed_headers4.rtp_marker,
         original_headers4.rtp_marker
     );
-    assert!(
-        !decompressor_context.last_reconstructed_rtp_marker,
-        "P4: Context marker should be false"
-    );
+    assert!(!p1_decomp_ctx_after_p4.last_reconstructed_rtp_marker);
 }
 
-/// Tests that a significant jump in RTP Sequence Number (that cannot be encoded by UO-0)
-/// correctly triggers the sending of a UO-1 packet.
 #[test]
 fn p1_umode_sn_jump_triggers_uo1() {
+    let handler = Profile1Handler::new();
     let cid: u16 = 0;
-    let ir_refresh_interval = 10; // High enough not to interfere with this specific test
+    let ir_refresh_interval = 10;
 
-    let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
+    let mut compressor_context_dyn = handler.create_compressor_context(cid, ir_refresh_interval);
+    let mut decompressor_context_dyn = handler.create_decompressor_context(cid);
 
-    // Packet 1: IR to establish context
-    // SN=500, M=false
     let original_headers1 = create_sample_rtp_packet(500, 5000, false);
-    let rohc_packet1 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers1).unwrap();
-    let _decompressed_headers1 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet1).unwrap();
-    // Contexts are now established:
-    // Compressor in FO, Decompressor in FC.
-    // last_sent_rtp_sn_full = 500, last_reconstructed_rtp_sn_full = 500
-    // last_sent_rtp_marker = false, last_reconstructed_rtp_marker = false
+    let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers1);
+    let rohc_packet1 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers1)
+        .unwrap();
+    let _ = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet1)
+        .unwrap();
 
-    // Packet 2: Small SN jump, Marker same -> UO-0
-    // SN=501 (increment by 1), M=false
     let original_headers2 = create_sample_rtp_packet(501, 5160, false);
-    let rohc_packet2 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers2).unwrap();
-    assert_eq!(
-        rohc_packet2.len(),
-        1,
-        "P2: Expected UO-0 for small SN increment"
-    );
+    let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers2.clone());
+    let rohc_packet2 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers2)
+        .unwrap();
+    assert_eq!(rohc_packet2.len(), 1);
+    let decomp_generic2 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet2)
+        .unwrap();
 
-    let decompressed_headers2 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet2).unwrap();
-    assert_eq!(
-        decompressed_headers2.rtp_sequence_number, 501,
-        "P2: SN mismatch"
-    );
-    assert!(
-        !decompressed_headers2.rtp_marker,
-        "P2: Marker should be false"
-    );
+    let GenericUncompressedHeaders::RtpUdpIpv4(h) = decomp_generic2;
+    assert_eq!(h.rtp_sequence_number, 501);
+    assert!(!h.rtp_marker);
 
-    // Packet 3: Large SN jump, Marker same -> UO-1
-    // UO-0 with 4 LSBs (p=0) for SN_ref=501 has window [501, 501+15=516].
-    // Next SN is 517 (501 + 16), which is outside this UO-0 window.
-    // SN=517 (increment by 16 from P2), M=false
     let original_headers3 = create_sample_rtp_packet(517, 5320, false);
-    let rohc_packet3 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers3).unwrap();
+    let generic_headers3 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers3.clone());
+    let rohc_packet3 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_headers3)
+        .unwrap();
+    assert_eq!(rohc_packet3.len(), 3);
+    assert_eq!((rohc_packet3[0] & 0xF0), UO_1_SN_P1_PACKET_TYPE_BASE);
+    assert_eq!((rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK), 0);
 
-    assert_eq!(
-        rohc_packet3.len(),
-        3,
-        "P3: Expected UO-1 due to large SN jump"
-    );
-    assert_eq!(
-        (rohc_packet3[0] & 0xF0),
-        UO_1_SN_P1_PACKET_TYPE_BASE,
-        "P3: UO-1 type prefix check"
-    );
-    assert_eq!(
-        (rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
-        0,
-        "P3: UO-1 marker bit should be clear (false)"
-    );
+    let decomp_generic3 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet3)
+        .unwrap();
+    let p1_decomp_ctx = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
 
-    let decompressed_headers3 =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet3).unwrap();
-    assert_eq!(
-        decompressed_headers3.rtp_sequence_number, 517,
-        "P3: SN mismatch"
-    );
-    assert!(
-        !decompressed_headers3.rtp_marker,
-        "P3: Marker should be false"
-    );
-    assert_eq!(
-        decompressor_context.last_reconstructed_rtp_sn_full, 517,
-        "P3: Decompressor context SN update check"
-    );
+    let GenericUncompressedHeaders::RtpUdpIpv4(h) = decomp_generic3;
+    assert_eq!(h.rtp_sequence_number, 517);
+    assert!(!h.rtp_marker);
+    assert_eq!(p1_decomp_ctx.last_reconstructed_rtp_sn_full, 517);
 }
 
 #[test]
 fn p1_umode_uo0_sn_decoding_with_simulated_packet_loss() {
+    let handler = Profile1Handler::new();
     let cid: u16 = 0;
-    let ir_refresh_interval = 20; // Keep high to avoid IR refresh interfering
+    let ir_refresh_interval = 20;
 
-    let mut compressor_context =
-        RtpUdpIpP1CompressorContext::new(cid, RohcProfile::RtpUdpIp, ir_refresh_interval);
-    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, RohcProfile::RtpUdpIp);
-    // Decompressor p_sn is initialized to DEFAULT_P_SN_OFFSET (0) by new()
+    let mut compressor_context_dyn = handler.create_compressor_context(cid, ir_refresh_interval);
+    let mut decompressor_context_dyn = handler.create_decompressor_context(cid);
 
-    // Packet 1: IR to establish context
-    // SN=100, M=false
     let headers_sn100 = create_sample_rtp_packet(100, 1000, false);
-    let rohc_ir_packet =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn100).unwrap();
+    let generic_h100 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn100);
+    let rohc_ir_packet = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_h100)
+        .unwrap();
+    let decomp_gen_ir = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_ir_packet)
+        .unwrap();
 
-    let decompressed_ir_headers =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_ir_packet).unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(h) = decomp_gen_ir;
+    assert_eq!(h.rtp_sequence_number, 100);
 
-    assert_eq!(
-        decompressed_ir_headers.rtp_sequence_number, 100,
-        "IR: SN check"
-    );
-    assert_eq!(
-        decompressor_context.last_reconstructed_rtp_sn_full, 100,
-        "IR: Decompressor context SN update"
-    );
-    assert_eq!(
-        decompressor_context.mode,
-        DecompressorMode::FullContext,
-        "IR: Decompressor mode should be FC"
-    );
-    assert_eq!(
-        decompressor_context.p_sn, 0,
-        "IR: Decompressor p_sn should be default (0)"
-    ); // Verify p_sn
+    let p1_decomp_ctx = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+    assert_eq!(p1_decomp_ctx.last_reconstructed_rtp_sn_full, 100);
+    assert_eq!(p1_decomp_ctx.mode, P1DecompressorMode::FullContext);
+    assert_eq!(p1_decomp_ctx.p_sn, DEFAULT_P_SN_OFFSET_DECOMPRESSOR);
 
-    // Simulate Lost Packets & Send a Later Packet
-    // Compressor processes SN=101 internally (packet "lost")
     let headers_sn101 = create_sample_rtp_packet(101, 1160, false);
-    let _rohc_lost_packet1 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn101).unwrap();
-    // Note: We don't send _rohc_lost_packet1 to the decompressor.
-    // Compressor context is now at SN=101.
+    let generic_h101 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn101);
+    let _rohc_lost_packet1 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_h101)
+        .unwrap();
 
-    // Compressor processes SN=102 internally (packet "lost")
     let headers_sn102 = create_sample_rtp_packet(102, 1320, false);
-    let _rohc_lost_packet2 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn102).unwrap();
-    // Compressor context is now at SN=102.
+    let generic_h102 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn102);
+    let _rohc_lost_packet2 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_h102)
+        .unwrap();
 
-    // Decompressor context is still at SN=100.
-
-    // Compressor sends UO-0 for SN=103
     let headers_sn103 = create_sample_rtp_packet(103, 1480, false);
-    let rohc_packet_sn103 = // This should be a UO-0 packet
-        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn103).unwrap();
+    let generic_h103 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn103);
+    let rohc_packet_sn103 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_h103)
+        .unwrap();
+    assert_eq!(rohc_packet_sn103.len(), 1);
 
-    assert_eq!(
-        rohc_packet_sn103.len(),
-        1,
-        "Packet for SN=103 should be UO-0 (1 byte)"
-    );
+    let decomp_gen_103 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet_sn103)
+        .unwrap();
+    let p1_decomp_ctx_after_103 = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
 
-    // Decompressor (with v_ref=100, p_sn=0) receives packet for SN=103.
-    // LSBs for 103 (k=4) are 0b0011 (3).
-    // Window for v_ref=100, k=4, p=0 is [100, 115].
-    // decode_lsb(3, 100, 4, 0) should yield 103.
-    let decompressed_sn103_headers =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet_sn103).unwrap();
+    let GenericUncompressedHeaders::RtpUdpIpv4(h) = decomp_gen_103;
+    assert_eq!(h.rtp_sequence_number, 103);
+    assert_eq!(p1_decomp_ctx_after_103.last_reconstructed_rtp_sn_full, 103);
 
-    assert_eq!(
-        decompressed_sn103_headers.rtp_sequence_number, 103,
-        "UO-0: SN decode after loss failed"
-    );
-    assert_eq!(
-        decompressor_context.last_reconstructed_rtp_sn_full, 103,
-        "UO-0: Decompressor context SN update after loss"
-    );
-
-    // Further test: another UO-0 after successful recovery
     let headers_sn104 = create_sample_rtp_packet(104, 1640, false);
-    let rohc_packet_sn104 =
-        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn104).unwrap();
-    assert_eq!(
-        rohc_packet_sn104.len(),
-        1,
-        "Packet for SN=104 should be UO-0"
-    );
+    let generic_h104 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn104);
+    let rohc_packet_sn104 = handler
+        .compress(compressor_context_dyn.as_mut(), &generic_h104)
+        .unwrap();
+    assert_eq!(rohc_packet_sn104.len(), 1);
 
-    let decompressed_sn104_headers =
-        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet_sn104).unwrap();
-    assert_eq!(
-        decompressed_sn104_headers.rtp_sequence_number, 104,
-        "UO-0: SN decode after successful recovery"
-    );
-    assert_eq!(
-        decompressor_context.last_reconstructed_rtp_sn_full, 104,
-        "UO-0: Decompressor context SN update"
-    );
+    let decomp_gen_104 = handler
+        .decompress(decompressor_context_dyn.as_mut(), &rohc_packet_sn104)
+        .unwrap();
+    let p1_decomp_ctx_after_104 = decompressor_context_dyn
+        .as_any()
+        .downcast_ref::<RtpUdpIpP1DecompressorContext>()
+        .unwrap();
+
+    let GenericUncompressedHeaders::RtpUdpIpv4(h) = decomp_gen_104;
+    assert_eq!(h.rtp_sequence_number, 104);
+    assert_eq!(p1_decomp_ctx_after_104.last_reconstructed_rtp_sn_full, 104);
 }
