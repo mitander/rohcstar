@@ -398,3 +398,105 @@ fn p1_umode_sn_jump_triggers_uo1() {
         "P3: Decompressor context SN update check"
     );
 }
+
+#[test]
+fn p1_umode_uo0_sn_decoding_with_simulated_packet_loss() {
+    let cid: u16 = 0;
+    let ir_refresh_interval = 20; // Keep high to avoid IR refresh interfering
+
+    let mut compressor_context =
+        RtpUdpIpP1CompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP, ir_refresh_interval);
+    let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(cid, PROFILE_ID_RTP_UDP_IP);
+    // Decompressor p_sn is initialized to DEFAULT_P_SN_OFFSET (0) by new()
+
+    // Packet 1: IR to establish context
+    // SN=100, M=false
+    let headers_sn100 = create_sample_rtp_packet(100, 1000, false);
+    let rohc_ir_packet =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn100).unwrap();
+
+    let decompressed_ir_headers =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_ir_packet).unwrap();
+
+    assert_eq!(
+        decompressed_ir_headers.rtp_sequence_number, 100,
+        "IR: SN check"
+    );
+    assert_eq!(
+        decompressor_context.last_reconstructed_rtp_sn_full, 100,
+        "IR: Decompressor context SN update"
+    );
+    assert_eq!(
+        decompressor_context.mode,
+        DecompressorMode::FullContext,
+        "IR: Decompressor mode should be FC"
+    );
+    assert_eq!(
+        decompressor_context.p_sn, 0,
+        "IR: Decompressor p_sn should be default (0)"
+    ); // Verify p_sn
+
+    // Simulate Lost Packets & Send a Later Packet
+    // Compressor processes SN=101 internally (packet "lost")
+    let headers_sn101 = create_sample_rtp_packet(101, 1160, false);
+    let _rohc_lost_packet1 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn101).unwrap();
+    // Note: We don't send _rohc_lost_packet1 to the decompressor.
+    // Compressor context is now at SN=101.
+
+    // Compressor processes SN=102 internally (packet "lost")
+    let headers_sn102 = create_sample_rtp_packet(102, 1320, false);
+    let _rohc_lost_packet2 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn102).unwrap();
+    // Compressor context is now at SN=102.
+
+    // Decompressor context is still at SN=100.
+
+    // Compressor sends UO-0 for SN=103
+    let headers_sn103 = create_sample_rtp_packet(103, 1480, false);
+    let rohc_packet_sn103 = // This should be a UO-0 packet
+        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn103).unwrap();
+
+    assert_eq!(
+        rohc_packet_sn103.len(),
+        1,
+        "Packet for SN=103 should be UO-0 (1 byte)"
+    );
+
+    // Decompressor (with v_ref=100, p_sn=0) receives packet for SN=103.
+    // LSBs for 103 (k=4) are 0b0011 (3).
+    // Window for v_ref=100, k=4, p=0 is [100, 115].
+    // decode_lsb(3, 100, 4, 0) should yield 103.
+    let decompressed_sn103_headers =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet_sn103).unwrap();
+
+    assert_eq!(
+        decompressed_sn103_headers.rtp_sequence_number, 103,
+        "UO-0: SN decode after loss failed"
+    );
+    assert_eq!(
+        decompressor_context.last_reconstructed_rtp_sn_full, 103,
+        "UO-0: Decompressor context SN update after loss"
+    );
+
+    // Further test: another UO-0 after successful recovery
+    let headers_sn104 = create_sample_rtp_packet(104, 1640, false);
+    let rohc_packet_sn104 =
+        compress_rtp_udp_ip_umode(&mut compressor_context, &headers_sn104).unwrap();
+    assert_eq!(
+        rohc_packet_sn104.len(),
+        1,
+        "Packet for SN=104 should be UO-0"
+    );
+
+    let decompressed_sn104_headers =
+        decompress_rtp_udp_ip_umode(&mut decompressor_context, &rohc_packet_sn104).unwrap();
+    assert_eq!(
+        decompressed_sn104_headers.rtp_sequence_number, 104,
+        "UO-0: SN decode after successful recovery"
+    );
+    assert_eq!(
+        decompressor_context.last_reconstructed_rtp_sn_full, 104,
+        "UO-0: Decompressor context SN update"
+    );
+}
