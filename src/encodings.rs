@@ -190,98 +190,158 @@ pub fn decode_lsb(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::RohcParsingError;
 
     #[test]
     fn encode_lsb_valid_inputs() {
-        assert_eq!(
-            encode_lsb(0x1234, 8).unwrap(),
-            0x34,
-            "Encode 0x1234 with 8 LSBs"
-        );
-        assert_eq!(
-            encode_lsb(0x1234, 4).unwrap(),
-            0x04,
-            "Encode 0x1234 with 4 LSBs"
-        );
-        assert_eq!(
-            encode_lsb(0xFFFF, 8).unwrap(),
-            0xFF,
-            "Encode 0xFFFF with 8 LSBs"
-        );
-        assert_eq!(
-            encode_lsb(0xFFFF, 16).unwrap(),
-            0xFFFF,
-            "Encode 0xFFFF with 16 LSBs"
-        );
-        assert_eq!(
-            encode_lsb(u64::MAX, 64).unwrap(),
-            u64::MAX,
-            "Encode u64::MAX with 64 LSBs"
-        );
-        assert_eq!(encode_lsb(0, 1).unwrap(), 0, "Encode 0 with 1 LSB");
+        assert_eq!(encode_lsb(0x1234, 8).unwrap(), 0x34);
+        assert_eq!(encode_lsb(0x1234, 4).unwrap(), 0x04);
+        assert_eq!(encode_lsb(0xFFFF, 16).unwrap(), 0xFFFF);
+        assert_eq!(encode_lsb(u64::MAX, 64).unwrap(), u64::MAX);
+        assert_eq!(encode_lsb(0, 1).unwrap(), 0);
     }
 
     #[test]
     fn encode_lsb_invalid_num_bits() {
-        assert!(
-            encode_lsb(0x1234, 0).is_err(),
-            "num_lsb_bits = 0 should be an error"
-        );
-        assert!(
-            encode_lsb(0x1234, 65).is_err(),
-            "num_lsb_bits > 64 should be an error"
-        );
+        // k=0 is invalid for LSB encoding.
+        assert!(matches!(
+            encode_lsb(0x1234, 0), // num_lsb_bits = 0
+            Err(RohcParsingError::InvalidLsbEncoding { .. })
+        ));
+        // k>64 is invalid for u64.
+        assert!(matches!(
+            encode_lsb(0x1234, 65), // num_lsb_bits = 65
+            Err(RohcParsingError::InvalidLsbEncoding { .. })
+        ));
     }
 
-    // Test cases for decode_lsb based on RFC 3095 examples or logic
-    // v_ref is reference_value, k is num_lsb_bits, LSBs(v') is received_lsbs
-    // p is p_offset
+    #[test]
+    fn decode_lsb_p0_basic_no_wrap() {
+        // Scenario: p_offset = 0. v_ref=100, k=4. Window [100, 115].
+        assert_eq!(decode_lsb(0x4, 100, 4, 0).unwrap(), 100);
+        assert_eq!(decode_lsb(0x0, 100, 4, 0).unwrap(), 112);
+        assert_eq!(decode_lsb(0xF, 100, 4, 0).unwrap(), 111);
+        assert_eq!(decode_lsb(0xA, 100, 4, 0).unwrap(), 106);
+    }
 
     #[test]
-    fn decode_lsb_rfc_style_cases_p0() {
-        // Example: v_ref = 10, k = 4, p = 0. Window [10, 25].
-        // LSBs(12) = 0xC. Expected: 12.
+    fn decode_lsb_p0_around_reference_candidate_selection() {
+        // Scenario: p_offset = 0. v_ref=10, k=4. Window [10, 25].
         assert_eq!(decode_lsb(0xC, 10, 4, 0).unwrap(), 12);
-        // LSBs(20) = 0x4. Expected: 20.
         assert_eq!(decode_lsb(0x4, 10, 4, 0).unwrap(), 20);
-        // LSBs(34) = 0x2. v_ref=20, k=4, p=0. Window [20, 35]. Expected: 34.
-        assert_eq!(decode_lsb(0x2, 20, 4, 0).unwrap(), 34);
-        // Example from RFC 3095 section 4.5.1: f(v_ref=250, k=5, p=0) for LSBs(255)=31 -> 255
-        assert_eq!(decode_lsb(31, 250, 5, 0).unwrap(), 255);
-
-        // Test wrapping: v_ref = MAX-5, k=4, p=0. Window [MAX-5, MAX-5+15]
-        // LSBs(3) = 3. This means we're looking for a number ending in ...0011.
-        // MAX-5 is ...1011. MAX-4 ...1100. MAX-3 ...1101. MAX-2 ...1110. MAX-1 ...1111.
-        // 0 ...0000. 1 ...0001. 2 ...0010. 3 ...0011.
-        // So 3 is in the window [MAX-5, MAX-5+15] which includes MAX-5, ..., MAX, 0, 1, ..., MAX-5+15-2^k
-        assert_eq!(decode_lsb(3, u64::MAX - 5, 4, 0).unwrap(), 3);
+        assert_eq!(decode_lsb(0x9, 10, 4, 0).unwrap(), 25);
     }
 
     #[test]
-    fn decode_lsb_rfc_style_cases_p_negative() {
-        // p = -1. Window [v_ref + 1, v_ref + 1 + 2^k - 1] (always increasing)
-        // Example: v_ref = 5, k = 3, p = -1. Window [6, 6+7=13]
-        // LSBs(7) = 7. Expected: 7.
-        assert_eq!(decode_lsb(0x7, 5, 3, -1).unwrap(), 7);
-        // LSBs(13) = 5. Expected: 13.
-        assert_eq!(decode_lsb(0x5, 5, 3, -1).unwrap(), 13);
-
-        // Wrapping with p=-1
-        // v_ref = MAX-2, k=3, p=-1. Window [MAX-1, MAX-1+7]. Contains MAX-1, MAX, 0, 1, 2, 3, 4
-        // LSBs(1) = 1. Expected: 1.
-        assert_eq!(decode_lsb(1, u64::MAX - 2, 3, -1).unwrap(), 1);
+    fn decode_lsb_p_positive_shifts_window_left() {
+        // Scenario: p_offset > 0. v_ref=100, k=4, p_offset=2. Window [98, 113].
+        assert_eq!(decode_lsb(0x3, 100, 4, 2).unwrap(), 99);
+        assert_eq!(decode_lsb(0x2, 100, 4, 2).unwrap(), 98);
+        assert_eq!(decode_lsb(0xD, 100, 4, 2).unwrap(), 109);
+        assert_eq!(decode_lsb(0x1, 100, 4, 2).unwrap(), 113);
+        assert_eq!(decode_lsb(0x0, 100, 4, 2).unwrap(), 112);
     }
 
     #[test]
-    fn decode_lsb_invalid_num_bits() {
-        assert!(decode_lsb(0x01, 10, 0, 0).is_err()); // k=0
-        assert!(decode_lsb(0x01, 10, 64, 0).is_err()); // k=64
+    fn decode_lsb_p_negative_shifts_window_right() {
+        // Scenario: p_offset < 0. v_ref=10, k=3, p_offset=-1. Window [11, 18].
+        assert_eq!(decode_lsb(0x3, 10, 3, -1).unwrap(), 11);
+        assert_eq!(decode_lsb(0x2, 10, 3, -1).unwrap(), 18);
+        assert_eq!(decode_lsb(0x7, 10, 3, -1).unwrap(), 15);
     }
 
     #[test]
-    fn decode_lsb_received_lsbs_too_large_for_k() {
+    fn decode_lsb_p0_wrapping_around_max_u64() {
+        // Scenario: p_offset = 0, v_ref near u64::MAX, k=4. Window wraps around 0.
+        let k = 4;
+        let lsb_mask = (1u64 << k) - 1;
+        let ref_val = u64::MAX - 5;
+
+        assert_eq!(
+            decode_lsb(ref_val & lsb_mask, ref_val, k, 0).unwrap(),
+            ref_val
+        );
+        assert_eq!(
+            decode_lsb(u64::MAX & lsb_mask, ref_val, k, 0).unwrap(),
+            u64::MAX
+        );
+        assert_eq!(decode_lsb(0, ref_val, k, 0).unwrap(), 0);
+        assert_eq!(decode_lsb(3, ref_val, k, 0).unwrap(), 3);
+        let upper_val_in_window = ref_val.wrapping_add(15);
+        assert_eq!(
+            decode_lsb(upper_val_in_window & lsb_mask, ref_val, k, 0).unwrap(),
+            upper_val_in_window
+        );
+    }
+
+    #[test]
+    fn decode_lsb_p_positive_wrapping_around_max_u64() {
+        // Scenario: p_offset > 0, v_ref near u64::MAX, k=4, p_offset=7. Window wraps.
+        let k = 4;
+        let p_offset = 7;
+        let lsb_mask = (1u64 << k) - 1;
+        let ref_val = u64::MAX - 2;
+        let interval_base = ref_val.wrapping_sub(p_offset as u64);
+
+        assert_eq!(
+            decode_lsb(interval_base & lsb_mask, ref_val, k, p_offset).unwrap(),
+            interval_base
+        );
+        assert_eq!(
+            decode_lsb(u64::MAX & lsb_mask, ref_val, k, p_offset).unwrap(),
+            u64::MAX
+        );
+        assert_eq!(decode_lsb(0, ref_val, k, p_offset).unwrap(), 0);
+        let upper_val_in_window = interval_base.wrapping_add(15);
+        assert_eq!(
+            decode_lsb(upper_val_in_window & lsb_mask, ref_val, k, p_offset).unwrap(),
+            upper_val_in_window
+        );
+    }
+
+    #[test]
+    fn decode_lsb_p_negative_wrapping_around_max_u64() {
+        // Scenario: p_offset < 0, v_ref near u64::MAX, k=3, p_offset=-1. Window wraps.
+        let k = 3;
+        let p_offset = -1;
+        let lsb_mask = (1u64 << k) - 1;
+        let ref_val = u64::MAX - 2;
+        let interval_base = ref_val.wrapping_add((-p_offset) as u64);
+
+        assert_eq!(
+            decode_lsb(interval_base & lsb_mask, ref_val, k, p_offset).unwrap(),
+            interval_base
+        );
+        assert_eq!(
+            decode_lsb(u64::MAX & lsb_mask, ref_val, k, p_offset).unwrap(),
+            u64::MAX
+        );
+        assert_eq!(decode_lsb(0, ref_val, k, p_offset).unwrap(), 0);
+        assert_eq!(decode_lsb(1, ref_val, k, p_offset).unwrap(), 1);
+        let upper_val_in_window = interval_base.wrapping_add((1 << k) - 1);
+        assert_eq!(
+            decode_lsb(upper_val_in_window & lsb_mask, ref_val, k, p_offset).unwrap(),
+            upper_val_in_window
+        );
+    }
+
+    #[test]
+    fn decode_lsb_error_invalid_num_bits_combined() {
+        // num_lsb_bits must be > 0 and < 64 for decode_lsb.
+        assert!(matches!(
+            decode_lsb(0x01, 10, 0, 0), // k=0 is invalid
+            Err(RohcParsingError::InvalidLsbEncoding { .. })
+        ));
+        assert!(matches!(
+            decode_lsb(0x01, 10, 64, 0), // k=64 is invalid for LSB *decoding* context
+            Err(RohcParsingError::InvalidLsbEncoding { .. })
+        ));
+    }
+
+    #[test]
+    fn decode_lsb_error_received_lsbs_too_large_for_k_combined() {
+        // received_lsbs (0x10) cannot be represented by k=3 bits (max LSB value 0x07).
         match decode_lsb(0x10, 10, 3, 0) {
-            // 0x10 (16) is too large for k=3 (max value 7)
             Err(RohcParsingError::InvalidLsbEncoding {
                 field_name,
                 description,
@@ -289,39 +349,64 @@ mod tests {
                 assert_eq!(field_name, "received_lsbs");
                 assert!(description.contains("too large for 3 LSBs"));
             }
-            _ => panic!("Expected InvalidLsbEncoding error for oversized LSBs"),
+            res => panic!(
+                "Expected InvalidLsbEncoding for oversized LSBs, got {:?}",
+                res
+            ),
         }
     }
 
     #[test]
-    fn value_in_lsb_interval_logic() {
-        // p = 0: v_ref = 10, k = 4. Window [10, 25]
+    fn decode_lsb_error_conditions_leading_to_no_resolution_original() {
+        assert_eq!(decode_lsb(0, 200, 3, 10).unwrap(), 192);
+    }
+
+    #[test]
+    fn value_in_lsb_interval_verifies_correctly() {
+        // Scenario: p_offset = 0, v_ref = 10, k = 4. Window [10, 25].
         assert!(value_in_lsb_interval(12, 10, 4, 0));
-        assert!(value_in_lsb_interval(20, 10, 4, 0));
-        assert!(!value_in_lsb_interval(9, 10, 4, 0)); // Below window
-        assert!(!value_in_lsb_interval(26, 10, 4, 0)); // Above window
+        assert!(value_in_lsb_interval(25, 10, 4, 0));
+        assert!(value_in_lsb_interval(10, 10, 4, 0));
+        assert!(!value_in_lsb_interval(9, 10, 4, 0));
+        assert!(!value_in_lsb_interval(26, 10, 4, 0));
 
-        // p = -1: v_ref = 5, k = 3. Window [6, 13]
-        assert!(value_in_lsb_interval(7, 5, 3, -1));
-        assert!(value_in_lsb_interval(13, 5, 3, -1));
-        assert!(!value_in_lsb_interval(5, 5, 3, -1)); // Below window
+        // Scenario: p_offset > 0, v_ref = 100, k = 5, p_offset = 15. Window [85, 116].
+        assert!(value_in_lsb_interval(85, 100, 5, 15));
+        assert!(value_in_lsb_interval(116, 100, 5, 15));
+        assert!(!value_in_lsb_interval(84, 100, 5, 15));
+        assert!(!value_in_lsb_interval(117, 100, 5, 15));
 
-        // p > 0: v_ref = 100, k = 5, p = 15. Window [85, 116] (100-15 to 100-15 + 32-1)
-        assert!(value_in_lsb_interval(90, 100, 5, 15));
-        assert!(!value_in_lsb_interval(84, 100, 5, 15)); // Below
-        assert!(!value_in_lsb_interval(117, 100, 5, 15)); // Above
+        // Scenario: p_offset < 0, v_ref near u64::MAX, k = 4, p_offset = -2.
+        let ref_near_max = u64::MAX - 10;
+        let k_val = 4;
+        let p_neg = -2;
+        let interval_base_neg_p = ref_near_max.wrapping_add((-p_neg) as u64);
+        assert!(value_in_lsb_interval(
+            interval_base_neg_p,
+            ref_near_max,
+            k_val,
+            p_neg
+        ));
+        assert!(value_in_lsb_interval(u64::MAX, ref_near_max, k_val, p_neg));
+        assert!(value_in_lsb_interval(0, ref_near_max, k_val, p_neg));
+        let upper_val = interval_base_neg_p.wrapping_add(15);
+        assert!(value_in_lsb_interval(upper_val, ref_near_max, k_val, p_neg));
+        assert!(!value_in_lsb_interval(
+            interval_base_neg_p.wrapping_sub(1),
+            ref_near_max,
+            k_val,
+            p_neg
+        ));
+        assert!(!value_in_lsb_interval(
+            upper_val.wrapping_add(1),
+            ref_near_max,
+            k_val,
+            p_neg
+        ));
 
-        // Wrapping cases
-        // v_ref = MAX - 5, k = 4, p = 0. Window [MAX-5, MAX-5+15]
-        // This window wraps around, e.g., includes MAX-1, MAX, 0, 1, 2, 3
-        assert!(value_in_lsb_interval(3, u64::MAX - 5, 4, 0));
-        assert!(!value_in_lsb_interval(u64::MAX - 7, u64::MAX - 5, 4, 0)); // Too "low" before wrap
-        assert!(value_in_lsb_interval(u64::MAX, u64::MAX - 5, 4, 0));
-
-        // Invalid k
-        assert!(!value_in_lsb_interval(10, 10, 0, 0));
-        assert!(!value_in_lsb_interval(10, 10, 65, 0));
-        // k=64 should always be true
-        assert!(value_in_lsb_interval(12345, 67890, 64, 0));
+        // Invalid k values
+        assert!(!value_in_lsb_interval(10, 10, 0, 0)); // k=0, invalid
+        assert!(!value_in_lsb_interval(10, 10, 65, 0)); // k=65, invalid
+        assert!(value_in_lsb_interval(12345, 67890, 64, 0)); // k=64, valid special case
     }
 }
