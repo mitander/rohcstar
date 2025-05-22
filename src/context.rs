@@ -1,5 +1,5 @@
 use crate::constants::{
-    DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP,
+    DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP,
 };
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 use std::net::Ipv4Addr;
@@ -79,7 +79,7 @@ impl RtpUdpIpP1CompressorContext {
             last_sent_rtp_sn_full: 0,
             last_sent_rtp_ts_full: 0,
             last_sent_rtp_marker: false,
-            current_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH,
+            current_lsb_sn_width: DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH,
             fo_packets_sent_since_ir: 0,
             ir_refresh_interval,
         }
@@ -202,7 +202,7 @@ impl RtpUdpIpP1DecompressorContext {
             last_reconstructed_rtp_sn_full: 0,
             last_reconstructed_rtp_ts_full: 0,
             last_reconstructed_rtp_marker: false,
-            expected_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH,
+            expected_lsb_sn_width: DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH,
             p_sn: DEFAULT_P_SN_OFFSET,
             consecutive_crc_failures_in_fc: 0,
         }
@@ -230,7 +230,7 @@ impl RtpUdpIpP1DecompressorContext {
 
         self.mode = DecompressorMode::FullContext;
         self.consecutive_crc_failures_in_fc = 0;
-        self.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+        self.expected_lsb_sn_width = DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
         self.p_sn = DEFAULT_P_SN_OFFSET;
     }
 }
@@ -313,7 +313,10 @@ mod tests {
         );
         assert_eq!(context.mode, DecompressorMode::FullContext);
         assert_eq!(context.consecutive_crc_failures_in_fc, 0);
-        assert_eq!(context.expected_lsb_sn_width, DEFAULT_UO0_SN_LSB_WIDTH);
+        assert_eq!(
+            context.expected_lsb_sn_width,
+            DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH
+        );
         assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
     }
 
@@ -323,7 +326,10 @@ mod tests {
         assert_eq!(context.cid, 0);
         assert_eq!(context.profile_id, PROFILE_ID_RTP_UDP_IP);
         assert_eq!(context.mode, DecompressorMode::NoContext);
-        assert_eq!(context.expected_lsb_sn_width, DEFAULT_UO0_SN_LSB_WIDTH);
+        assert_eq!(
+            context.expected_lsb_sn_width,
+            DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH
+        );
         assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
         assert_eq!(context.consecutive_crc_failures_in_fc, 0);
     }
@@ -334,7 +340,10 @@ mod tests {
         assert_eq!(context.cid, 0);
         assert_eq!(context.profile_id, PROFILE_ID_RTP_UDP_IP);
         assert_eq!(context.mode, CompressorMode::InitializationAndRefresh);
-        assert_eq!(context.current_lsb_sn_width, DEFAULT_UO0_SN_LSB_WIDTH);
+        assert_eq!(
+            context.current_lsb_sn_width,
+            DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH
+        );
         assert_eq!(context.ir_refresh_interval, DEFAULT_IR_REFRESH_INTERVAL);
         assert_eq!(context.fo_packets_sent_since_ir, 0);
     }

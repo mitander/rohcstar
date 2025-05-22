@@ -1,7 +1,7 @@
 use crate::constants::{
     ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_MASK, ADD_CID_OCTET_PREFIX_VALUE,
     DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, IP_PROTOCOL_UDP, ROHC_IR_PACKET_TYPE_BASE,
-    ROHC_IR_PACKET_TYPE_D_BIT_MASK, RTP_VERSION, UO_1_SN_PACKET_TYPE_BASE,
+    ROHC_IR_PACKET_TYPE_D_BIT_MASK, RTP_VERSION, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use crate::context::{DecompressorMode, RtpUdpIpP1DecompressorContext};
 use crate::encodings::decode_lsb;
@@ -344,7 +344,7 @@ pub fn decompress_rtp_udp_ip_umode(
     if (type_determining_byte & !ROHC_IR_PACKET_TYPE_D_BIT_MASK) == ROHC_IR_PACKET_TYPE_BASE {
         let parsed_ir = parse_ir_profile1_packet(core_packet_slice).map_err(RohcError::Parsing)?;
         process_ir_packet(context, parsed_ir, cid_from_packet_stream)
-    } else if (type_determining_byte & 0xF0) == UO_1_SN_PACKET_TYPE_BASE {
+    } else if (type_determining_byte & 0xF0) == UO_1_SN_P1_PACKET_TYPE_BASE {
         process_uo1_sn_packet(context, core_packet_slice, cid_from_packet_stream)
     } else if (type_determining_byte & 0x80) == 0x00 {
         process_uo0_packet(context, core_packet_slice, cid_from_packet_stream)
@@ -358,7 +358,7 @@ pub fn decompress_rtp_udp_ip_umode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::DEFAULT_UO0_SN_LSB_WIDTH;
+    use crate::constants::DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
     use crate::constants::PROFILE_ID_RTP_UDP_IP;
     use crate::context::RtpUdpIpP1CompressorContext;
     use crate::packet_processor::build_ir_profile1_packet;
@@ -464,7 +464,7 @@ mod tests {
     fn decompress_uo0_packet_cid0_success() {
         let mut compressor_context = RtpUdpIpP1CompressorContext::new(0, PROFILE_ID_RTP_UDP_IP, 10);
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
-        decompressor_context.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+        decompressor_context.expected_lsb_sn_width = DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
         let headers1 = default_uncompressed_headers_for_decomp_test(100);
 
         // Initialize compressor context (implicitly done by first compress call if in IR mode)
@@ -509,11 +509,12 @@ mod tests {
         decompressor_context.last_reconstructed_rtp_ts_full = ir_headers.rtp_timestamp;
         decompressor_context.last_reconstructed_rtp_marker = ir_headers.rtp_marker;
         decompressor_context.mode = DecompressorMode::FullContext;
-        decompressor_context.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+        decompressor_context.expected_lsb_sn_width = DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
 
         let sn_for_packet: u16 = 100;
-        let sn_lsb = crate::encodings::encode_lsb(sn_for_packet as u64, DEFAULT_UO0_SN_LSB_WIDTH)
-            .unwrap() as u8;
+        let sn_lsb =
+            crate::encodings::encode_lsb(sn_for_packet as u64, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH)
+                .unwrap() as u8;
 
         let crc_input_for_correct_packet = create_crc_input_for_uo_packet_verification(
             &decompressor_context,

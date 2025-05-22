@@ -1,6 +1,6 @@
 use rohcstar::constants::{
     ADD_CID_OCTET_PREFIX_VALUE, PROFILE_ID_RTP_UDP_IP, ROHC_IR_PACKET_TYPE_WITH_DYN,
-    UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+    UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use rohcstar::context::{
     DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,
@@ -90,11 +90,11 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     assert_eq!(rohc_packet3.len(), 3, "P3: Expected UO-1-SN (3 bytes)");
     assert_eq!(
         (rohc_packet3[0] & 0xF0),
-        UO_1_SN_PACKET_TYPE_BASE,
+        UO_1_SN_P1_PACKET_TYPE_BASE,
         "P3: UO-1 type prefix check"
     );
     assert_ne!(
-        (rohc_packet3[0] & UO_1_SN_MARKER_BIT_MASK),
+        (rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
         0,
         "P3: UO-1 marker bit should be set"
     );
@@ -123,7 +123,7 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
         compress_rtp_udp_ip_umode(&mut compressor_context, &original_headers4).unwrap();
     assert_eq!(rohc_packet4.len(), 3, "P4: Expected UO-1-SN (3 bytes)");
     assert_eq!(
-        (rohc_packet4[0] & UO_1_SN_MARKER_BIT_MASK),
+        (rohc_packet4[0] & UO_1_SN_P1_MARKER_BIT_MASK),
         0,
         "P4: UO-1 marker bit should be clear"
     );
@@ -246,11 +246,11 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     assert_eq!(uo1_core_packet3.len(), 3, "P3: UO-1 core packet length");
     assert_eq!(
         (uo1_core_packet3[0] & 0xF0),
-        UO_1_SN_PACKET_TYPE_BASE,
+        UO_1_SN_P1_PACKET_TYPE_BASE,
         "P3: UO-1 type prefix"
     );
     assert_ne!(
-        (uo1_core_packet3[0] & UO_1_SN_MARKER_BIT_MASK),
+        (uo1_core_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
         0,
         "P3: UO-1 marker bit set"
     );
@@ -374,11 +374,11 @@ fn p1_umode_sn_jump_triggers_uo1() {
     );
     assert_eq!(
         (rohc_packet3[0] & 0xF0),
-        UO_1_SN_PACKET_TYPE_BASE,
+        UO_1_SN_P1_PACKET_TYPE_BASE,
         "P3: UO-1 type prefix check"
     );
     assert_eq!(
-        (rohc_packet3[0] & UO_1_SN_MARKER_BIT_MASK),
+        (rohc_packet3[0] & UO_1_SN_P1_MARKER_BIT_MASK),
         0,
         "P3: UO-1 marker bit should be clear (false)"
     );

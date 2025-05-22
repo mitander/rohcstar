@@ -97,9 +97,11 @@ pub mod crc;
 pub mod encodings;
 pub mod error;
 pub mod fuzz_harnesses;
+pub mod packet_defs;
 pub mod packet_processor;
 pub mod profiles;
 pub mod protocol_types;
+pub mod traits;
 
 pub use context::{
     CompressorMode, DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,

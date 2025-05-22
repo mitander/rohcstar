@@ -1,7 +1,7 @@
 use crate::constants::{
     ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_VALUE, IP_PROTOCOL_UDP, PROFILE_ID_RTP_UDP_IP,
     ROHC_IR_PACKET_TYPE_BASE, ROHC_IR_PACKET_TYPE_D_BIT_MASK, ROHC_IR_PACKET_TYPE_WITH_DYN,
-    RTP_VERSION, UO_1_SN_MARKER_BIT_MASK, UO_1_SN_PACKET_TYPE_BASE,
+    RTP_VERSION, UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use crate::crc::calculate_rohc_crc8; // Assuming CRC-3 is not used directly in packet_processor builders
 use crate::error::{RohcBuildingError, RohcParsingError};
@@ -491,9 +491,9 @@ pub fn build_uo1_sn_profile1_packet(
     // Type octet for UO-1-SN: `1010...M`
     // The lower 4 bits are for other UO-1 extensions, 0000 for basic SN.
     // The LSB (bit 0) is the Marker bit.
-    let type_octet = UO_1_SN_PACKET_TYPE_BASE
+    let type_octet = UO_1_SN_P1_PACKET_TYPE_BASE
         | (if marker_bit_value {
-            UO_1_SN_MARKER_BIT_MASK
+            UO_1_SN_P1_MARKER_BIT_MASK
         } else {
             0
         });
@@ -526,13 +526,13 @@ pub fn parse_uo1_sn_profile1_packet(
 
     let type_octet = data[0];
     // Check prefix `1010` for UO-1-SN family.
-    if (type_octet & 0xF0) != UO_1_SN_PACKET_TYPE_BASE {
+    if (type_octet & 0xF0) != UO_1_SN_P1_PACKET_TYPE_BASE {
         return Err(RohcParsingError::InvalidPacketType(type_octet));
     }
 
     // Lower 4 bits of type_octet might be for other UO-1 extensions,
     // for UO-1-SN these are typically 0, except for the marker bit.
-    let marker_bit_is_set = (type_octet & UO_1_SN_MARKER_BIT_MASK) != 0;
+    let marker_bit_is_set = (type_octet & UO_1_SN_P1_MARKER_BIT_MASK) != 0;
     let sn_lsb_8_bits_val = data[1];
     let received_crc8_val = data[2];
 
@@ -752,7 +752,7 @@ mod tests {
         // Expected type octet: UO_1_SN_PACKET_TYPE_BASE (10100000) | UO_1_SN_MARKER_BIT_MASK (00000001) = 10100001
         assert_eq!(
             built_packet_bytes[0],
-            UO_1_SN_PACKET_TYPE_BASE | UO_1_SN_MARKER_BIT_MASK
+            UO_1_SN_P1_PACKET_TYPE_BASE | UO_1_SN_P1_MARKER_BIT_MASK
         );
         assert_eq!(built_packet_bytes[1], sn_8_lsb_val);
         assert_eq!(built_packet_bytes[2], crc8_val);

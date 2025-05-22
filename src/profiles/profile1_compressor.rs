@@ -1,4 +1,4 @@
-use crate::constants::{DEFAULT_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP};
+use crate::constants::{DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH, PROFILE_ID_RTP_UDP_IP};
 use crate::context::{CompressorMode, RtpUdpIpP1CompressorContext};
 use crate::encodings::{encode_lsb, value_in_lsb_interval};
 use crate::error::RohcError;
@@ -24,13 +24,9 @@ pub fn compress_rtp_udp_ip_umode(
     context: &mut RtpUdpIpP1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
 ) -> Result<Vec<u8>, RohcError> {
-    let mut force_ir_due_to_refresh = false;
-    if context.mode == CompressorMode::FirstOrder
+    let force_ir_due_to_refresh = context.mode == CompressorMode::FirstOrder
         && context.ir_refresh_interval > 0
-        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval.saturating_sub(1))
-    {
-        force_ir_due_to_refresh = true;
-    }
+        && context.fo_packets_sent_since_ir >= (context.ir_refresh_interval.saturating_sub(1));
 
     let should_send_ir_packet =
         context.mode == CompressorMode::InitializationAndRefresh || force_ir_due_to_refresh;
@@ -77,7 +73,7 @@ pub fn compress_rtp_udp_ip_umode(
         let uo0_can_represent_sn = value_in_lsb_interval(
             current_sn as u64,
             context.last_sent_rtp_sn_full as u64,
-            DEFAULT_UO0_SN_LSB_WIDTH,
+            DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH,
             0,
         );
 
@@ -85,7 +81,7 @@ pub fn compress_rtp_udp_ip_umode(
 
         if !marker_changed && uo0_can_represent_sn {
             // Build UO-0 packet
-            context.current_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+            context.current_lsb_sn_width = DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH;
             let sn_lsb_for_uo0 = encode_lsb(current_sn as u64, context.current_lsb_sn_width)
                 .map_err(|e| {
                     RohcError::Internal(format!("SN LSB encoding for UO-0 failed: {}", e))
@@ -136,8 +132,8 @@ pub fn compress_rtp_udp_ip_umode(
 mod tests {
     use super::*;
     use crate::constants::{
-        ADD_CID_OCTET_PREFIX_VALUE, ROHC_IR_PACKET_TYPE_WITH_DYN, UO_1_SN_MARKER_BIT_MASK,
-        UO_1_SN_PACKET_TYPE_BASE,
+        ADD_CID_OCTET_PREFIX_VALUE, ROHC_IR_PACKET_TYPE_WITH_DYN, UO_1_SN_P1_MARKER_BIT_MASK,
+        UO_1_SN_P1_PACKET_TYPE_BASE,
     };
 
     fn default_uncompressed_headers() -> RtpUdpIpv4Headers {
@@ -226,7 +222,7 @@ mod tests {
         assert_eq!(rohc_packet_uo1.len(), 3);
         assert_eq!(
             rohc_packet_uo1[0],
-            UO_1_SN_PACKET_TYPE_BASE | UO_1_SN_MARKER_BIT_MASK
+            UO_1_SN_P1_PACKET_TYPE_BASE | UO_1_SN_P1_MARKER_BIT_MASK
         );
 
         // Verify context updates
@@ -253,7 +249,7 @@ mod tests {
         assert_eq!(rohc_packet_uo1.len(), 3);
         assert_eq!(
             rohc_packet_uo1[0],
-            UO_1_SN_PACKET_TYPE_BASE // Marker is false
+            UO_1_SN_P1_PACKET_TYPE_BASE // Marker is false
         );
         let expected_sn_lsb_8bit = (120u16 & 0xFF) as u8;
         assert_eq!(rohc_packet_uo1[1], expected_sn_lsb_8bit);
