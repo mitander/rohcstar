@@ -76,10 +76,10 @@ impl RtpUdpIpP1CompressorContext {
             udp_destination_port: 0,
             rtp_ssrc: 0,
             mode: CompressorMode::InitializationAndRefresh,
-            last_sent_rtp_sn_full: 0, // Will be set by the first packet's headers
-            last_sent_rtp_ts_full: 0, // Will be set by the first packet's headers
-            last_sent_rtp_marker: false, // Will be set by the first packet's headers
-            current_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH, // Default for UO-0
+            last_sent_rtp_sn_full: 0,
+            last_sent_rtp_ts_full: 0,
+            last_sent_rtp_marker: false,
+            current_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH,
             fo_packets_sent_since_ir: 0,
             ir_refresh_interval,
         }
@@ -106,12 +106,10 @@ impl RtpUdpIpP1CompressorContext {
         self.udp_destination_port = headers.udp_dst_port;
         self.rtp_ssrc = headers.rtp_ssrc;
 
-        // Also initialize dynamic part based on this first packet
         self.last_sent_rtp_sn_full = headers.rtp_sequence_number;
         self.last_sent_rtp_ts_full = headers.rtp_timestamp;
         self.last_sent_rtp_marker = headers.rtp_marker;
 
-        // Reset refresh counter and force IR on next compression
         self.fo_packets_sent_since_ir = 0;
         self.mode = CompressorMode::InitializationAndRefresh;
     }
@@ -137,6 +135,10 @@ pub enum DecompressorMode {
     /// Full context established. The decompressor can process highly compressed packets (e.g., UO-0).
     FullContext,
 }
+
+/// Default p_offset for SN LSB decoding in U-mode.
+/// A value of 0 means the LSB interpretation window starts at v_ref.
+const DEFAULT_P_SN_OFFSET: i64 = 0;
 
 /// Context for a ROHC Profile 1 (RTP/UDP/IP) decompressor.
 ///
@@ -168,8 +170,11 @@ pub struct RtpUdpIpP1DecompressorContext {
     pub last_reconstructed_rtp_marker: bool,
     /// Expected number of LSBs for the RTP Sequence Number in upcoming UO-0 packets.
     pub expected_lsb_sn_width: u8,
-    /// The `p` parameter for LSB decoding of the RTP Sequence Number (interpretation interval offset).
+    /// The `p` parameter (interpretation interval offset) for LSB decoding of the RTP Sequence Number.
+    /// Used in W-LSB to define the window `[v_ref - p, v_ref - p + 2^k - 1]`.
     pub p_sn: i64,
+    // pub expected_lsb_ts_width: u8, // For future use with TS LSB decoding
+    // pub p_ts: i64,                  // For future use
     /// Number of consecutive CRC failures encountered while in Full Context (FC) mode.
     pub consecutive_crc_failures_in_fc: u8,
 }
@@ -178,6 +183,7 @@ impl RtpUdpIpP1DecompressorContext {
     /// Creates a new `RtpUdpIpP1DecompressorContext`.
     ///
     /// Initializes with the specified CID and profile ID.
+    /// `p_sn` is set to its default offset.
     /// Other fields are set to default values, typically representing an uninitialized state (`NoContext`).
     ///
     /// # Arguments
@@ -196,8 +202,8 @@ impl RtpUdpIpP1DecompressorContext {
             last_reconstructed_rtp_sn_full: 0,
             last_reconstructed_rtp_ts_full: 0,
             last_reconstructed_rtp_marker: false,
-            expected_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH, // Default for UO-0
-            p_sn: 0,                                         // Default 'p' value for SN
+            expected_lsb_sn_width: DEFAULT_UO0_SN_LSB_WIDTH,
+            p_sn: DEFAULT_P_SN_OFFSET,
             consecutive_crc_failures_in_fc: 0,
         }
     }
@@ -205,15 +211,12 @@ impl RtpUdpIpP1DecompressorContext {
     /// Initializes or updates the decompressor context using data from a parsed IR packet.
     ///
     /// This function is called when an IR or IR-DYN packet is successfully parsed.
-    /// It populates both static and dynamic fields of the context and transitions
-    /// the decompressor mode to `FullContext`.
+    /// It populates both static and dynamic fields of the context, transitions
+    /// the decompressor mode to `FullContext`, and resets `p_sn` to its default.
     ///
     /// # Arguments
     /// * `ir_packet`: A reference to the parsed `RohcIrProfile1Packet`.
     pub fn initialize_from_ir_packet(&mut self, ir_packet: &RohcIrProfile1Packet) {
-        // CID is updated by the caller (e.g., context manager or main decompressor logic)
-        // based on Add-CID or implicit CID from the IR packet.
-        // self.cid = ir_packet.cid; // This should be set by the manager/dispatcher
         self.profile_id = ir_packet.profile;
         self.ip_source = ir_packet.static_ip_src;
         self.ip_destination = ir_packet.static_ip_dst;
@@ -221,30 +224,20 @@ impl RtpUdpIpP1DecompressorContext {
         self.udp_destination_port = ir_packet.static_udp_dst_port;
         self.rtp_ssrc = ir_packet.static_rtp_ssrc;
 
-        // If the IR packet contains dynamic information (D-bit was set)
-        if ir_packet.dyn_rtp_sn != 0 || ir_packet.dyn_rtp_timestamp != 0 || ir_packet.dyn_rtp_marker
-        {
-            // Assuming non-zero SN/TS or true marker implies dynamic part was present.
-            // A more robust check would be if the original IR packet had D-bit set.
-            // For now, this IR struct always has these fields.
-            self.last_reconstructed_rtp_sn_full = ir_packet.dyn_rtp_sn;
-            self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
-            self.last_reconstructed_rtp_marker = ir_packet.dyn_rtp_marker;
-        }
-        // If IR was static-only, dynamic fields might remain from a previous FC state,
-        // or be defaults if this is the very first IR.
-        // The mode transition to FullContext implies dynamic part is now considered known.
+        self.last_reconstructed_rtp_sn_full = ir_packet.dyn_rtp_sn;
+        self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
+        self.last_reconstructed_rtp_marker = ir_packet.dyn_rtp_marker;
 
         self.mode = DecompressorMode::FullContext;
-        self.consecutive_crc_failures_in_fc = 0; // Reset CRC failure counter on successful IR
-        self.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH; // Reset to default for subsequent UO-0
-        self.p_sn = 0; // Reset p_sn
+        self.consecutive_crc_failures_in_fc = 0;
+        self.expected_lsb_sn_width = DEFAULT_UO0_SN_LSB_WIDTH;
+        self.p_sn = DEFAULT_P_SN_OFFSET;
     }
 }
 
 impl Default for RtpUdpIpP1DecompressorContext {
     /// Creates a default `RtpUdpIpP1DecompressorContext`.
-    /// Uses CID 0 and Profile 1. Mode is `NoContext`.
+    /// Uses CID 0, Profile 1, and default `p_sn`. Mode is `NoContext`.
     fn default() -> Self {
         Self::new(0, PROFILE_ID_RTP_UDP_IP)
     }
@@ -267,7 +260,7 @@ mod tests {
         };
         let mut context = RtpUdpIpP1CompressorContext::new(1, PROFILE_ID_RTP_UDP_IP, 50);
         assert_eq!(context.mode, CompressorMode::InitializationAndRefresh);
-        assert_eq!(context.ip_source, Ipv4Addr::UNSPECIFIED); // Check initial state
+        assert_eq!(context.ip_source, Ipv4Addr::UNSPECIFIED);
 
         context.initialize_static_part_with_uncompressed_headers(&headers);
 
@@ -284,7 +277,7 @@ mod tests {
     #[test]
     fn decompressor_context_initialization_from_ir() {
         let ir_packet_data = RohcIrProfile1Packet {
-            cid: 5, // Assume CID is set correctly before calling this function
+            cid: 5,
             profile: PROFILE_ID_RTP_UDP_IP,
             static_ip_src: "10.0.0.1".parse().unwrap(),
             static_ip_dst: "10.0.0.2".parse().unwrap(),
@@ -294,10 +287,11 @@ mod tests {
             dyn_rtp_sn: 12345,
             dyn_rtp_timestamp: 543210,
             dyn_rtp_marker: true,
-            crc8: 0, // CRC not checked here
+            crc8: 0,
         };
         let mut context = RtpUdpIpP1DecompressorContext::new(5, PROFILE_ID_RTP_UDP_IP);
         assert_eq!(context.mode, DecompressorMode::NoContext);
+        assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
 
         context.initialize_from_ir_packet(&ir_packet_data);
 
@@ -320,7 +314,7 @@ mod tests {
         assert_eq!(context.mode, DecompressorMode::FullContext);
         assert_eq!(context.consecutive_crc_failures_in_fc, 0);
         assert_eq!(context.expected_lsb_sn_width, DEFAULT_UO0_SN_LSB_WIDTH);
-        assert_eq!(context.p_sn, 0);
+        assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
     }
 
     #[test]
@@ -330,7 +324,7 @@ mod tests {
         assert_eq!(context.profile_id, PROFILE_ID_RTP_UDP_IP);
         assert_eq!(context.mode, DecompressorMode::NoContext);
         assert_eq!(context.expected_lsb_sn_width, DEFAULT_UO0_SN_LSB_WIDTH);
-        assert_eq!(context.p_sn, 0);
+        assert_eq!(context.p_sn, DEFAULT_P_SN_OFFSET);
         assert_eq!(context.consecutive_crc_failures_in_fc, 0);
     }
 
