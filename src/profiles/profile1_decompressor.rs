@@ -11,31 +11,35 @@ use crate::packet_processor::{
 };
 use crate::protocol_types::{RohcIrProfile1Packet, RtpUdpIpv4Headers};
 
-/// Creates the byte sequence from reconstructed headers for CRC verification.
+/// Creates the byte sequence from reconstructed header fields for UO-packet CRC verification.
 ///
-/// For ROHC Profile 1 (RTP/UDP/IP) U-mode, this MVP implementation includes:
+/// This input must exactly match the input used by the compressor when it calculated the CRC.
+/// For ROHC Profile 1 (RTP/UDP/IP) U-mode, this includes:
 /// - SSRC (from context)
 /// - Reconstructed RTP Sequence Number
+/// - Reconstructed RTP Timestamp (Note: For UO-0 and UO-1-SN, TS is typically from context)
 /// - Reconstructed RTP Marker bit
 ///
-/// This input must match the input used by the compressor when it calculated the CRC.
-///
 /// # Arguments
-/// * `context`: The current decompressor context, providing the SSRC.
-/// * `reconstructed_sn`: The fully reconstructed RTP Sequence Number.
-/// * `reconstructed_marker`: The reconstructed RTP Marker bit.
+/// * `context`: The current decompressor context.
+/// * `reconstructed_sn`: The fully reconstructed RTP Sequence Number for the current packet.
+/// * `reconstructed_ts`: The RTP Timestamp to be used for CRC (often from context for UO-0/1-SN).
+/// * `reconstructed_marker`: The reconstructed RTP Marker bit for the current packet.
 ///
 /// # Returns
 /// A `Vec<u8>` containing the bytes for CRC calculation.
-fn create_crc_input_for_verification(
+fn create_crc_input_for_uo_packet_verification(
     context: &RtpUdpIpP1DecompressorContext,
     reconstructed_sn: u16,
+    reconstructed_ts: u32,
     reconstructed_marker: bool,
 ) -> Vec<u8> {
-    // Capacity: SSRC (4 bytes) + SN (2 bytes) + Marker (1 byte)
-    let mut crc_input = Vec::with_capacity(4 + 2 + 1);
+    // Capacity: SSRC (4) + SN (2) + TS (4) + Marker (1) = 11 bytes
+    let mut crc_input = Vec::with_capacity(11);
+
     crc_input.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
     crc_input.extend_from_slice(&reconstructed_sn.to_be_bytes());
+    crc_input.extend_from_slice(&reconstructed_ts.to_be_bytes());
     crc_input.push(if reconstructed_marker { 0x01 } else { 0x00 });
     crc_input
 }
@@ -134,9 +138,8 @@ fn process_uo0_packet(
     )
     .map_err(RohcError::Parsing)? as u16;
 
-    // For UO-0, TS and Marker are taken from context
-    let reconstructed_ts = context.last_reconstructed_rtp_ts_full;
-    let reconstructed_marker = context.last_reconstructed_rtp_marker;
+    let reconstructed_ts_for_header = context.last_reconstructed_rtp_ts_full;
+    let reconstructed_marker_for_header = context.last_reconstructed_rtp_marker;
 
     let reconstructed_headers = RtpUdpIpv4Headers {
         ip_src: context.ip_source,
@@ -145,8 +148,8 @@ fn process_uo0_packet(
         udp_dst_port: context.udp_destination_port,
         rtp_ssrc: context.rtp_ssrc,
         rtp_sequence_number: reconstructed_sn,
-        rtp_timestamp: reconstructed_ts,
-        rtp_marker: reconstructed_marker,
+        rtp_timestamp: reconstructed_ts_for_header,
+        rtp_marker: reconstructed_marker_for_header,
         ip_protocol: IP_PROTOCOL_UDP,
         rtp_version: RTP_VERSION,
         ip_ihl: 5,
@@ -154,8 +157,16 @@ fn process_uo0_packet(
         ..Default::default()
     };
 
-    let crc_payload_bytes =
-        create_crc_input_for_verification(context, reconstructed_sn, reconstructed_marker);
+    // For CRC verification, we use the reconstructed SN, and the TS/Marker values
+    // that the *compressor* would have used from its original uncompressed packet.
+    // For UO-0, the compressor assumes TS doesn't change significantly from its context,
+    // and marker also doesn't change (else it would send UO-1).
+    let crc_payload_bytes = create_crc_input_for_uo_packet_verification(
+        context,
+        reconstructed_sn,
+        context.last_reconstructed_rtp_ts_full,
+        context.last_reconstructed_rtp_marker,
+    );
     let calculated_crc3 = crate::crc::calculate_rohc_crc3(&crc_payload_bytes);
 
     if calculated_crc3 == parsed_uo0.crc3 {
@@ -210,13 +221,13 @@ fn process_uo1_sn_packet(
     .map_err(RohcError::Parsing)? as u16;
 
     // UO-1-SN carries the marker bit directly.
-    let reconstructed_marker = parsed_uo1.rtp_marker_bit_value.ok_or_else(|| {
+    let reconstructed_marker_for_header = parsed_uo1.rtp_marker_bit_value.ok_or_else(|| {
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field_name: "UO-1-SN Marker bit".to_string(),
         })
     })?;
     // For UO-1-SN, timestamp is taken from context (not conveyed in this packet type).
-    let reconstructed_ts = context.last_reconstructed_rtp_ts_full;
+    let reconstructed_ts_for_header = context.last_reconstructed_rtp_ts_full;
 
     let reconstructed_headers = RtpUdpIpv4Headers {
         ip_src: context.ip_source,
@@ -225,8 +236,8 @@ fn process_uo1_sn_packet(
         udp_dst_port: context.udp_destination_port,
         rtp_ssrc: context.rtp_ssrc,
         rtp_sequence_number: reconstructed_sn,
-        rtp_timestamp: reconstructed_ts,
-        rtp_marker: reconstructed_marker,
+        rtp_timestamp: reconstructed_ts_for_header,
+        rtp_marker: reconstructed_marker_for_header,
         ip_protocol: IP_PROTOCOL_UDP,
         rtp_version: RTP_VERSION,
         ip_ihl: 5,
@@ -234,13 +245,24 @@ fn process_uo1_sn_packet(
         ..Default::default()
     };
 
-    let crc_payload_bytes =
-        create_crc_input_for_verification(context, reconstructed_sn, reconstructed_marker);
+    // For CRC verification with UO-1-SN:
+    // - SN is the reconstructed_sn.
+    // - Marker is the reconstructed_marker_for_header (carried in UO-1-SN).
+    // - TS: The compressor, when forming UO-1-SN, would have used its *current* uncompressed TS
+    //   for CRC calculation, even though UO-1-SN doesn't transmit TS LSBs (in this MVP variant).
+    //   The decompressor *infers* TS from context for header reconstruction, but for CRC
+    //   it needs to conceptually match what the compressor used.
+    let crc_payload_bytes = create_crc_input_for_uo_packet_verification(
+        context,
+        reconstructed_sn,
+        context.last_reconstructed_rtp_ts_full,
+        reconstructed_marker_for_header,
+    );
     let calculated_crc8 = crate::crc::calculate_rohc_crc8(&crc_payload_bytes);
 
     if calculated_crc8 == parsed_uo1.crc8 {
         context.last_reconstructed_rtp_sn_full = reconstructed_sn;
-        context.last_reconstructed_rtp_marker = reconstructed_marker; // Update marker from packet
+        context.last_reconstructed_rtp_marker = reconstructed_marker_for_header;
         context.consecutive_crc_failures_in_fc = 0;
         Ok(reconstructed_headers)
     } else {
@@ -466,9 +488,8 @@ mod tests {
         assert_eq!(decompressor_context.cid, 0);
         assert_eq!(
             decompressed_headers.rtp_sequence_number,
-            headers2.rtp_sequence_number // Should reconstruct to 101
+            headers2.rtp_sequence_number // SN=101
         );
-        // UO-0 doesn't update TS or Marker from packet, uses context's last known values
         assert_eq!(decompressed_headers.rtp_timestamp, headers1.rtp_timestamp);
         assert_eq!(decompressed_headers.rtp_marker, headers1.rtp_marker);
         assert_eq!(decompressor_context.last_reconstructed_rtp_sn_full, 101);
@@ -478,7 +499,6 @@ mod tests {
     fn decompress_uo0_crc_failure_leads_to_static_context_mode() {
         let mut decompressor_context = RtpUdpIpP1DecompressorContext::new(0, PROFILE_ID_RTP_UDP_IP);
 
-        // Manually set up FC mode for testing UO-0 directly
         let ir_headers = default_uncompressed_headers_for_decomp_test(99);
         decompressor_context.ip_source = ir_headers.ip_src;
         decompressor_context.ip_destination = ir_headers.ip_dst;
@@ -495,16 +515,14 @@ mod tests {
         let sn_lsb = crate::encodings::encode_lsb(sn_for_packet as u64, DEFAULT_UO0_SN_LSB_WIDTH)
             .unwrap() as u8;
 
-        // Create CRC input for the *correct* SN and Marker
-        let crc_input_for_correct_packet = create_crc_input_for_verification(
+        let crc_input_for_correct_packet = create_crc_input_for_uo_packet_verification(
             &decompressor_context,
             sn_for_packet,
+            decompressor_context.last_reconstructed_rtp_ts_full,
             decompressor_context.last_reconstructed_rtp_marker,
         );
         let correct_crc3 = crate::crc::calculate_rohc_crc3(&crc_input_for_correct_packet);
-
-        // Corrupt the CRC
-        let corrupted_crc3 = correct_crc3.wrapping_add(1) & 0x07; // Ensure it's different and still 3-bit
+        let corrupted_crc3 = correct_crc3.wrapping_add(1) & 0x07;
 
         let uo0_packet_bytes_corrupted_crc =
             build_uo0_profile1_cid0_packet(sn_lsb, corrupted_crc3).unwrap();
