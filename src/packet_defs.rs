@@ -1,4 +1,6 @@
-//! Definitions for ROHC-specific packet types, profile identifiers, and related enums.
+//! ROHC packet type definitions and identifiers.
+//!
+//! Defines enums and structs for ROHC packet formats and profiles.
 
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
@@ -6,15 +8,24 @@ use std::net::Ipv4Addr;
 use crate::constants::*;
 use crate::protocol_types::RtpUdpIpv4Headers;
 
-/// Represents ROHC Profile Identifiers.
+/// Supported ROHC profile identifiers.
+///
+/// Each profile specifies a different set of protocols that can be compressed.
+/// The numeric values correspond to the profile identifiers defined in the ROHC RFCs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RohcProfile {
+    /// Uncompressed mode (profile 0x0000)
     Uncompressed = PROFILE_ID_UNCOMPRESSED,
+    /// RTP/UDP/IP compression (profile 0x0001)
     RtpUdpIp = PROFILE_ID_RTP_UDP_IP,
+    /// UDP/IP compression (profile 0x0002)
     UdpIp = PROFILE_ID_UDP_IP,
+    /// IP-only compression (profile 0x0003)
     Ip = PROFILE_ID_IP_ONLY,
+    /// TCP/IP compression (profile 0x0006)
     TcpIp = PROFILE_ID_TCP_IP,
+    /// Unknown or unsupported profile
     Unknown(u8),
 }
 
@@ -44,16 +55,15 @@ impl From<RohcProfile> for u8 {
     }
 }
 
-/// Generic wrapper for different types of uncompressed packet headers.
+/// Container for different uncompressed header types.
 ///
-/// This allows profile handlers to receive and return various header types
-/// through a common interface.
+/// Provides a unified interface for profile handlers to work with
+/// various header formats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenericUncompressedHeaders {
     RtpUdpIpv4(RtpUdpIpv4Headers),
 }
 
-// Forward RtpUdpIpv4Headers methods if needed, or require matching. Example:
 impl GenericUncompressedHeaders {
     pub fn as_rtp_udp_ipv4(&self) -> Option<&RtpUdpIpv4Headers> {
         match self {
@@ -67,13 +77,14 @@ impl GenericUncompressedHeaders {
     }
 }
 
-/// Discriminator for identifying the high-level type of a ROHC packet
-/// based on its initial octet(s).
+/// Identifies ROHC packet types from initial bytes.
 ///
-/// This is used by the main ROHC engine/dispatcher to route packets to the
-/// appropriate `ProfileHandler` or to specific logic within a handler.
-/// The `from_first_byte` method provides a basic interpretation. More complex
-/// dispatching (e.g., handling Add-CID followed by a type) is done by the engine.
+/// Used by the ROHC engine to route packets to the correct handler.
+/// Identifies ROHC packet types from initial bytes.
+///
+/// This enum is used by the ROHC engine to determine the type of a packet
+/// based on its initial bytes, allowing for proper routing to the appropriate
+/// handler. It supports both small and large CIDs (Context Identifiers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RohcPacketDiscriminator {
     /// ROHC Initialization and Refresh packet (dynamic part present).
@@ -100,12 +111,6 @@ pub enum RohcPacketDiscriminator {
 
 impl RohcPacketDiscriminator {
     /// Determines a ROHC packet discriminator from its first byte.
-    ///
-    /// Note: This function provides a basic classification. A full dispatcher
-    /// needs to handle Add-CID octets (which means looking at the *next* byte
-    /// for the actual ROHC packet type) and multi-byte discriminators if any.
-    /// This primarily helps a `ProfileHandler` distinguish core packet types
-    /// *after* Add-CID has been potentially stripped by a higher-level dispatcher.
     ///
     /// NOTE: This should be reworked when we implement support for more profiles.
     /// It should be able to handle different discriminator schemes etc. by then.
@@ -142,16 +147,11 @@ impl RohcPacketDiscriminator {
     }
 }
 
-// --- ROHC Packet Data Structs (Moved from protocol_types.rs) ---
-// These structs represent the *logical content* of specific ROHC packets for a given profile.
-// They are used by profile handlers after parsing the raw bytes.
-
-/// Represents the data structure for a ROHC IR (Initialization and Refresh) packet
-/// specific to Profile 1 (RTP/UDP/IP).
+/// ROHC IR packet data for Profile 1 (RTP/UDP/IP).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RohcIrProfile1Packet {
     /// Context Identifier (CID) for this ROHC flow.
-    /// This is set by the dispatcher based on Add-CID or implicit context.
+    /// Set by the dispatcher based on Add-CID or implicit context.
     pub cid: u16,
     /// ROHC Profile Identifier.
     pub profile: RohcProfile,
@@ -171,7 +171,7 @@ impl Default for RohcIrProfile1Packet {
     fn default() -> Self {
         Self {
             cid: 0,
-            profile: RohcProfile::RtpUdpIp, // Default to Profile 1
+            profile: RohcProfile::RtpUdpIp,
             crc8: 0,
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
@@ -185,7 +185,7 @@ impl Default for RohcIrProfile1Packet {
     }
 }
 
-/// Represents a ROHC UO-0 (Unidirectional, Optimistic, Type 0) packet for Profile 1.
+/// ROHC UO-0 packet for Profile 1 (RTP/UDP/IP).
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RohcUo0PacketProfile1 {
     /// Context Identifier (CID). `None` for implicit CID 0 packets.
@@ -195,11 +195,9 @@ pub struct RohcUo0PacketProfile1 {
     pub crc3: u8,
 }
 
-/// Represents a ROHC UO-1 (Unidirectional, Optimistic, Type 1) packet for Profile 1,
-/// specifically the variant carrying SN LSBs and Marker information.
+/// ROHC UO-1 packet for Profile 1 with SN LSBs and Marker.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RohcUo1PacketProfile1 {
-    // CID handled by dispatcher if Add-CID was present.
     pub sn_lsb: u16,
     pub num_sn_lsb_bits: u8,
     pub rtp_marker_bit_value: Option<bool>,

@@ -1,33 +1,32 @@
+//! ROHC packet processing.
+//!
+//! Handles parsing and building ROHC packets for different profiles.
+
+use std::net::Ipv4Addr;
+
 use crate::constants::{
-    ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_VALUE, IP_PROTOCOL_UDP, PROFILE_ID_RTP_UDP_IP,
-    ROHC_IR_PACKET_TYPE_BASE, ROHC_IR_PACKET_TYPE_D_BIT_MASK, ROHC_IR_PACKET_TYPE_WITH_DYN,
-    RTP_VERSION, UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
+    ADD_CID_OCTET_CID_MASK, ADD_CID_OCTET_PREFIX_VALUE, IP_PROTOCOL_UDP,
+    IPV4_MIN_HEADER_LENGTH_BYTES, IPV4_STANDARD_IHL, PROFILE_ID_RTP_UDP_IP,
+    PROFILE1_DYNAMIC_CHAIN_LENGTH, PROFILE1_STATIC_CHAIN_LENGTH, ROHC_IR_PACKET_TYPE_BASE,
+    ROHC_IR_PACKET_TYPE_D_BIT_MASK, ROHC_IR_PACKET_TYPE_WITH_DYN, RTP_MIN_HEADER_LENGTH_BYTES,
+    RTP_VERSION, UDP_HEADER_LENGTH_BYTES, UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use crate::crc::calculate_rohc_crc8;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RohcUo1PacketProfile1};
 use crate::protocol_types::RtpUdpIpv4Headers;
-use std::net::Ipv4Addr;
 
-/// Minimum length of an IPv4 header in bytes (without options).
-const IPV4_MIN_HEADER_LENGTH_BYTES: usize = 20;
-/// Length of a UDP header in bytes.
-const UDP_HEADER_LENGTH_BYTES: usize = 8;
-/// Minimum length of an RTP header in bytes (without CSRC list or extension).
-const RTP_MIN_HEADER_LENGTH_BYTES: usize = 12;
-
-/// Parses uncompressed RTP/UDP/IPv4 headers from a raw byte slice.
+/// Parses RTP/UDP/IPv4 headers into structured format.
 ///
-/// This function expects the byte slice to start with the IPv4 header, followed by
-/// the UDP header, and then the RTP header. It performs basic validation for lengths
-/// and protocol identifiers.
+/// This function parses a raw packet containing IPv4, UDP, and RTP headers
+/// in sequence, extracting all fields needed for ROHC compression. It validates
+/// the protocol chain and header lengths.
 ///
-/// # Arguments
-/// * `data`: A byte slice containing the raw header data.
+/// # Parameters
+/// - `data`: Raw packet starting with IPv4 header
 ///
 /// # Returns
-/// A `Result` containing the parsed `RtpUdpIpv4Headers` or a `RohcParsingError`
-/// if parsing fails (e.g., insufficient data, invalid protocol versions).
+/// A `Result` containing the parsed `RtpUdpIpv4Header` or a `RohcParsingError`.
 pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < IPV4_MIN_HEADER_LENGTH_BYTES {
         return Err(RohcParsingError::NotEnoughData {
@@ -41,10 +40,13 @@ pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingE
         return Err(RohcParsingError::InvalidIpVersion(ip_version));
     }
     let ip_ihl_words = data[0] & 0x0F; // IHL is in 4-byte words
-    if ip_ihl_words < 5 {
+    if ip_ihl_words < IPV4_STANDARD_IHL {
         return Err(RohcParsingError::InvalidFieldValue {
             field_name: "IPv4 IHL".to_string(),
-            description: format!("must be at least 5 words, got {}", ip_ihl_words),
+            description: format!(
+                "must be at least {} words, got {}",
+                IPV4_STANDARD_IHL, ip_ihl_words
+            ),
         });
     }
     let ip_header_length_bytes = (ip_ihl_words * 4) as usize;
@@ -172,19 +174,17 @@ pub fn parse_rtp_udp_ipv4(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingE
     })
 }
 
-/// Builds a ROHC IR (Initialization and Refresh) packet for Profile 1 (RTP/UDP/IP).
+/// Builds a ROHC IR packet for Profile 1 (RTP/UDP/IP).
 ///
-/// This function constructs the IR packet bytes based on the provided `RohcIrProfile1Packet` data.
-/// It handles optional Add-CID octet, packet type, profile ID, static chain, dynamic chain,
-/// and calculates the CRC-8.
+/// This function creates an IR (Initialization and Refresh) packet containing
+/// both static chain (IP addresses, ports, SSRC) and dynamic chain (SN, TS,
+/// marker) information. The packet includes an 8-bit CRC for validation.
 ///
-/// # Arguments
-/// * `ir_data`: A reference to `RohcIrProfile1Packet` containing all necessary field values.
-///   The `crc8` field in `ir_data` is ignored; CRC is calculated by this function.
+/// # Parameters
+/// - `ir_data`: Packet data to encode
 ///
 /// # Returns
-/// A `Result` containing the built IR packet as a `Vec<u8>`, or a `RohcBuildingError`
-/// if packet construction fails (e.g., invalid CID for Add-CID, unsupported profile).
+/// A `Result` containing the built IR packet as `Vec<u8>`, or a `RohcBuildingError`.
 pub fn build_ir_profile1_packet(
     ir_data: &RohcIrProfile1Packet,
 ) -> Result<Vec<u8>, RohcBuildingError> {
@@ -241,14 +241,15 @@ pub fn build_ir_profile1_packet(
     Ok(final_packet_bytes)
 }
 
-/// Builds a ROHC UO-0 packet for Profile 1, specifically for CID 0 (1-octet version).
+/// Builds a ROHC UO-0 packet for Profile 1 (CID 0).
 ///
-/// This packet type is highly compressed, containing only LSBs of the RTP Sequence Number
-/// and a 3-bit CRC.
+/// This function creates a highly compressed 1-byte packet containing
+/// 4 LSBs of the RTP sequence number and a 3-bit CRC. The packet format
+/// is `0SSSSCCC` where S = SN bits and C = CRC bits.
 ///
-/// # Arguments
-/// * `sn_4_lsb`: The 4 least significant bits of the RTP Sequence Number.
-/// * `crc3_value`: The pre-calculated 3-bit CRC over the (reconstructed) original header.
+/// # Parameters
+/// - `sn_4_lsb`: 4 LSBs of RTP sequence number (0-15)
+/// - `crc3_value`: Pre-calculated 3-bit CRC (0-7)
 ///
 /// # Returns
 /// A `Result` containing the 1-byte UO-0 packet as `Vec<u8>`, or a `RohcBuildingError`
@@ -283,14 +284,15 @@ pub fn build_uo0_profile1_cid0_packet(
     Ok(vec![packet_byte])
 }
 
-/// Parses a ROHC IR (Initialization and Refresh) packet for Profile 1 (RTP/UDP/IP).
+/// Parses a ROHC IR packet for Profile 1.
 ///
-/// This function expects the `data` slice to start with the ROHC packet type octet
-/// (i.e., after any Add-CID octet has been processed and removed by the caller).
-/// It validates the packet type, profile, and CRC-8.
+/// This function parses an IR (Initialization and Refresh) packet for Profile 1
+/// (RTP/UDP/IP) according to RFC 3095. The IR packet contains both static and
+/// dynamic chain information needed to initialize or refresh the decompression
+/// context.
 ///
-/// # Arguments
-/// * `data`: A byte slice containing the IR packet data, starting from the type octet.
+/// # Parameters
+/// - `data`: IR packet data (after Add-CID octet)
 ///
 /// # Returns
 /// A `Result` containing the parsed `RohcIrProfile1Packet` or a `RohcParsingError`.
@@ -318,29 +320,18 @@ pub fn parse_ir_profile1_packet(data: &[u8]) -> Result<RohcIrProfile1Packet, Roh
             got: data.len(),
         });
     }
-    let profile_octet_value = data[current_offset]; // This is also the first byte of CRC payload
+    let profile_octet_value = data[current_offset]; // First byte of CRC payload
     if profile_octet_value != PROFILE_ID_RTP_UDP_IP {
         return Err(RohcParsingError::InvalidProfileId(profile_octet_value));
     }
     // current_offset now points to the start of the static chain within the CRC payload.
     // (Profile octet is data[current_offset], static chain starts at data[current_offset + 1])
 
-    // Static chain for Profile 1: IP_Src(4) + IP_Dst(4) + UDP_Src(2) + UDP_Dst(2) + RTP_SSRC(4) = 16 bytes
-    const STATIC_CHAIN_LENGTH: usize = 16;
-    // Dynamic chain for Profile 1 (if D-bit set): SN(2) + TS(4) + Flags(1) = 7 bytes
-    const DYNAMIC_CHAIN_LENGTH: usize = if ROHC_IR_PACKET_TYPE_WITH_DYN
-        == (ROHC_IR_PACKET_TYPE_BASE | ROHC_IR_PACKET_TYPE_D_BIT_MASK)
-    {
-        7
-    } else {
-        0
-    };
-
     let crc_payload_start_offset = current_offset;
     let crc_payload_length = 1
-        + STATIC_CHAIN_LENGTH
+        + PROFILE1_STATIC_CHAIN_LENGTH
         + (if d_bit_is_set {
-            DYNAMIC_CHAIN_LENGTH
+            PROFILE1_DYNAMIC_CHAIN_LENGTH
         } else {
             0
         });
@@ -428,13 +419,15 @@ pub fn parse_ir_profile1_packet(data: &[u8]) -> Result<RohcIrProfile1Packet, Roh
     })
 }
 
-/// Parses a ROHC UO-0 packet for Profile 1, assuming CID 0 (1-octet version).
+/// Parses a ROHC UO-0 packet for Profile 1 (CID 0).
 ///
-/// The `data` slice should contain exactly the 1-byte UO-0 packet.
-/// The first bit of this byte must be 0 to be a valid UO-0 for CID 0.
+/// This function parses a 1-byte UO-0 packet that contains 4 LSBs of the
+/// RTP sequence number and a 3-bit CRC. The packet must have its MSB set
+/// to 0 to be valid.
 ///
-/// # Arguments
-/// * `data`: A byte slice containing the 1-byte UO-0 packet.
+///
+/// # Parameters
+/// - `data`: 1-byte UO-0 packet data
 ///
 /// # Returns
 /// A `Result` containing the parsed `RohcUo0PacketProfile1` or a `RohcParsingError`.
@@ -473,13 +466,13 @@ pub fn parse_uo0_profile1_cid0_packet(
 
 /// Builds a ROHC UO-1-SN packet for Profile 1.
 ///
-/// This variant of UO-1 carries 8 LSBs of the RTP Sequence Number and the RTP Marker bit,
-/// along with an 8-bit CRC.
+/// This function creates a 3-byte packet containing the UO-1-SN type octet
+/// with marker bit, 8 LSBs of the RTP sequence number, and an 8-bit CRC.
 ///
-/// # Arguments
-/// * `sn_8_lsb`: The 8 least significant bits of the RTP Sequence Number.
-/// * `marker_bit_value`: The value of the RTP Marker bit to be encoded.
-/// * `crc8_value`: The pre-calculated 8-bit CRC over the (reconstructed) original header.
+/// # Parameters
+/// - `sn_8_lsb`: 8 LSBs of RTP sequence number (0-255)
+/// - `marker_bit_value`: RTP marker bit value
+/// - `crc8_value`: Pre-calculated 8-bit CRC (0-255)
 ///
 /// # Returns
 /// A `Result` containing the 3-byte UO-1-SN packet as `Vec<u8>`, or a `RohcBuildingError`.
@@ -503,13 +496,11 @@ pub fn build_uo1_sn_profile1_packet(
 
 /// Parses a ROHC UO-1-SN packet for Profile 1.
 ///
-/// This function expects the `data` slice to start with the ROHC UO-1-SN packet type octet
-/// (i.e., after any Add-CID octet has been processed). It extracts the SN LSBs,
-/// marker bit, and the received CRC-8. CRC verification itself is done by the decompressor
-/// logic using the context.
+/// This function parses a 3-byte UO-1-SN packet that contains the type octet
+/// with marker bit, 8 LSBs of the RTP sequence number, and an 8-bit CRC.
 ///
-/// # Arguments
-/// * `data`: A byte slice containing the UO-1-SN packet data (typically 3 bytes).
+/// # Parameters
+/// - `data`: UO-1-SN packet data (3 bytes expected)
 ///
 /// # Returns
 /// A `Result` containing the parsed `RohcUo1PacketProfile1` or a `RohcParsingError`.
@@ -547,6 +538,7 @@ pub fn parse_uo1_sn_profile1_packet(
 
 #[cfg(test)]
 mod tests {
+    use crate::constants::DEFAULT_IPV4_TTL;
     use crate::packet_defs::RohcProfile;
 
     use super::*;
@@ -563,7 +555,7 @@ mod tests {
             &((IPV4_MIN_HEADER_LENGTH_BYTES + UDP_HEADER_LENGTH_BYTES + RTP_MIN_HEADER_LENGTH_BYTES) as u16)
                 .to_be_bytes(), // Total Length
         );
-        ip_header_bytes[8] = 64; // TTL
+        ip_header_bytes[8] = DEFAULT_IPV4_TTL; // TTL
         ip_header_bytes[9] = IP_PROTOCOL_UDP; // Protocol UDP
         ip_header_bytes[12..16].copy_from_slice(&[192, 168, 1, 1]); // Src IP
         ip_header_bytes[16..20].copy_from_slice(&[192, 168, 1, 2]); // Dst IP

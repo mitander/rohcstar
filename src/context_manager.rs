@@ -1,16 +1,19 @@
+//! ROHC context management and lifecycle.
+//!
+//! Provides mechanisms for managing the lifecycle of ROHC contexts,
+//! including creation, retrieval, and cleanup of compressor and
+//! decompressor contexts for different ROHC profiles.
+
 use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
 use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
 use crate::protocol_types::RtpUdpIpv4Headers;
 
-/// A simple context manager for ROHC Profile 1 (RTP/UDP/IP).
+/// Manages ROHC Profile 1 (RTP/UDP/IP) contexts.
 ///
-/// This manager handles a single compressor context and a single decompressor context.
-/// It's suitable for scenarios where only one ROHC flow (identified by a CID,
-/// or CID 0 if implicit) is being managed at a time by this instance.
-///
-/// For managing multiple concurrent ROHC flows (multiple CIDs), a more sophisticated
-/// context manager would be required, likely using a map from CID to context.
+/// This manager provides a simple implementation that handles one compressor and one
+/// decompressor context at a time. For production use with multiple flows, consider
+/// implementing a more sophisticated manager with proper CID mapping.
 #[derive(Debug, Default)]
 pub struct SimpleContextManager {
     /// The single compressor context managed by this instance.
@@ -20,27 +23,25 @@ pub struct SimpleContextManager {
 }
 
 impl SimpleContextManager {
-    /// Creates a new, empty `SimpleContextManager`.
+    /// Creates a new instance of SimpleContextManager.
     ///
-    /// Both compressor and decompressor contexts will be `None` initially.
+    /// # Returns
+    /// A new `SimpleContextManager` instance with no active contexts.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Retrieves the existing compressor context for the given CID, or initializes a new one
-    /// if no context exists or if the existing context is for a different CID or flow.
+    /// Gets or initializes a compressor context for the given CID and headers.
     ///
-    /// A "flow" is identified by the combination of CID and key static header fields
-    /// (IP addresses, ports, SSRC). If these static fields change for the given CID,
-    /// the existing context is re-initialized.
-    ///
-    /// # Arguments
-    /// * `cid`: The Context Identifier for the compressor.
-    /// * `headers`: The uncompressed headers of the current packet, used for initialization
-    ///   or to check if the existing context matches the current flow.
+    /// # Parameters
+    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this compression context.
+    ///   - 0-16383: Small CID (fits in 1 byte when using CID 0-15)
+    ///   - 16384-65535: Large CID (requires 2 bytes)
+    /// - `headers`: Current packet headers used to identify the flow.
     ///
     /// # Returns
-    /// A mutable reference to the `RtpUdpIpP1CompressorContext`.
+    /// `&mut RtpUdpIpP1CompressorContext` - Mutable reference to the compressor context.
     pub fn get_or_init_compressor_context(
         &mut self,
         cid: u16,
@@ -63,8 +64,8 @@ impl SimpleContextManager {
         if needs_reinitialization {
             let mut new_context = RtpUdpIpP1CompressorContext::new(
                 cid,
-                RohcProfile::RtpUdpIp, // Assuming Profile 1 for this manager
-                DEFAULT_IR_REFRESH_INTERVAL, // Default refresh interval
+                RohcProfile::RtpUdpIp,
+                DEFAULT_IR_REFRESH_INTERVAL,
             );
             // This will set mode to InitializationAndRefresh, ensuring IR is sent.
             new_context.initialize_static_part_with_uncompressed_headers(headers);
@@ -74,17 +75,16 @@ impl SimpleContextManager {
         self.compressor_context.as_mut().unwrap()
     }
 
-    /// Retrieves the existing decompressor context for the given CID, or initializes a new one
-    /// if no context exists or if the existing context is for a different CID.
+    /// Gets or initializes a decompressor context for the specified CID.
     ///
-    /// Unlike the compressor, this does not re-initialize based on packet content here;
-    /// re-initialization for decompressor typically happens upon receiving an IR packet.
-    ///
-    /// # Arguments
-    /// * `cid`: The Context Identifier for the decompressor.
+    /// # Parameters
+    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this decompression context.
+    ///   - 0-15: Small CID (fits in 1 byte with 4-bit CID field)
+    ///   - 16-16383: Small CID (requires 1 byte with 8-bit CID field)
+    ///   - 16384-65535: Large CID (requires 2 bytes)
     ///
     /// # Returns
-    /// A mutable reference to the `RtpUdpIpP1DecompressorContext`.
+    /// `&mut RtpUdpIpP1DecompressorContext` - Mutable reference to the decompressor context.
     pub fn get_or_init_decompressor_context(
         &mut self,
         cid: u16,
@@ -104,16 +104,16 @@ impl SimpleContextManager {
         self.decompressor_context.as_mut().unwrap()
     }
 
-    /// Updates the decompressor context using data from a parsed IR packet.
+    /// Updates the decompressor context using data from an IR (Initialization and Refresh) packet.
     ///
-    /// This first ensures a decompressor context exists for the IR packet's CID (or creates one),
-    /// and then calls the context's `initialize_from_ir_packet` method.
-    ///
-    /// # Arguments
-    /// * `ir_packet`: The parsed `RohcIrProfile1Packet`.
+    /// # Parameters
+    /// - `ir_packet`: A reference to a parsed `RohcIrProfile1Packet` containing:
+    ///   - Static chain information (IP addresses, ports, etc.)
+    ///   - Dynamic fields (sequence number, timestamp, etc.)
+    ///   - Profile-specific parameters
     ///
     /// # Returns
-    /// A mutable reference to the updated `RtpUdpIpP1DecompressorContext`.
+    /// `&mut RtpUdpIpP1DecompressorContext` - A mutable reference to the updated decompressor context.
     pub fn update_decompressor_context_from_ir(
         &mut self,
         ir_packet: &RohcIrProfile1Packet,

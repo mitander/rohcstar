@@ -1,76 +1,82 @@
+//! Core ROHC protocol types.
+//!
+//! Defines protocol types used in the ROHC implementation.
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::net::Ipv4Addr;
 
-/// Represents the combined headers of an RTP/UDP/IPv4 packet.
+use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, RTP_VERSION};
+
+/// Combined RTP/UDP/IPv4 headers for ROHC compression/decompression.
 ///
-/// This structure is used to hold uncompressed header information before compression
-/// or after decompression. It includes fields from IPv4, UDP, and RTP headers.
+/// This structure represents the uncompressed headers that ROHC Profile 1
+/// operates on. It contains all fields from the IPv4, UDP, and RTP headers
+/// that may be needed for compression and decompression.
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtpUdpIpv4Headers {
-    /// IP Header Length (IHL): Number of 32-bit words in the IPv4 header. Typically 5.
+    /// IPv4 header length in 32-bit words (usually 5).
     pub ip_ihl: u8,
-    /// Differentiated Services Code Point (DSCP): Used for Quality of Service.
+    /// DSCP for QoS.
     pub ip_dscp: u8,
-    /// Explicit Congestion Notification (ECN).
+    /// ECN bits.
     pub ip_ecn: u8,
-    /// Total Length: Entire packet size in bytes, including header and data.
+    /// Total packet length (header + payload) in bytes.
     pub ip_total_length: u16,
-    /// Identification: Used for uniquely identifying fragments of an original IP datagram.
+    /// IP fragmentation ID.
     pub ip_identification: u16,
-    /// Don't Fragment (DF) flag.
+    /// If true, don't fragment packet.
     pub ip_dont_fragment: bool,
-    /// More Fragments (MF) flag.
+    /// If true, more fragments follow.
     pub ip_more_fragments: bool,
-    /// Fragment Offset: Indicates where in the original datagram this fragment belongs.
+    /// Fragment offset in 8-byte units.
     pub ip_fragment_offset: u16,
-    /// Time To Live (TTL): Limits the lifespan of data in a computer or network.
+    /// IP Time To Live (TTL).
     pub ip_ttl: u8,
-    /// Protocol: Identifies the next level protocol (e.g., UDP is 17).
+    /// IP protocol number (17 = UDP).
     pub ip_protocol: u8,
-    /// Header Checksum: For error checking of the IP header.
+    /// IPv4 header checksum.
     pub ip_checksum: u16,
-    /// Source IP Address. Serialized from/to string.
+    /// Source IP address.
     #[serde_as(as = "DisplayFromStr")]
     pub ip_src: Ipv4Addr,
-    /// Destination IP Address. Serialized from/to string.
+    /// Destination IP address.
     #[serde_as(as = "DisplayFromStr")]
     pub ip_dst: Ipv4Addr,
-    /// UDP Source Port.
+    /// Source UDP port.
     pub udp_src_port: u16,
-    /// UDP Destination Port.
+    /// Destination UDP port.
     pub udp_dst_port: u16,
-    /// UDP Length: Length in bytes of UDP header and UDP data.
+    /// UDP length (header + payload) in bytes.
     pub udp_length: u16,
-    /// UDP Checksum: For error checking of UDP header and data.
+    /// UDP checksum (optional in IPv4).
     pub udp_checksum: u16,
-    /// RTP Version (V): Typically 2.
+    /// RTP version (2 = standard).
     pub rtp_version: u8,
-    /// RTP Padding (P) bit.
+    /// If true, payload has padding.
     pub rtp_padding: bool,
-    /// RTP Extension (X) bit.
+    /// If true, RTP header has extension.
     pub rtp_extension: bool,
-    /// RTP CSRC Count (CC): Number of contributing source identifiers.
+    /// Number of CSRC identifiers.
     pub rtp_csrc_count: u8,
-    /// RTP Marker (M) bit.
+    /// Marker bit (payload type dependent).
     pub rtp_marker: bool,
-    /// RTP Payload Type (PT).
+    /// RTP payload type (media format).
     pub rtp_payload_type: u8,
-    /// RTP Sequence Number (SN).
+    /// RTP sequence number.
     pub rtp_sequence_number: u16,
-    /// RTP Timestamp.
+    /// RTP timestamp (clock rate is payload dependent).
     pub rtp_timestamp: u32,
-    /// RTP Synchronization Source (SSRC) identifier.
+    /// SSRC (random per stream).
     pub rtp_ssrc: u32,
-    /// RTP Contributing Source (CSRC) identifiers list.
+    /// List of CSRC identifiers.
     pub rtp_csrc_list: Vec<u32>,
 }
 
 impl Default for RtpUdpIpv4Headers {
     fn default() -> Self {
         Self {
-            ip_ihl: 5, // Minimum IPv4 header length (5 words * 4 bytes/word = 20 bytes)
+            ip_ihl: DEFAULT_IPV4_TTL, // Minimum IPv4 header length (5 words * 4 bytes/word = 20 bytes)
             ip_dscp: 0,
             ip_ecn: 0,
             ip_total_length: 0, // Should be calculated based on payload
@@ -78,16 +84,16 @@ impl Default for RtpUdpIpv4Headers {
             ip_dont_fragment: false, // Often true for RTP to avoid fragmentation issues
             ip_more_fragments: false,
             ip_fragment_offset: 0,
-            ip_ttl: 64,      // Common default TTL
-            ip_protocol: 17, // UDP
-            ip_checksum: 0,  // Should be calculated
+            ip_ttl: DEFAULT_IPV4_TTL,     // Common default TTL
+            ip_protocol: IP_PROTOCOL_UDP, // UDP
+            ip_checksum: 0,               // Should be calculated
             ip_src: Ipv4Addr::UNSPECIFIED,
             ip_dst: Ipv4Addr::UNSPECIFIED,
             udp_src_port: 0,
             udp_dst_port: 0,
-            udp_length: 0,   // Should be calculated (UDP header + RTP header + payload)
-            udp_checksum: 0, // Optional for IPv4, often 0 if not calculated
-            rtp_version: 2,  // Standard RTP version
+            udp_length: 0, // Should be calculated (UDP header + RTP header + payload)
+            udp_checksum: 0,
+            rtp_version: RTP_VERSION, // Standard RTP version
             rtp_padding: false,
             rtp_extension: false,
             rtp_csrc_count: 0,

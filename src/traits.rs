@@ -1,15 +1,14 @@
-//! Core behavioral traits for the ROHC (Robust Header Compression) library.
+//! Core ROHC traits.
 //!
-//! These traits define the essential interfaces for contexts and profile-specific
-//! handlers, enabling a modular and extensible ROHC engine.
+//! Defines interfaces for contexts and profile handlers.
 
 use crate::error::RohcError;
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use std::any::Any;
 
-/// Defines the common interface for a ROHC compressor context.
+/// Trait for ROHC compressor contexts.
 ///
-/// Implementations store profile-specific state required for compression.
+/// Manages compression state and operations for a ROHC profile.
 pub trait RohcCompressorContext: Send + Sync {
     /// Returns the ROHC Profile Identifier this context is for.
     fn profile_id(&self) -> RohcProfile;
@@ -17,17 +16,22 @@ pub trait RohcCompressorContext: Send + Sync {
     /// Returns the Context Identifier (CID) of this context.
     fn cid(&self) -> u16;
 
-    /// Allows downcasting to a concrete compressor context type.
+    /// Returns a reference to the context as `&dyn Any`.
+    ///
+    /// # Returns
+    /// A reference to the context as `&dyn Any`.
     fn as_any(&self) -> &dyn Any;
 
-    /// Allows mutable downcasting to a concrete compressor context type.
+    /// Returns a mutable reference to the context as `&mut dyn Any`.
+    ///
+    /// # Returns
+    /// A mutable reference to the context as `&mut dyn Any`.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-/// Defines the common interface for a ROHC decompressor context.
+/// Trait for ROHC decompressor contexts.
 ///
-/// Implementations store profile-specific state required for decompression
-/// and header reconstruction.
+/// Manages state for packet decompression.
 pub trait RohcDecompressorContext: Send + Sync {
     /// Returns the ROHC Profile Identifier this context is for.
     fn profile_id(&self) -> RohcProfile;
@@ -39,61 +43,76 @@ pub trait RohcDecompressorContext: Send + Sync {
     /// Typically called by the engine/manager when associating a packet stream with this context.
     fn set_cid(&mut self, cid: u16);
 
-    /// Allows downcasting to a concrete decompressor context type.
+    /// Returns a reference to the context as `&dyn Any`.
+    ///
+    /// # Returns
+    /// A reference to the context as `&dyn Any`.
     fn as_any(&self) -> &dyn Any;
 
-    /// Allows mutable downcasting to a concrete decompressor context type.
+    /// Returns a mutable reference to the context as `&mut dyn Any`.
+    ///
+    /// # Returns
+    /// A mutable reference to the context as `&mut dyn Any`.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-/// Defines the interface for a ROHC profile-specific handler.
+/// Interface for ROHC profile handlers.
 ///
-/// Each supported ROHC profile implements this trait to provide its unique
-/// compression, decompression, and context management logic.
+/// Implemented by each ROHC profile to provide
+/// compression/decompression logic.
 pub trait ProfileHandler: Send + Sync {
-    /// Returns the ROHC Profile Identifier this handler implements.
+    /// Returns the ROHC profile identifier for this handler.
     fn profile_id(&self) -> RohcProfile;
 
-    /// Compresses an uncompressed packet according to this profile's rules.
+    /// Creates a new compressor context.
     ///
-    /// # Arguments
-    /// * `context`: A mutable reference to a generic `RohcCompressorContext`.
-    ///   The handler must downcast this to its specific context type.
-    /// * `headers`: The uncompressed headers to compress.
-    ///
-    /// # Returns
-    /// A `Result` containing the ROHC compressed packet or a `RohcError`.
-    fn compress(
-        &self,
-        context: &mut dyn RohcCompressorContext,
-        headers: &GenericUncompressedHeaders,
-    ) -> Result<Vec<u8>, RohcError>;
-
-    /// Decompresses a ROHC packet according to this profile's rules.
-    ///
-    /// # Arguments
-    /// * `context`: A mutable reference to a generic `RohcDecompressorContext`.
-    ///   The handler must downcast this to its specific context type.
-    ///   The context's CID should already be set correctly by the caller.
-    ///
-    /// * `rohc_packet_core_bytes`: Packet data starting *after* any Add-CID octet,
-    ///   beginning with the ROHC packet type discriminator.
+    /// # Parameters
+    /// - `cid`: Context identifier (0-65535)
+    /// - `ir_refresh_interval`: Interval between IR refreshes (in packets)
     ///
     /// # Returns
-    /// A `Result` containing the reconstructed `GenericUncompressedHeaders` or a `RohcError`.
-    fn decompress(
-        &self,
-        context: &mut dyn RohcDecompressorContext,
-        rohc_packet_core_bytes: &[u8],
-    ) -> Result<GenericUncompressedHeaders, RohcError>;
-
-    /// Creates a new, uninitialized compressor context for this profile.
+    /// A boxed compressor context for this profile.
     fn create_compressor_context(
         &self,
         cid: u16,
         ir_refresh_interval: u32,
     ) -> Box<dyn RohcCompressorContext>;
 
-    /// Creates a new, uninitialized decompressor context for this profile.
+    /// Creates a new decompressor context for this profile.
+    ///
+    /// # Parameters
+    /// - `cid`: Context identifier (0-65535)
+    ///
+    /// # Returns
+    /// A boxed decompressor context for this profile.
     fn create_decompressor_context(&self, cid: u16) -> Box<dyn RohcDecompressorContext>;
+
+    /// Compresses headers using this profile.
+    ///
+    /// # Parameters
+    /// - `context`: Mutable reference to the compressor context
+    /// - `headers`: Uncompressed headers to process
+    ///
+    /// # Returns
+    /// A `Result` containing the compressed packet as `Vec<u8>` or a `RohcError`.
+    fn compress(
+        &self,
+        context: &mut dyn RohcCompressorContext,
+        headers: &GenericUncompressedHeaders,
+    ) -> Result<Vec<u8>, RohcError>;
+
+    /// Decompresses a ROHC packet.
+    ///
+    /// # Parameters
+    /// - `context`: Mutable reference to a decompressor context.
+    ///   Must be downcast to the profile-specific context type.
+    /// - `rohc_packet_data`: Packet data (after any Add-CID octet)
+    ///
+    /// # Returns
+    /// A `Result` containing the reconstructed `GenericUncompressedHeaders` or a `RohcError`.
+    fn decompress(
+        &self,
+        context: &mut dyn RohcDecompressorContext,
+        rohc_packet_data: &[u8],
+    ) -> Result<GenericUncompressedHeaders, RohcError>;
 }

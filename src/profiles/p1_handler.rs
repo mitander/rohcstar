@@ -1,8 +1,7 @@
-//! Handler for ROHC Profile 1 (RTP/UDP/IP - RFC 3095, RFC 3843) specific logic.
+//! ROHC Profile 1 (RTP/UDP/IP) implementation.
 //!
-//! This module encapsulates the compression and decompression algorithms,
-//! context management specifics, and packet processing rules tailored for
-//! ROHC Profile 0x0001.
+//! Implements header compression for RTP/UDP/IPv4 flows as per RFC 3095 and RFC 3843.
+
 use crate::RtpUdpIpv4Headers;
 use crate::constants::*;
 use crate::context::{
@@ -19,22 +18,39 @@ use crate::packet_processor::{
 };
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 
-/// Implements the `ProfileHandler` trait for ROHC Profile 0x0001 (RTP/UDP/IP).
+/// Handles ROHC Profile 1 (RTP/UDP/IP) operations.
 ///
-/// This struct is stateless itself; all state is managed within the
-/// `RtpUdpIpP1CompressorContext` and `RtpUdpIpP1DecompressorContext` instances
-/// passed to its methods.
+/// This handler implements the ROHC Profile 1 specification for compressing
+/// RTP/UDP/IPv4 headers. It follows the unidirectional mode of operation
+/// as specified in RFC 3095 and RFC 3843.
 #[derive(Debug, Default)]
 pub struct Profile1Handler;
 
 impl Profile1Handler {
-    /// Creates a new instance of the Profile 1 handler.
+    /// Creates a new instance of Profile 1 (RTP/UDP/IP) handler.
+    ///
+    /// This creates a handler that can be used to compress and decompress
+    /// RTP/UDP/IPv4 headers according to ROHC Profile 1.
+    ///
+    /// # Returns
+    /// A new `Profile1Handler` instance.
+    #[inline]
     pub fn new() -> Self {
         Profile1Handler
     }
 
-    /// Reconstructs uncompressed RTP/UDP/IPv4 headers from a parsed Profile 1 IR packet.
-    fn reconstruct_headers_from_p1_ir(
+    /// Reconstructs RTP/UDP/IPv4 headers from an IR (Initialization and Refresh) packet.
+    ///
+    /// This method creates a complete set of uncompressed headers using the information
+    /// from an IR packet. It's used during decompression to rebuild the original headers
+    /// that were compressed at the sender.
+    ///
+    /// # Parameters
+    /// - `ir_packet`: Reference to the parsed IR packet containing both static and dynamic fields
+    ///
+    /// # Returns
+    /// A `RtpUdpIpv4Headers` structure populated with the header fields from the IR packet.
+    fn reconstruct_headers_from_ir_packet(
         &self,
         ir_packet: &RohcIrProfile1Packet,
     ) -> RtpUdpIpv4Headers {
@@ -49,22 +65,26 @@ impl Profile1Handler {
             rtp_marker: ir_packet.dyn_rtp_marker,
             ip_protocol: IP_PROTOCOL_UDP,
             rtp_version: RTP_VERSION,
-            ip_ihl: 5,
-            ip_ttl: 64, // Default, not conveyed by P1 IR for this field
+            ip_ihl: IPV4_STANDARD_IHL,
+            ip_ttl: DEFAULT_IPV4_TTL, // Default, not conveyed by P1 IR for this field
             ..Default::default()
         }
     }
 
-    /// Processes a parsed IR packet for Profile 1.
-    fn handle_p1_ir_packet(
+    /// Processes an IR packet and updates the decompressor context.
+    ///
+    /// # Parameters
+    /// - `context`: Decompressor context to update
+    /// - `parsed_ir`: Parsed IR packet data
+    ///
+    /// # Returns
+    /// A `Result` containing the decompressed `RtpUdpIpv4Headers` or a `RohcError`.
+    fn handle_ir_packet(
         &self,
-        context: &mut RtpUdpIpP1DecompressorContext, // Concrete context type
-        parsed_ir: RohcIrProfile1Packet, // CID within parsed_ir is from parser (0 if no Add-CID)
-                                         // context.cid() is the true CID for this context instance
+        context: &mut RtpUdpIpP1DecompressorContext,
+        parsed_ir: RohcIrProfile1Packet,
     ) -> Result<RtpUdpIpv4Headers, RohcError> {
-        // The dispatcher should have already set context.cid correctly.
-        // initialize_from_ir_packet will use the fields from parsed_ir.
-        // We need to ensure the parsed_ir's profile matches if we check it here.
+        // Verify profile matches before processing
         debug_assert_eq!(
             parsed_ir.profile,
             RohcProfile::RtpUdpIp,
@@ -73,18 +93,30 @@ impl Profile1Handler {
 
         context.initialize_from_ir_packet(&parsed_ir);
         context.consecutive_crc_failures_in_fc = 0;
-        Ok(self.reconstruct_headers_from_p1_ir(&parsed_ir))
+        Ok(self.reconstruct_headers_from_ir_packet(&parsed_ir))
     }
 
-    /// Creates the byte sequence from reconstructed header fields for UO-packet CRC verification.
-    fn create_crc_input_for_p1_uo_verification(
+    /// Builds input for UO-packet CRC validation.
+    ///
+    /// Combines SSRC, SN, timestamp, and marker into a byte array for CRC calculation.
+    /// The format follows RFC 3095 specifications for Profile 1 CRC inputs.
+    ///
+    /// - `context`: Decompressor context containing the SSRC
+    /// - `reconstructed_sn`: Recovered RTP sequence number
+    /// - `reconstructed_ts`: Recovered RTP timestamp
+    /// - `reconstructed_marker`: Recovered RTP marker bit
+    ///
+    /// # Returns
+    /// A `Vec<u8>` containing the bytes for CRC calculation in the format:
+    /// SSRC(4) + SN(2) + TS(4) + Marker(1) = 11 bytes total
+    fn create_crc_input(
         &self,
         context: &RtpUdpIpP1DecompressorContext,
         reconstructed_sn: u16,
         reconstructed_ts: u32,
         reconstructed_marker: bool,
     ) -> Vec<u8> {
-        let mut crc_input = Vec::with_capacity(11);
+        let mut crc_input = Vec::with_capacity(PROFILE1_UO_CRC_INPUT_LENGTH);
         crc_input.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
         crc_input.extend_from_slice(&reconstructed_sn.to_be_bytes());
         crc_input.extend_from_slice(&reconstructed_ts.to_be_bytes());
@@ -92,10 +124,20 @@ impl Profile1Handler {
         crc_input
     }
 
-    /// Processes a parsed UO-0 packet for Profile 1.
-    fn handle_p1_uo0_packet(
+    /// Processes a UO-0 packet (minimal RTP SN compression).
+    ///
+    /// Handles decompression of UO-0 packets which contain 4 LSBs of the RTP
+    /// sequence number. Updates context state and performs CRC validation.
+    ///
+    /// # Parameters
+    /// - `context`: Decompressor context to use and update
+    /// - `core_packet_slice`: Raw packet data (after CID stripping)
+    ///
+    /// # Returns
+    /// A `Result` containing the decompressed `RtpUdpIpv4Headers` or a `RohcError`.
+    fn handle_uo0_packet(
         &self,
-        context: &mut RtpUdpIpP1DecompressorContext, // Concrete context type
+        context: &mut RtpUdpIpP1DecompressorContext,
         core_packet_slice: &[u8],
     ) -> Result<RtpUdpIpv4Headers, RohcError> {
         if context.mode != P1DecompressorMode::FullContext {
@@ -130,12 +172,12 @@ impl Profile1Handler {
             rtp_marker: reconstructed_marker_for_header,
             ip_protocol: IP_PROTOCOL_UDP,
             rtp_version: RTP_VERSION,
-            ip_ihl: 5,
-            ip_ttl: 64,
+            ip_ihl: IPV4_STANDARD_IHL,
+            ip_ttl: DEFAULT_IPV4_TTL,
             ..Default::default()
         };
 
-        let crc_payload_bytes = self.create_crc_input_for_p1_uo_verification(
+        let crc_payload_bytes = self.create_crc_input(
             context,
             reconstructed_sn,
             context.last_reconstructed_rtp_ts_full, // TS for CRC from context
@@ -160,10 +202,21 @@ impl Profile1Handler {
         }
     }
 
-    /// Processes a parsed UO-1-SN packet for Profile 1.
-    fn handle_p1_uo1_sn_packet(
+    /// Handles a UO-1-SN packet (RTP sequence number compression).
+    ///
+    /// Processes UO-1-SN packets which contain 8 LSBs of the RTP sequence number
+    /// and the RTP marker bit. Updates context state and performs CRC validation.
+    ///
+    ///
+    /// # Parameters
+    /// - `context`: Decompressor context to use and update
+    /// - `core_packet_slice`: Raw packet data (after CID stripping)
+    ///
+    /// # Returns
+    /// A `Result` containing the decompressed `RtpUdpIpv4Headers` or a `RohcError`.
+    fn handle_uo1_sn_packet(
         &self,
-        context: &mut RtpUdpIpP1DecompressorContext, // Concrete context type
+        context: &mut RtpUdpIpP1DecompressorContext,
         core_packet_slice: &[u8],
     ) -> Result<RtpUdpIpv4Headers, RohcError> {
         if context.mode != P1DecompressorMode::FullContext {
@@ -202,12 +255,12 @@ impl Profile1Handler {
             rtp_marker: reconstructed_marker_for_header,
             ip_protocol: IP_PROTOCOL_UDP,
             rtp_version: RTP_VERSION,
-            ip_ihl: 5,
-            ip_ttl: 64,
+            ip_ihl: IPV4_STANDARD_IHL,
+            ip_ttl: DEFAULT_IPV4_TTL,
             ..Default::default()
         };
 
-        let crc_payload_bytes = self.create_crc_input_for_p1_uo_verification(
+        let crc_payload_bytes = self.create_crc_input(
             context,
             reconstructed_sn,
             context.last_reconstructed_rtp_ts_full, // TS for CRC from context
@@ -235,10 +288,25 @@ impl Profile1Handler {
 }
 
 impl ProfileHandler for Profile1Handler {
+    /// Returns the ROHC profile identifier (0x0001 for RTP/UDP/IP).
     fn profile_id(&self) -> RohcProfile {
         RohcProfile::RtpUdpIp
     }
 
+    /// Creates a new compressor context for Profile 1.
+    ///
+    /// Creates a new compressor context for ROHC Profile 1 (RTP/UDP/IP).
+    ///
+    /// This method initializes a new compressor context with the specified parameters.
+    /// The context maintains the state needed for compressing RTP/UDP/IPv4 headers.
+    ///
+    /// # Parameters
+    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this compression context
+    /// - `ir_refresh_interval`: Number of packets between sending IR packets. Lower values
+    ///   increase robustness at the cost of higher overhead.
+    ///
+    /// # Returns
+    /// A `Box<dyn RohcCompressorContext>` for Profile 1.
     fn create_compressor_context(
         &self,
         cid: u16,
@@ -251,10 +319,34 @@ impl ProfileHandler for Profile1Handler {
         ))
     }
 
+    /// Creates a new decompressor context for ROHC Profile 1 (RTP/UDP/IP).
+    ///
+    /// This method initializes a new decompressor context with the specified CID.
+    /// The context maintains the state needed for decompressing RTP/UDP/IPv4 headers.
+    ///
+    /// # Parameters
+    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this decompression context.
+    ///   This should match the CID used by the compressor for the same flow.
+    ///
+    /// # Returns
+    /// A `Box<dyn RohcDecompressorContext>` for Profile 1.
     fn create_decompressor_context(&self, cid: u16) -> Box<dyn RohcDecompressorContext> {
         Box::new(RtpUdpIpP1DecompressorContext::new(cid, self.profile_id()))
     }
 
+    /// Compresses RTP/UDP/IPv4 headers using Profile 1.
+    ///
+    /// This method implements the compression logic for ROHC Profile 1, handling:
+    /// - IR (Initialization and Refresh) packets for context initialization
+    /// - UO-0 (Unidirectional Optimistic 0) packets for minimal overhead
+    /// - UO-1-SN (Unidirectional Optimistic 1 with Sequence Number) packets
+    ///
+    /// # Parameters
+    /// - `context_dyn`: Mutable reference to the compressor context
+    /// - `headers_generic`: Uncompressed headers to be compressed
+    ///
+    /// # Returns
+    /// A `Result` containing the compressed packet as `Vec<u8>` or a `RohcError`.
     fn compress(
         &self,
         context_dyn: &mut dyn RohcCompressorContext,
@@ -344,7 +436,7 @@ impl ProfileHandler for Profile1Handler {
                         RohcError::Internal(format!("P1: SN LSB encoding for UO-0 failed: {}", e))
                     })? as u8;
 
-                let mut crc_input_for_uo0 = Vec::with_capacity(11);
+                let mut crc_input_for_uo0 = Vec::with_capacity(PROFILE1_UO_CRC_INPUT_LENGTH);
                 crc_input_for_uo0.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
                 crc_input_for_uo0.extend_from_slice(&current_sn.to_be_bytes());
                 crc_input_for_uo0.extend_from_slice(&context.last_sent_rtp_ts_full.to_be_bytes());
@@ -364,7 +456,7 @@ impl ProfileHandler for Profile1Handler {
                     RohcError::Internal(format!("P1: SN LSB encoding for UO-1 failed: {}", e))
                 })? as u8;
 
-                let mut crc_input_for_uo1_sn = Vec::with_capacity(11);
+                let mut crc_input_for_uo1_sn = Vec::with_capacity(PROFILE1_UO_CRC_INPUT_LENGTH);
                 crc_input_for_uo1_sn.extend_from_slice(&context.rtp_ssrc.to_be_bytes());
                 crc_input_for_uo1_sn.extend_from_slice(&current_sn.to_be_bytes());
                 crc_input_for_uo1_sn
@@ -389,7 +481,7 @@ impl ProfileHandler for Profile1Handler {
                 // Large CIDs for UO packets are not handled by simple Add-CID octet
                 // and require different packet formats (e.g., UO-2 or IR-DYN with large CID).
                 // This indicates an issue if we try to send UO-0/UO-1 for large CID here.
-                // For now, error or send IR. Let's assume IR would have been forced earlier or this is an error state.
+                // Fallback to IR packet type
                 return Err(RohcError::Internal(format!(
                     "P1: UO packet compression attempted for large CID {}",
                     context.cid
@@ -409,6 +501,20 @@ impl ProfileHandler for Profile1Handler {
         }
     }
 
+    /// Decompresses a ROHC packet using Profile 1.
+    ///
+    /// This method handles the decompression of ROHC packets according to Profile 1 (RTP/UDP/IP).
+    /// It supports the following packet types:
+    /// - IR (Initialization and Refresh) packets
+    /// - UO-0 (Unidirectional Optimistic 0) packets
+    /// - UO-1-SN (Unidirectional Optimistic 1 with Sequence Number) packets
+    ///
+    /// # Parameters
+    /// - `context_dyn`: Mutable reference to the decompressor context
+    /// - `rohc_packet_core_bytes`: ROHC packet data (after any CID)
+    ///
+    /// # Returns
+    /// A `Result` containing the decompressed `GenericUncompressedHeaders` or a `RohcError`.
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
@@ -445,8 +551,8 @@ impl ProfileHandler for Profile1Handler {
             let parsed_ir =
                 parse_ir_profile1_packet(rohc_packet_core_bytes).map_err(RohcError::Parsing)?;
             // The parsed_ir.cid from parser might be 0. The context.cid() is the authoritative one.
-            // We pass the parsed_ir and the context's current CID to handle_p1_ir_packet
-            // if handle_p1_ir_packet was designed to take an explicit CID to set.
+            // We pass the parsed_ir and the context's current CID to handle_ir_packet
+            // if handle_ir_packet was designed to take an explicit CID to set.
             // However, our current RtpUdpIpP1DecompressorContext::initialize_from_ir_packet
             // uses fields from parsed_ir, and context.cid is already set by the manager.
             // We must ensure parsed_ir.profile matches this handler.
@@ -455,15 +561,15 @@ impl ProfileHandler for Profile1Handler {
                     parsed_ir.profile.into(),
                 )));
             }
-            self.handle_p1_ir_packet(context, parsed_ir)
+            self.handle_ir_packet(context, parsed_ir)
                 .map(GenericUncompressedHeaders::RtpUdpIpv4)
         } else if (first_byte & 0xF0) == UO_1_SN_P1_PACKET_TYPE_BASE {
             // UO-1-SN
-            self.handle_p1_uo1_sn_packet(context, rohc_packet_core_bytes)
+            self.handle_uo1_sn_packet(context, rohc_packet_core_bytes)
                 .map(GenericUncompressedHeaders::RtpUdpIpv4)
         } else if (first_byte & 0x80) == 0x00 {
             // UO-0 for CID 0 (or after Add-CID stripped)
-            self.handle_p1_uo0_packet(context, rohc_packet_core_bytes)
+            self.handle_uo0_packet(context, rohc_packet_core_bytes)
                 .map(GenericUncompressedHeaders::RtpUdpIpv4)
         } else {
             Err(RohcError::Parsing(RohcParsingError::InvalidPacketType(

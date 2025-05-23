@@ -1,3 +1,9 @@
+//! ROHC compression and decompression context implementations.
+//!
+//! Defines the core state management for ROHC compression and decompression,
+//! including handling of context updates, packet processing state, and
+//! mode transitions for different ROHC profiles.
+
 use crate::constants::{DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH};
 use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
 use crate::protocol_types::RtpUdpIpv4Headers;
@@ -5,20 +11,19 @@ use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
 use std::any::Any;
 use std::net::Ipv4Addr;
 
-/// Defines the operational modes for a ROHC compressor.
+/// ROHC compressor operational modes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CompressorMode {
-    /// Initial state or after a refresh. The compressor must send an IR or IR-DYN packet.
+    /// Initial state or after refresh. Compressor must send IR/IR-DYN packet.
     #[default]
     InitializationAndRefresh,
-    /// Compressor has successfully sent an IR/IR-DYN and is now sending compressed packets (e.g., UO-0, UO-1).
+    /// Sending compressed packets (UO-0, UO-1) after successful IR/IR-DYN.
     FirstOrder,
 }
 
-/// Context for a ROHC Profile 1 (RTP/UDP/IP) compressor.
+/// Compressor context for ROHC Profile 1 (RTP/UDP/IP).
 ///
-/// Stores static and dynamic information about the header fields being compressed,
-/// as well as the compressor's operational state.
+/// Tracks state needed to compress RTP/UDP/IPv4 headers.
 #[derive(Debug, Clone)]
 pub struct RtpUdpIpP1CompressorContext {
     /// ROHC Profile Identifier used by this context (e.g., 0x01 for RTP/UDP/IP).
@@ -43,30 +48,27 @@ pub struct RtpUdpIpP1CompressorContext {
     pub last_sent_rtp_ts_full: u32,
     /// The RTP Marker bit value of the last packet sent.
     pub last_sent_rtp_marker: bool,
-    /// Number of LSBs currently used for encoding the RTP Sequence Number.
-    /// This can vary (e.g., 4 for UO-0, 8 for UO-1-SN).
+    /// Number of LSBs used for RTP Sequence Number encoding.
+    /// (e.g., 4 for UO-0, 8 for UO-1-SN).
     pub current_lsb_sn_width: u8,
-    // pub current_lsb_ts_width: u8, // For future use with TS LSB encoding
     /// Number of First Order (FO) packets sent since the last IR packet.
     /// Used to trigger IR refresh.
     pub fo_packets_sent_since_ir: u32,
-    /// Configured interval (in number of FO packets) for sending IR refresh packets.
-    /// If 0, IR refresh is disabled (not typical for robust operation).
+    /// Interval (in FO packets) between IR refreshes.
+    /// If 0, IR refresh is disabled (not recommended for robustness).
     pub ir_refresh_interval: u32,
 }
 
 impl RtpUdpIpP1CompressorContext {
-    /// Creates a new `RtpUdpIpP1CompressorContext`.
+    /// Creates a new compressor context for ROHC Profile 1.
     ///
-    /// Initializes with the specified CID, profile ID, and IR refresh interval.
-    /// Other fields are set to default values, typically representing an uninitialized state.
-    /// The static part of the context should be initialized using
-    /// `initialize_static_part_with_uncompressed_headers` before first use.
+    /// # Parameters
+    /// - `cid`: Context Identifier for this flow (0-65535)
+    /// - `profile_id`: ROHC Profile ID (e.g., `RohcProfile::RtpUdpIp`)
+    /// - `ir_refresh_interval`: Number of FO packets between IR refreshes (0 = disabled)
     ///
-    /// # Arguments
-    /// * `cid`: The Context Identifier for this flow.
-    /// * `profile_id`: The ROHC Profile ID (e.g., `PROFILE_ID_RTP_UDP_IP`).
-    /// * `ir_refresh_interval`: How often (in terms of FO packets) to send an IR refresh.
+    /// # Returns
+    /// A new `RtpUdpIpP1CompressorContext` instance in `InitializationAndRefresh`
     pub fn new(cid: u16, profile_id: RohcProfile, ir_refresh_interval: u32) -> Self {
         Self {
             profile_id,
@@ -86,17 +88,10 @@ impl RtpUdpIpP1CompressorContext {
         }
     }
 
-    /// Initializes or updates the static part of the compressor context using uncompressed headers.
+    /// Updates static context fields from uncompressed headers.
     ///
-    /// This function should be called when:
-    /// 1. The context is first created and an uncompressed packet is available.
-    /// 2. The static fields (IP addresses, ports, SSRC) of the uncompressed flow change,
-    ///    necessitating a context re-initialization (typically leading to sending an IR packet).
-    ///
-    /// Sets the compressor mode to `InitializationAndRefresh` and resets the IR refresh counter.
-    ///
-    /// # Arguments
-    /// * `headers`: The `RtpUdpIpv4Headers` from the current uncompressed packet.
+    /// # Parameters
+    /// - `headers`: Current uncompressed packet headers
     pub fn initialize_static_part_with_uncompressed_headers(
         &mut self,
         headers: &RtpUdpIpv4Headers,
@@ -125,24 +120,40 @@ impl Default for RtpUdpIpP1CompressorContext {
 }
 
 impl RohcCompressorContext for RtpUdpIpP1CompressorContext {
+    /// Gets the ROHC profile ID for this context.
+    ///
+    /// # Returns
+    /// The `RohcProfile` associated with this context.
     fn profile_id(&self) -> RohcProfile {
-        self.profile_id // Already a RohcProfile enum
+        self.profile_id
     }
 
+    /// Gets the Context Identifier (CID) for this flow.
+    ///
+    /// # Returns
+    /// The CID as a `u16`.
     fn cid(&self) -> u16 {
         self.cid
     }
 
+    /// Returns a reference to the context as `&dyn Any`.
+    ///
+    /// # Returns
+    /// A reference to the context as `&dyn Any`.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Returns a mutable reference to the context as `&mut dyn Any`.
+    ///
+    /// # Returns
+    /// A mutable reference to the context as `&mut dyn Any`.
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
 
-/// Defines the operational modes for a ROHC decompressor.
+/// ROHC decompressor operational modes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DecompressorMode {
     /// No context established. The decompressor expects an IR packet.
@@ -159,10 +170,9 @@ pub enum DecompressorMode {
 /// A value of 0 means the LSB interpretation window starts at v_ref.
 const DEFAULT_P_SN_OFFSET: i64 = 0;
 
-/// Context for a ROHC Profile 1 (RTP/UDP/IP) decompressor.
+/// Decompressor context for ROHC Profile 1 (RTP/UDP/IP).
 ///
-/// Stores static and dynamic information reconstructed from ROHC packets,
-/// as well as the decompressor's operational state.
+/// Tracks state needed to decompress ROHC packets into RTP/UDP/IPv4 headers.
 #[derive(Debug, Clone)]
 pub struct RtpUdpIpP1DecompressorContext {
     /// ROHC Profile Identifier used by this context (e.g., 0x01 for RTP/UDP/IP).
@@ -192,22 +202,19 @@ pub struct RtpUdpIpP1DecompressorContext {
     /// The `p` parameter (interpretation interval offset) for LSB decoding of the RTP Sequence Number.
     /// Used in W-LSB to define the window `[v_ref - p, v_ref - p + 2^k - 1]`.
     pub p_sn: i64,
-    // pub expected_lsb_ts_width: u8, // For future use with TS LSB decoding
-    // pub p_ts: i64,                  // For future use
     /// Number of consecutive CRC failures encountered while in Full Context (FC) mode.
     pub consecutive_crc_failures_in_fc: u8,
 }
 
 impl RtpUdpIpP1DecompressorContext {
-    /// Creates a new `RtpUdpIpP1DecompressorContext`.
+    /// Creates a new decompressor context.
     ///
-    /// Initializes with the specified CID and profile ID.
-    /// `p_sn` is set to its default offset.
-    /// Other fields are set to default values, typically representing an uninitialized state (`NoContext`).
+    /// # Parameters
+    /// - `cid`: Context Identifier for this flow
+    /// - `profile_id`: ROHC Profile ID (e.g., `PROFILE_ID_RTP_UDP_IP`)
     ///
-    /// # Arguments
-    /// * `cid`: The Context Identifier for this flow.
-    /// * `profile_id`: The ROHC Profile ID (e.g., `PROFILE_ID_RTP_UDP_IP`).
+    /// # Returns
+    /// A new `RtpUdpIpP1DecompressorContext` instance.
     pub fn new(cid: u16, profile_id: RohcProfile) -> Self {
         Self {
             profile_id,
@@ -227,14 +234,10 @@ impl RtpUdpIpP1DecompressorContext {
         }
     }
 
-    /// Initializes or updates the decompressor context using data from a parsed IR packet.
+    /// Updates context from an IR packet.
     ///
-    /// This function is called when an IR or IR-DYN packet is successfully parsed.
-    /// It populates both static and dynamic fields of the context, transitions
-    /// the decompressor mode to `FullContext`, and resets `p_sn` to its default.
-    ///
-    /// # Arguments
-    /// * `ir_packet`: A reference to the parsed `RohcIrProfile1Packet`.
+    /// # Parameters
+    /// - `ir_packet`: Parsed IR packet data
     pub fn initialize_from_ir_packet(&mut self, ir_packet: &RohcIrProfile1Packet) {
         self.profile_id = ir_packet.profile;
         self.ip_source = ir_packet.static_ip_src;
@@ -263,22 +266,42 @@ impl Default for RtpUdpIpP1DecompressorContext {
 }
 
 impl RohcDecompressorContext for RtpUdpIpP1DecompressorContext {
+    /// Gets the ROHC profile ID for this context.
+    ///
+    /// # Returns
+    /// The `RohcProfile` associated with this context.
     fn profile_id(&self) -> RohcProfile {
         self.profile_id
     }
 
+    /// Gets the Context Identifier (CID) for this flow.
+    ///
+    /// # Returns
+    /// The CID as a `u16`.
     fn cid(&self) -> u16 {
         self.cid
     }
 
+    /// Sets the Context Identifier (CID) for this flow.
+    ///
+    /// # Parameters
+    /// - `cid`: The new CID value to set.
     fn set_cid(&mut self, cid: u16) {
         self.cid = cid;
     }
 
+    /// Returns a reference to the context as `&dyn Any`.
+    ///
+    /// # Returns
+    /// A reference to the context as `&dyn Any`.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Returns a mutable reference to the context as `&mut dyn Any`.
+    ///
+    /// # Returns
+    /// A mutable reference to the context as `&mut dyn Any`.
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

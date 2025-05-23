@@ -2,7 +2,11 @@
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Rohcstar is a modern, memory-safe, and performant Rust implementation of the Robust Header Compression (ROHC) framework.**
+**Rohcstar is a modern and memory-safe Rust implementation of the Robust Header Compression (ROHC) framework.**
+
+> [!WARNING]
+> This ROHC implementation is in early development phase.
+> The API is unstable, features are incomplete, and breaking changes should be expected.
 
 ## Vision & Philosophy
 
@@ -23,35 +27,6 @@
 *   **Context Management:** Robust handling of compression/decompression contexts, CID management, and state synchronization according to RFC 3095.
 *   **Packet Processing:** Efficient and RFC-compliant parsing and building of ROHC packets and relevant L3/L4 headers.
 *   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC) and transitions.
-
-## Current Status
-
-Rohcstar is currently in the early stages of development (MVP for ROHC Profile 1 (RTP/UDP/IP) in U-mode).
-
-*   [x] **Detailed Design Document:** Initial version drafted ([docs/DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md)).
-*   [x] **Core Data Structures:**
-    *   [x] For uncompressed L3/L4 headers (`RtpUdpIpv4Headers`).
-    *   [x] For ROHC contexts (`RtpUdpIpP1CompressorContext`, `RtpUdpIpP1DecompressorContext`).
-    *   [x] For internal ROHC packet representations (MVP versions of `RohcIrProfile1Packet`, `RohcUo0PacketProfile1`, `RohcUo1PacketProfile1`).
-*   [x] **Packet Processing Utilities:**
-    *   [x] Parser for uncompressed IPv4/UDP/RTP headers.
-    *   [x] LSB encoding/decoding functions.
-    *   [x] CRC-3 and CRC-8 calculation functions (using `crc` crate).
-*   [x] **ROHC Packet Parsers/Builders (Profile 1, U-mode MVP):**
-    *   [x] IR packet builder and parser.
-    *   [x] UO-0 packet builder and parser (basic version for CID 0).
-    *   [x] UO-1-SN packet builder and parser (basic version for SN and Marker bit).
-*   [x] **Profile 1 U-mode Logic (MVP):**
-    *   [x] Basic compressor logic (`compress_rtp_udp_ip_umode`) handling IR/FO (UO-0, UO-1-SN) transitions and IR refresh.
-    *   [x] Basic decompressor logic (`decompress_rtp_udp_ip_umode`) handling IR/FO (UO-0, UO-1-SN) packets, context updates, and basic CRC verification state changes (FC->SC).
-*   [x] **Context Management (MVP):**
-    *   [x] `SimpleContextManager` for single CID (0) operation.
-*   [x] **Unit Tests:** For packet processing, LSB encoding, CRC, context initialization, and individual profile logic components.
-*   [x] **Integration Tests:** For end-to-end compress/decompress flow for IR -> UO-0/UO-1 sequences, including CID 0 and small non-zero CIDs.
-*   [ ] **Initial Fuzzing Harness (Next Major Step):**
-    *   [ ] Decompressor fuzz target using Drifter.
-
-*(This section will be updated regularly to reflect development progress.)*
 
 ## Design
 

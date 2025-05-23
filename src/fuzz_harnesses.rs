@@ -1,45 +1,34 @@
-//! Fuzzing harnesses for testing Rohcstar components, typically with the Drifter fuzzing framework.
+//! Fuzz testing harnesses for Rohcstar components.
+//!
+//! This module contains fuzz testing targets and utilities for verifying the
+//! robustness of the ROHC implementation against malformed inputs.
+//! It uses the Drifter fuzzing framework to test various aspects of
+//! ROHC packet processing, including compression and decompression.
 
 use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
 use crate::packet_processor::build_ir_profile1_packet;
 use crate::profiles::p1_handler::Profile1Handler;
 use crate::traits::ProfileHandler;
 
-/// Fuzzing harness for the ROHC Profile 1 U-mode decompressor.
+/// Fuzz tests the Profile 1 U-mode decompressor.
 ///
-/// This harness function is designed to be called by a fuzzer (like Drifter)
-/// with arbitrary `data` representing a potential ROHC packet.
-/// It uses the `Profile1Handler` to perform decompression.
+/// Tests `Profile1Handler::decompress` with fuzzer-generated input.
 ///
-/// **Setup:**
-/// 1. A `Profile1Handler` is created.
-/// 2. A decompressor context for Profile 1, CID 0, is created using the handler.
-/// 3. A known-good ROHC IR (Initialization/Refresh) packet is constructed.
-/// 4. This IR packet is processed by `handler.decompress` to attempt to bring
-///    the decompressor context into a `FullContext` state. This makes
-///    fuzzing more effective for compressed packet formats (UO-0, UO-1)
-///    that require an established context.
-/// 5. If the initial IR processing fails (either building the IR or decompressing it),
-///    the harness falls back to fuzzing against a fresh, default Profile 1
-///    decompressor context (typically in `NoContext` state). This ensures the harness
-///    itself doesn't panic due to setup issues and can still fuzz initial packet handling.
+/// # Setup
+/// - Creates a Profile1Handler and decompressor context (CID 0)
+/// - Attempts to establish FullContext using a known IR packet
+/// - Falls back to NoContext if setup fails
 ///
-/// **Fuzzing Target:**
-/// The primary target is the `Profile1Handler::decompress` method with the
-/// fuzzer-provided `data`. The goal is to find inputs that cause panics,
-/// assertion failures, or other unexpected behavior in the decompressor logic.
-///
-/// # Arguments
-/// * `data`: A byte slice containing the fuzzer-generated input, treated as a ROHC packet.
+/// # Parameters
+/// - `data`: Fuzzer-generated input treated as ROHC packet
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let p1_handler = Profile1Handler::new();
     let cid = 0u16;
 
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
     let sample_ir_data_for_harness = RohcIrProfile1Packet {
-        cid, // This cid is for the content of the IR packet itself
+        cid,
         profile: RohcProfile::RtpUdpIp,
-        // crc8 will be calculated by build_ir_profile1_packet
         static_ip_src: "1.1.1.1"
             .parse()
             .expect("Harness: Static IP parsing failed"),
@@ -65,8 +54,6 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             // For CID 0, sample_ir_bytes *are* the core_packet_bytes.
             let mut decompressor_context_dyn = p1_handler.create_decompressor_context(cid);
 
-            // The `decompress` method on the handler takes `&mut dyn RohcDecompressorContext`.
-            // We get this from the Box using `as_mut()`.
             if p1_handler
                 .decompress(decompressor_context_dyn.as_mut(), &sample_ir_bytes)
                 .is_ok()
@@ -84,7 +71,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             }
         }
         Err(_e) => {
-            // Failed to build the sample IR. This is a harness setup problem.
+            // Failed to build the sample IR (harness setup problem)
             // Fallback to fuzzing against a fresh, default P1 context.
             eprintln!("WARN: Harness failed to build sample IR. Fuzzing against default context.");
             let mut fresh_context_dyn = p1_handler.create_decompressor_context(cid);

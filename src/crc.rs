@@ -1,16 +1,17 @@
+//! ROHC CRC calculation utilities.
+//!
+//! Implements the CRC algorithms used in ROHC for packet validation,
+//! including the 3-bit and 8-bit CRC variants specified in RFC 3095.
+
 use crc::{CRC_3_ROHC, CRC_8_ROHC, Crc};
 
-/// Calculates the 8-bit ROHC CRC (CRC-8/ROHC) for the given data.
+/// Calculates ROHC 8-bit CRC (CRC-8/ROHC).
 ///
-/// This CRC is defined in RFC 3095, Section 5.9.1.
-/// It uses the polynomial `x^8 + x^2 + x^1 + 1` (0x107, which is 0x07 reversed without high bit).
-/// The initial value is 0xFF, and it's non-reflected.
-///
-/// # Arguments
-/// * `data`: A byte slice containing the data over which the CRC is computed.
+/// # Parameters
+/// - `data`: Input data for CRC calculation
 ///
 /// # Returns
-/// The 8-bit CRC value.
+/// 8-bit CRC value (0x00-0xFF)
 pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
     // The Crc object can be created once and reused if performance is critical,
     // but for clarity and typical ROHC packet rates, creating it per call is acceptable.
@@ -18,17 +19,13 @@ pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
     crc_calculator.checksum(data)
 }
 
-/// Calculates the 3-bit ROHC CRC (CRC-3/ROHC) for the given data.
+/// Calculates ROHC 3-bit CRC (CRC-3/ROHC).
 ///
-/// This CRC is defined in RFC 3095, Section 5.9.2.
-/// It uses the polynomial `x^3 + x^1 + 1` (0x0B, which is 0x3 reversed without high bit).
-/// The initial value is 0x07, and it's non-reflected. The result is the 3 LSBs.
-///
-/// # Arguments
-/// * `data`: A byte slice containing the data over which the CRC is computed.
+/// # Parameters
+/// - `data`: Input data for CRC calculation
 ///
 /// # Returns
-/// The 3-bit CRC value (masked to fit in `u8`, effectively `0x00` to `0x07`).
+/// 3-bit CRC value (0x00-0x07)
 pub fn calculate_rohc_crc3(data: &[u8]) -> u8 {
     let crc_calculator = Crc::<u8>::new(&CRC_3_ROHC);
     crc_calculator.checksum(data)
@@ -41,7 +38,7 @@ mod tests {
     #[test]
     fn rohc_crc8_calculation_standard_input() {
         let data = b"123456789";
-        // As per crc crate's CRC_8_ROHC preset, this is the expected value.
+        // Expected value from crc crate's CRC_8_ROHC preset
         // Online calculators might give different results for "CRC-8" if they don't match
         // ROHC's specific parameters (poly 0x07, init 0xFF, non-reflected).
         let expected_crc = 0xD0;

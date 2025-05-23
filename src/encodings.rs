@@ -1,22 +1,24 @@
+//! ROHC encoding and decoding utilities.
+//!
+//! Implements the core encoding schemes used in ROHC, including
+//! LSB (Least Significant Bits) encoding and other compression
+//! algorithms defined in the ROHC specifications.
+
 use crate::error::RohcParsingError;
 
-/// Checks if a `value` falls within the LSB interpretation interval defined by a
-/// `reference_value`, the number of LSBs (`num_lsb_bits`), and an offset `p`.
+/// Checks if a value is within the LSB interpretation window.
 ///
-/// The interpretation interval is `[reference_value - p, reference_value - p + 2^num_lsb_bits - 1]`.
-/// This function is used by the decompressor to validate if a reconstructed value
-/// is plausible given the LSBs received and the current context.
+/// The window is `[reference_value - p, reference_value - p + 2^k - 1]`
+/// where `k = num_lsb_bits`.
 ///
-/// # Arguments
-/// * `value`: The full value to check.
-/// * `reference_value`: The reference value (e.g., last successfully decoded value).
-/// * `num_lsb_bits`: The number of LSBs used for encoding (k in ROHC RFCs). Must be > 0 and <= 64.
-/// * `p_offset`: The interpretation interval offset `p` (RFC 3095, Section 4.5.1).
-///   A non-negative `p_offset` shifts the window backward from `reference_value`.
-///   A negative `p_offset` effectively shifts it forward.
+/// # Parameters
+/// - `value`: Value to check
+/// - `reference_value`: Base value for the window
+/// - `num_lsb_bits`: Number of LSBs (k in RFCs), 1-64
+/// - `p_offset`: Window offset (positive = left shift, negative = right shift)
 ///
 /// # Returns
-/// `true` if `value` is within the LSB interpretation interval, `false` otherwise or if `num_lsb_bits` is invalid.
+/// `true` if value is in the interpretation window, `false` otherwise.
 pub fn value_in_lsb_interval(
     value: u64,
     reference_value: u64,
@@ -45,15 +47,15 @@ pub fn value_in_lsb_interval(
 
     // A value 'v' is in the interval [interval_base, interval_base + window_size - 1] (modulo 2^64)
     // if and only if (v - interval_base) mod 2^64 < window_size.
-    // This is equivalent to v.wrapping_sub(interval_base) < window_size.
+    // Equivalent to v.wrapping_sub(interval_base) < window_size
     value.wrapping_sub(interval_base) < window_size
 }
 
-/// Encodes a `value` by retaining only its `num_lsb_bits` least significant bits.
+/// Extracts the N least significant bits from a value.
 ///
-/// # Arguments
-/// * `value`: The original `u64` value to encode.
-/// * `num_lsb_bits`: The number of LSBs to retain. Must be between 1 and 64, inclusive.
+/// # Parameters
+/// - `value`: Value to encode
+/// - `num_lsb_bits`: Number of LSBs to keep (1-64)
 ///
 /// # Returns
 /// A `Result` containing the LSB-encoded value as `u64`, or a `RohcParsingError`
@@ -84,20 +86,16 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
     }
 }
 
-/// Decodes a full value from its received LSBs, a reference value, the number of LSBs used,
-/// and an interpretation interval offset `p_offset`.
+/// Reconstructs a value from its LSBs using a reference value and window offset.
 ///
-/// This function implements the LSB decoding logic as described in ROHC (e.g., RFC 3095, Section 4.5.1).
-/// It finds a candidate value `v` within the interpretation window
-/// `[reference_value - p_offset, reference_value - p_offset + 2^num_lsb_bits - 1]`
-/// such that the `num_lsb_bits` LSBs of `v` match `received_lsbs`.
+/// Finds a value in the window `[v_ref - p, v_ref - p + 2^k - 1]`
+/// whose LSBs match `received_lsbs`.
 ///
-/// # Arguments
-/// * `received_lsbs`: The LSBs of the value that were transmitted/received.
-/// * `reference_value`: The reference value (e.g., last successfully decoded value, `v_ref`).
-/// * `num_lsb_bits`: The number of LSBs used for encoding (k). Must be > 0 and < 64.
-///   (k=64 is trivial, handled by `encode_lsb` but not typical for LSB decoding context).
-/// * `p_offset`: The interpretation interval offset `p`.
+/// # Parameters
+/// - `received_lsbs`: Received LSBs of the value
+/// - `reference_value`: Reference value (v_ref)
+/// - `num_lsb_bits`: Number of LSBs used (k), 1-63
+/// - `p_offset`: Window offset (p in RFC 3095-5.3.1)
 ///
 /// # Returns
 /// A `Result` containing the reconstructed `u64` value, or a `RohcParsingError`
