@@ -1,287 +1,412 @@
-//! ROHC context management and lifecycle.
+//! ROHC (Robust Header Compression) generic context management.
 //!
-//! Provides mechanisms for managing the lifecycle of ROHC contexts,
-//! including creation, retrieval, and cleanup of compressor and
-//! decompressor contexts for different ROHC profiles.
+//! This module provides a `ContextManager` responsible for storing, retrieving,
+//! and managing the lifecycle of ROHC compressor and decompressor contexts.
+//! It operates on trait objects (`Box<dyn RohcCompressorContext>`, etc.)
+//! to remain independent of specific ROHC profile implementations.
 
-use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
-use crate::context::{RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext};
-use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
-use crate::protocol_types::RtpUdpIpv4Headers;
+use std::collections::HashMap;
+use std::fmt::Debug;
 
-/// Manages ROHC Profile 1 (RTP/UDP/IP) contexts.
+use crate::error::RohcError;
+use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+
+/// Manages multiple ROHC contexts (both compressor and decompressor) indexed by CID.
 ///
-/// This manager provides a simple implementation that handles one compressor and one
-/// decompressor context at a time. For production use with multiple flows, consider
-/// implementing a more sophisticated manager with proper CID mapping.
+/// This manager is designed to be generic and can store contexts for any ROHC profile
+/// that implements the `RohcCompressorContext` and `RohcDecompressorContext` traits.
+/// The actual creation of contexts is delegated to a `ProfileHandler` (managed by the ROHC Engine).
 #[derive(Debug, Default)]
-pub struct SimpleContextManager {
-    /// The single compressor context managed by this instance.
-    compressor_context: Option<RtpUdpIpP1CompressorContext>,
-    /// The single decompressor context managed by this instance.
-    decompressor_context: Option<RtpUdpIpP1DecompressorContext>,
+pub struct ContextManager {
+    /// Stores active compressor contexts, keyed by their Context ID (CID).
+    compressor_contexts: HashMap<u16, Box<dyn RohcCompressorContext>>,
+    /// Stores active decompressor contexts, keyed by their Context ID (CID).
+    decompressor_contexts: HashMap<u16, Box<dyn RohcDecompressorContext>>,
 }
 
-impl SimpleContextManager {
-    /// Creates a new instance of SimpleContextManager.
-    ///
-    /// # Returns
-    /// A new `SimpleContextManager` instance with no active contexts.
-    #[inline]
+impl ContextManager {
+    /// Creates a new, empty `ContextManager`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Gets or initializes a compressor context for the given CID and headers.
+    /// Adds a new compressor context to the manager.
+    ///
+    /// If a context with the same CID already exists, it will be overwritten.
+    /// This method is typically called by the ROHC engine after a `ProfileHandler`
+    /// creates a new context.
     ///
     /// # Parameters
-    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this compression context.
-    ///   - 0-16383: Small CID (fits in 1 byte when using CID 0-15)
-    ///   - 16384-65535: Large CID (requires 2 bytes)
-    /// - `headers`: Current packet headers used to identify the flow.
-    ///
-    /// # Returns
-    /// `&mut RtpUdpIpP1CompressorContext` - Mutable reference to the compressor context.
-    pub fn get_or_init_compressor_context(
-        &mut self,
-        cid: u16,
-        headers: &RtpUdpIpv4Headers,
-    ) -> &mut RtpUdpIpP1CompressorContext {
-        let needs_reinitialization = match &self.compressor_context {
-            Some(ctx) => {
-                // Context exists. Check if it's for the same CID and flow.
-                ctx.cid != cid ||
-                // Key static fields that define a flow for Profile 1
-                ctx.rtp_ssrc != headers.rtp_ssrc ||
-                ctx.ip_source != headers.ip_src ||
-                ctx.ip_destination != headers.ip_dst ||
-                ctx.udp_source_port != headers.udp_src_port ||
-                ctx.udp_destination_port != headers.udp_dst_port
-            }
-            None => true, // No context exists, so it needs initialization.
-        };
-
-        if needs_reinitialization {
-            let mut new_context = RtpUdpIpP1CompressorContext::new(
-                cid,
-                RohcProfile::RtpUdpIp,
-                DEFAULT_IR_REFRESH_INTERVAL,
-            );
-            // This will set mode to InitializationAndRefresh, ensuring IR is sent.
-            new_context.initialize_static_part_with_uncompressed_headers(headers);
-            self.compressor_context = Some(new_context);
-        }
-        // `unwrap` is safe here because we ensure `compressor_context` is `Some` above.
-        self.compressor_context.as_mut().unwrap()
+    /// - `cid`: The Context ID for the context being added.
+    /// - `context`: The `Box<dyn RohcCompressorContext>` to add.
+    pub fn add_compressor_context(&mut self, cid: u16, context: Box<dyn RohcCompressorContext>) {
+        self.compressor_contexts.insert(cid, context);
     }
 
-    /// Gets or initializes a decompressor context for the specified CID.
+    /// Adds a new decompressor context to the manager.
+    ///
+    /// If a context with the same CID already exists, it will be overwritten.
     ///
     /// # Parameters
-    /// - `cid`: Context Identifier (0-65535) that uniquely identifies this decompression context.
-    ///   - 0-15: Small CID (fits in 1 byte with 4-bit CID field)
-    ///   - 16-16383: Small CID (requires 1 byte with 8-bit CID field)
-    ///   - 16384-65535: Large CID (requires 2 bytes)
-    ///
-    /// # Returns
-    /// `&mut RtpUdpIpP1DecompressorContext` - Mutable reference to the decompressor context.
-    pub fn get_or_init_decompressor_context(
+    /// - `cid`: The Context ID for the context being added.
+    /// - `context`: The `Box<dyn RohcDecompressorContext>` to add.
+    pub fn add_decompressor_context(
         &mut self,
         cid: u16,
-    ) -> &mut RtpUdpIpP1DecompressorContext {
-        let needs_initialization = match &self.decompressor_context {
-            Some(ctx) => ctx.cid != cid,
-            None => true,
-        };
-
-        if needs_initialization {
-            self.decompressor_context = Some(RtpUdpIpP1DecompressorContext::new(
-                cid,
-                RohcProfile::RtpUdpIp, // Assuming Profile 1
-            ));
-        }
-        // `unwrap` is safe here due to the logic above.
-        self.decompressor_context.as_mut().unwrap()
+        context: Box<dyn RohcDecompressorContext>,
+    ) {
+        self.decompressor_contexts.insert(cid, context);
     }
 
-    /// Updates the decompressor context using data from an IR (Initialization and Refresh) packet.
+    /// Retrieves a mutable reference to a compressor context by its CID.
+    ///     /// Retrieves an immutable reference to a compressor context by its CID.
     ///
     /// # Parameters
-    /// - `ir_packet`: A reference to a parsed `RohcIrProfile1Packet` containing:
-    ///   - Static chain information (IP addresses, ports, etc.)
-    ///   - Dynamic fields (sequence number, timestamp, etc.)
-    ///   - Profile-specific parameters
+    /// - `cid`: The Context ID of the compressor context to retrieve.
     ///
     /// # Returns
-    /// `&mut RtpUdpIpP1DecompressorContext` - A mutable reference to the updated decompressor context.
-    pub fn update_decompressor_context_from_ir(
+    /// - `Ok(&mut Box<dyn RohcCompressorContext>)` if the context is found.
+    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    pub fn get_compressor_context_mut(
         &mut self,
-        ir_packet: &RohcIrProfile1Packet,
-    ) -> &mut RtpUdpIpP1DecompressorContext {
-        // Get (or create) the context for the CID specified in the IR packet.
-        // Note: The CID in ir_packet.cid might come from an Add-CID octet or be implicit (0).
-        let context = self.get_or_init_decompressor_context(ir_packet.cid);
-        context.initialize_from_ir_packet(ir_packet);
-        context
+        cid: u16,
+    ) -> Result<&mut Box<dyn RohcCompressorContext>, RohcError> {
+        self.compressor_contexts
+            .get_mut(&cid)
+            .ok_or(RohcError::ContextNotFound(cid))
+    }
+
+    /// Retrieves a mutable reference to a decompressor context by its CID.
+    ///
+    /// # Parameters
+    /// - `cid`: The Context ID of the decompressor context to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&mut Box<dyn RohcDecompressorContext>)` if the context is found.
+    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    pub fn get_decompressor_context_mut(
+        &mut self,
+        cid: u16,
+    ) -> Result<&mut Box<dyn RohcDecompressorContext>, RohcError> {
+        self.decompressor_contexts
+            .get_mut(&cid)
+            .ok_or(RohcError::ContextNotFound(cid))
+    }
+
+    /// Retrieves a immutable reference to a compressor context by its CID.
+    ///
+    /// # Parameters
+    /// - `cid`: The Context ID of the decompressor context to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Box<dyn RohcCompressorContext>)` if the context is found.
+    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    pub fn get_compressor_context(
+        &self,
+        cid: u16,
+    ) -> Result<&Box<dyn RohcCompressorContext>, RohcError> {
+        self.compressor_contexts
+            .get(&cid)
+            .ok_or(RohcError::ContextNotFound(cid))
+    }
+
+    /// Retrieves a immutable reference to a decompressor context by its CID.
+    ///
+    /// # Parameters
+    /// - `cid`: The Context ID of the decompressor context to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Box<dyn RohcDecompressorContext>)` if the context is found.
+    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    pub fn get_decompressor_context(
+        &self,
+        cid: u16,
+    ) -> Result<&Box<dyn RohcDecompressorContext>, RohcError> {
+        self.decompressor_contexts
+            .get(&cid)
+            .ok_or(RohcError::ContextNotFound(cid))
+    }
+
+    /// Removes a compressor context by its CID.
+    ///
+    /// # Parameters
+    /// - `cid`: The Context ID of the compressor context to remove.
+    ///
+    /// # Returns
+    /// The removed `Box<dyn RohcCompressorContext>` if it existed, otherwise `None`.
+    pub fn remove_compressor_context(
+        &mut self,
+        cid: u16,
+    ) -> Option<Box<dyn RohcCompressorContext>> {
+        self.compressor_contexts.remove(&cid)
+    }
+
+    /// Removes a decompressor context by its CID.
+    ///
+    /// # Parameters
+    /// - `cid`: The Context ID of the decompressor context to remove.
+    ///
+    /// # Returns
+    /// The removed `Box<dyn RohcDecompressorContext>` if it existed, otherwise `None`.
+    pub fn remove_decompressor_context(
+        &mut self,
+        cid: u16,
+    ) -> Option<Box<dyn RohcDecompressorContext>> {
+        self.decompressor_contexts.remove(&cid)
+    }
+
+    /// Clears all compressor contexts from the manager.
+    pub fn clear_compressor_contexts(&mut self) {
+        self.compressor_contexts.clear();
+    }
+
+    /// Clears all decompressor contexts from the manager.
+    pub fn clear_decompressor_contexts(&mut self) {
+        self.decompressor_contexts.clear();
+    }
+
+    /// Clears all contexts (both compressor and decompressor) from the manager.
+    pub fn clear_all_contexts(&mut self) {
+        self.clear_compressor_contexts();
+        self.clear_decompressor_contexts();
+    }
+
+    /// Returns the number of active compressor contexts.
+    pub fn compressor_context_count(&self) -> usize {
+        self.compressor_contexts.len()
+    }
+
+    /// Returns the number of active decompressor contexts.
+    pub fn decompressor_context_count(&self) -> usize {
+        self.decompressor_contexts.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{CompressorMode, DecompressorMode};
-    use crate::protocol_types::RtpUdpIpv4Headers;
-    use std::net::Ipv4Addr;
+    use crate::packet_defs::RohcProfile;
+    use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+    use std::any::Any;
 
-    fn sample_headers_builder(ssrc: u32, sn: u16) -> RtpUdpIpv4Headers {
-        RtpUdpIpv4Headers {
-            ip_src: Ipv4Addr::new(1, 1, 1, 1),
-            ip_dst: Ipv4Addr::new(2, 2, 2, 2),
-            udp_src_port: 1000,
-            udp_dst_port: 2000,
-            rtp_ssrc: ssrc,
-            rtp_sequence_number: sn,
-            rtp_timestamp: sn as u32 * 10,
-            rtp_marker: false,
-            ..Default::default()
+    #[derive(Debug)]
+    struct MockCompressorCtx {
+        cid: u16,
+        data: String,
+    }
+    impl RohcCompressorContext for MockCompressorCtx {
+        fn profile_id(&self) -> RohcProfile {
+            RohcProfile::Uncompressed
+        } // Dummy profile
+        fn cid(&self) -> u16 {
+            self.cid
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockDecompressorCtx {
+        cid: u16,
+        updates: u32,
+    }
+    impl RohcDecompressorContext for MockDecompressorCtx {
+        fn profile_id(&self) -> RohcProfile {
+            RohcProfile::RtpUdpIp
+        } // Dummy profile
+        fn cid(&self) -> u16 {
+            self.cid
+        }
+        fn set_cid(&mut self, new_cid: u16) {
+            self.cid = new_cid;
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
         }
     }
 
     #[test]
-    fn get_or_init_compressor_context_creation_and_retrieval() {
-        let mut manager = SimpleContextManager::new();
-        let headers1 = sample_headers_builder(123, 10);
-
-        let context1 = manager.get_or_init_compressor_context(0, &headers1);
-        assert_eq!(context1.cid, 0);
-        assert_eq!(context1.ip_source, headers1.ip_src);
-        assert_eq!(context1.rtp_ssrc, headers1.rtp_ssrc);
-        assert_eq!(context1.mode, CompressorMode::InitializationAndRefresh);
-        assert_eq!(context1.last_sent_rtp_sn_full, headers1.rtp_sequence_number);
-
-        let headers1_next_packet = RtpUdpIpv4Headers {
-            rtp_sequence_number: headers1.rtp_sequence_number + 1,
-            ..headers1.clone()
-        };
-        let context1_again = manager.get_or_init_compressor_context(0, &headers1_next_packet);
-        assert_eq!(
-            context1_again.last_sent_rtp_sn_full, headers1.rtp_sequence_number,
-            "Context SN should reflect the first initialization, not the 'get' call's headers if flow is same."
-        );
-        assert_eq!(
-            context1_again.mode,
-            CompressorMode::InitializationAndRefresh,
-            "Mode should remain IR if it was just initialized, compressor logic will transition it."
-        );
+    fn context_manager_new_is_empty() {
+        let manager = ContextManager::new();
+        assert_eq!(manager.compressor_context_count(), 0);
+        assert_eq!(manager.decompressor_context_count(), 0);
     }
 
     #[test]
-    fn get_or_init_compressor_context_reinitializes_for_new_flow() {
-        let mut manager = SimpleContextManager::new();
-        let headers_flow1 = sample_headers_builder(123, 10);
-        let _context_flow1 = manager.get_or_init_compressor_context(0, &headers_flow1);
+    fn add_and_get_compressor_context() {
+        let mut manager = ContextManager::new();
+        let ctx1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
+            cid: 1,
+            data: "flow1".to_string(),
+        });
+        let cid1 = ctx1.cid();
+        manager.add_compressor_context(cid1, ctx1);
 
-        let headers_flow2 = sample_headers_builder(456, 20);
-        let context_flow2 = manager.get_or_init_compressor_context(0, &headers_flow2);
+        assert_eq!(manager.compressor_context_count(), 1);
 
-        assert_eq!(context_flow2.rtp_ssrc, headers_flow2.rtp_ssrc);
+        // Get existing context
+        let retrieved_ctx1 = manager.get_compressor_context_mut(cid1).unwrap();
+        assert_eq!(retrieved_ctx1.cid(), cid1);
+
+        // Downcast to check data
+        retrieved_ctx1
+            .as_any_mut()
+            .downcast_mut::<MockCompressorCtx>()
+            .unwrap()
+            .data = "flow1_updated".to_string();
+
+        let retrieved_ctx1_again = manager.get_compressor_context_mut(cid1).unwrap();
         assert_eq!(
-            context_flow2.last_sent_rtp_sn_full,
-            headers_flow2.rtp_sequence_number
+            retrieved_ctx1_again
+                .as_any()
+                .downcast_ref::<MockCompressorCtx>()
+                .unwrap()
+                .data,
+            "flow1_updated"
         );
-        assert_eq!(context_flow2.mode, CompressorMode::InitializationAndRefresh);
+
+        // Get non-existent context
+        let result_non_existent = manager.get_compressor_context_mut(99);
+        assert!(matches!(
+            result_non_existent,
+            Err(RohcError::ContextNotFound(99))
+        ));
     }
 
     #[test]
-    fn get_or_init_compressor_context_reinitializes_for_new_cid() {
-        let mut manager = SimpleContextManager::new();
-        let headers1 = sample_headers_builder(123, 10);
-        let _context_cid0 = manager.get_or_init_compressor_context(0, &headers1);
+    fn add_and_get_decompressor_context() {
+        let mut manager = ContextManager::new();
+        let ctx1: Box<dyn RohcDecompressorContext> =
+            Box::new(MockDecompressorCtx { cid: 2, updates: 0 });
+        let cid1 = ctx1.cid(); // Get CID before move
+        manager.add_decompressor_context(cid1, ctx1);
 
-        let context_cid1 = manager.get_or_init_compressor_context(1, &headers1);
+        assert_eq!(manager.decompressor_context_count(), 1);
 
-        assert_eq!(context_cid1.cid, 1);
-        assert_eq!(context_cid1.rtp_ssrc, headers1.rtp_ssrc);
+        let retrieved_ctx1 = manager.get_decompressor_context_mut(cid1).unwrap();
+        assert_eq!(retrieved_ctx1.cid(), cid1);
+        retrieved_ctx1
+            .as_any_mut()
+            .downcast_mut::<MockDecompressorCtx>()
+            .unwrap()
+            .updates += 1;
+
+        let retrieved_ctx1_again = manager.get_decompressor_context_mut(cid1).unwrap();
         assert_eq!(
-            context_cid1.last_sent_rtp_sn_full,
-            headers1.rtp_sequence_number
+            retrieved_ctx1_again
+                .as_any()
+                .downcast_ref::<MockDecompressorCtx>()
+                .unwrap()
+                .updates,
+            1
         );
-        assert_eq!(context_cid1.mode, CompressorMode::InitializationAndRefresh);
+
+        let result_non_existent = manager.get_decompressor_context_mut(100);
+        assert!(matches!(
+            result_non_existent,
+            Err(RohcError::ContextNotFound(100))
+        ));
     }
 
     #[test]
-    fn get_or_init_decompressor_context_creation_and_retrieval() {
-        let mut manager = SimpleContextManager::new();
-
-        let context1 = manager.get_or_init_decompressor_context(0);
-        assert_eq!(context1.cid, 0);
-        assert_eq!(context1.profile_id, RohcProfile::RtpUdpIp);
-        assert_eq!(context1.mode, DecompressorMode::NoContext);
-
-        let context1_ptr_before = context1 as *mut _;
-        let context1_again = manager.get_or_init_decompressor_context(0);
-        let context1_ptr_after = context1_again as *mut _;
-        assert_eq!(
-            context1_ptr_before, context1_ptr_after,
-            "Should be the same context instance"
+    fn remove_contexts() {
+        let mut manager = ContextManager::new();
+        manager.add_compressor_context(
+            1,
+            Box::new(MockCompressorCtx {
+                cid: 1,
+                data: "".to_string(),
+            }),
         );
+        manager.add_decompressor_context(2, Box::new(MockDecompressorCtx { cid: 2, updates: 0 }));
+
+        assert_eq!(manager.compressor_context_count(), 1);
+        assert_eq!(manager.decompressor_context_count(), 1);
+
+        let removed_comp_ctx = manager.remove_compressor_context(1);
+        assert!(removed_comp_ctx.is_some());
+        assert_eq!(removed_comp_ctx.unwrap().cid(), 1);
+        assert_eq!(manager.compressor_context_count(), 0);
+        assert!(manager.remove_compressor_context(1).is_none()); // Already removed
+
+        let removed_decomp_ctx = manager.remove_decompressor_context(2);
+        assert!(removed_decomp_ctx.is_some());
+        assert_eq!(removed_decomp_ctx.unwrap().cid(), 2);
+        assert_eq!(manager.decompressor_context_count(), 0);
     }
 
     #[test]
-    fn get_or_init_decompressor_context_creates_new_for_different_cid() {
-        let mut manager = SimpleContextManager::new();
+    fn clear_contexts() {
+        let mut manager = ContextManager::new();
+        manager.add_compressor_context(
+            1,
+            Box::new(MockCompressorCtx {
+                cid: 1,
+                data: "".to_string(),
+            }),
+        );
+        manager.add_compressor_context(
+            2,
+            Box::new(MockCompressorCtx {
+                cid: 2,
+                data: "".to_string(),
+            }),
+        );
+        manager.add_decompressor_context(3, Box::new(MockDecompressorCtx { cid: 3, updates: 0 }));
+        manager.add_decompressor_context(4, Box::new(MockDecompressorCtx { cid: 4, updates: 0 }));
 
-        // First call for CID 0
-        let cid0_value;
-        {
-            let context_cid0 = manager.get_or_init_decompressor_context(0);
-            assert_eq!(context_cid0.cid, 0);
-            cid0_value = context_cid0.cid;
-        }
+        assert_eq!(manager.compressor_context_count(), 2);
+        assert_eq!(manager.decompressor_context_count(), 2);
 
-        // Second call for CID 5 - manager can now be mutably borrowed again
-        let cid5_value;
-        {
-            let context_cid5 = manager.get_or_init_decompressor_context(5);
-            assert_eq!(context_cid5.cid, 5);
-            cid5_value = context_cid5.cid;
-        }
+        manager.clear_compressor_contexts();
+        assert_eq!(manager.compressor_context_count(), 0);
+        assert_eq!(manager.decompressor_context_count(), 2); // Decompressors should remain
 
-        assert_ne!(cid0_value, cid5_value, "CIDs should differ");
+        manager.clear_all_contexts();
+        assert_eq!(manager.decompressor_context_count(), 0);
     }
 
     #[test]
-    fn update_decompressor_context_from_ir_packet() {
-        let mut manager = SimpleContextManager::new();
-        let ir_data = RohcIrProfile1Packet {
-            cid: 0,
-            profile: RohcProfile::RtpUdpIp,
-            static_rtp_ssrc: 999,
-            dyn_rtp_sn: 100,
-            ..Default::default()
-        };
-
-        assert!(manager.decompressor_context.is_none());
-
-        let context_after_update = manager.update_decompressor_context_from_ir(&ir_data);
-        assert_eq!(context_after_update.cid, 0);
-        assert_eq!(context_after_update.rtp_ssrc, 999);
-        assert_eq!(context_after_update.last_reconstructed_rtp_sn_full, 100);
-        assert_eq!(context_after_update.mode, DecompressorMode::FullContext);
-
-        let ir_data_cid5 = RohcIrProfile1Packet {
-            cid: 5,
-            profile: RohcProfile::RtpUdpIp,
-            static_rtp_ssrc: 888,
-            dyn_rtp_sn: 200,
-            ..Default::default()
-        };
-        let context_cid5_after_update = manager.update_decompressor_context_from_ir(&ir_data_cid5);
-        assert_eq!(context_cid5_after_update.cid, 5);
-        assert_eq!(context_cid5_after_update.rtp_ssrc, 888);
+    fn overwrite_context() {
+        let mut manager = ContextManager::new();
+        let ctx_v1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
+            cid: 1,
+            data: "version1".to_string(),
+        });
+        manager.add_compressor_context(1, ctx_v1);
         assert_eq!(
-            context_cid5_after_update.mode,
-            DecompressorMode::FullContext
+            manager
+                .get_compressor_context_mut(1)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<MockCompressorCtx>()
+                .unwrap()
+                .data,
+            "version1"
+        );
+
+        let ctx_v2: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
+            cid: 1,
+            data: "version2".to_string(),
+        });
+        manager.add_compressor_context(1, ctx_v2); // Overwrite
+        assert_eq!(manager.compressor_context_count(), 1);
+        assert_eq!(
+            manager
+                .get_compressor_context_mut(1)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<MockCompressorCtx>()
+                .unwrap()
+                .data,
+            "version2"
         );
     }
 }
