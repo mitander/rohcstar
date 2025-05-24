@@ -1,15 +1,11 @@
-//! ROHC profile implementations.
+//! ROHC (Robust Header Compression) profile implementations.
 //!
-//! This module contains implementations of different ROHC profiles, each handling
-//! compression and decompression for specific protocol stacks:
+//! This module acts as a container for the implementations of various ROHC
+//! profiles. Each supported profile (e.g., Profile 1 for RTP/UDP/IP,
+//! Profile 2 for UDP/IP) will have its own submodule here.
 //!
-//! - **Profile 0**: Uncompressed passthrough (planned)
-//! - **Profile 1**: RTP/UDP/IP compression (RFC 3095) - Currently implemented
-//! - **Profile 2**: UDP/IP compression (planned)
-//! - **Profile 3**: IP-only compression (planned)
-//! - **Profile 6**: TCP/IP compression (RFC 6846) (planned)
-//!
-//! Each profile is implemented as a separate handler that implements the
-//! [`ProfileHandler`] trait, providing a uniform interface for the ROHC engine.
+//! The ROHC engine will typically use handlers from these profile modules
+//! to perform compression and decompression according to the specific
+//! rules of each profile.
 
-pub mod p1_handler;
+pub mod profile1;

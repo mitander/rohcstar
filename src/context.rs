@@ -6,7 +6,7 @@
 
 use crate::constants::{DEFAULT_IR_REFRESH_INTERVAL, DEFAULT_PROFILE1_UO0_SN_LSB_WIDTH};
 use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
-use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::profiles::profile1::RtpUdpIpv4Headers;
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
 use std::any::Any;
 use std::net::Ipv4Addr;
@@ -314,7 +314,7 @@ impl RohcDecompressorContext for RtpUdpIpP1DecompressorContext {
 mod tests {
     use super::*;
     use crate::packet_defs::RohcIrProfile1Packet;
-    use crate::protocol_types::RtpUdpIpv4Headers;
+    use crate::profiles::profile1::RtpUdpIpv4Headers;
 
     #[test]
     fn compressor_context_initialization_and_static_update() {
