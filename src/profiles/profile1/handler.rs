@@ -15,10 +15,7 @@ use super::packet_processor::{
 };
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::RtpUdpIpv4Headers;
-use crate::constants::{
-    DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE,
-    ROHC_SMALL_CID_MASK, RTP_VERSION,
-};
+use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc;
 use crate::encodings::{decode_lsb, encode_lsb, value_in_lsb_interval};
 use crate::error::{RohcBuildingError, RohcError, RohcParsingError};
@@ -195,7 +192,6 @@ impl ProfileHandler for Profile1Handler {
             let rohc_packet_bytes =
                 build_profile1_ir_packet(&ir_data).map_err(RohcError::Building)?;
 
-            // Update compressor context state after sending IR
             context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
             context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
             context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
@@ -258,41 +254,32 @@ impl ProfileHandler for Profile1Handler {
                 );
                 let crc8_val = crc::calculate_rohc_crc8(&crc_input_bytes);
 
+                let cid = if context.cid > 0 && context.cid <= 15 {
+                    Some(context.cid as u8)
+                } else if context.cid == 0 {
+                    None
+                } else {
+                    return Err(RohcError::Building(
+                        RohcBuildingError::ContextInsufficient {
+                            reason: format!(
+                                "UO-1 compression with Add-CID not supported for large CID {}",
+                                context.cid
+                            ),
+                        },
+                    ));
+                };
                 let uo1_packet_data = Uo1Packet {
+                    cid,
                     sn_lsb: sn_lsb_val,
                     num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
                     rtp_marker_bit_value: Some(current_marker),
-                    ts_lsb: None, // Not sending TS in UO-1-SN
+                    ts_lsb: None,
                     num_ts_lsb_bits: None,
                     crc8: crc8_val,
                 };
                 context.current_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
 
-                let core_uo1_bytes =
-                    build_profile1_uo1_sn_packet(&uo1_packet_data).map_err(RohcError::Building)?;
-
-                if context.cid > 0 && context.cid <= 15 {
-                    // UO-1 packets for small CIDs also need the Add-CID octet prepended.
-                    let mut framed_packet = Vec::with_capacity(1 + core_uo1_bytes.len());
-                    framed_packet.push(
-                        ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE
-                            | (context.cid as u8 & ROHC_SMALL_CID_MASK),
-                    );
-                    framed_packet.extend_from_slice(&core_uo1_bytes);
-                    framed_packet
-                } else if context.cid == 0 {
-                    core_uo1_bytes
-                } else {
-                    // Large CIDs not supported by this simple Add-CID framing for UO-1
-                    return Err(RohcError::Building(
-                        RohcBuildingError::ContextInsufficient {
-                            reason: format!(
-                                "UO-1 compression not supported for large CID {}",
-                                context.cid
-                            ),
-                        },
-                    ));
-                }
+                build_profile1_uo1_sn_packet(&uo1_packet_data).map_err(RohcError::Building)?
             };
 
             // Update compressor context state for FO packet
@@ -330,14 +317,13 @@ impl ProfileHandler for Profile1Handler {
 
         // Discriminate packet type based on Profile 1 rules
         if (first_byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
-            // IR or IR-DYN Packet
             let parsed_ir = parse_profile1_ir_packet(rohc_packet_data, context.cid())?;
             if parsed_ir.profile != self.profile_id() {
                 return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
                     parsed_ir.profile.into(),
                 )));
             }
-            // Update context using the IR packet data
+
             context.initialize_from_ir_packet(&parsed_ir);
             let reconstructed_headers = self.reconstruct_full_headers(
                 context,
@@ -349,7 +335,6 @@ impl ProfileHandler for Profile1Handler {
                 reconstructed_headers,
             ))
         } else if (first_byte & P1_UO_1_SN_PACKET_TYPE_PREFIX) == P1_UO_1_SN_PACKET_TYPE_PREFIX {
-            // UO-1 Packet (assuming UO-1-SN for now based on prefix)
             if context.mode != Profile1DecompressorMode::FullContext {
                 return Err(RohcError::InvalidState(
                     "Received UO-1 packet but decompressor not in Full Context mode.".to_string(),
@@ -405,7 +390,6 @@ impl ProfileHandler for Profile1Handler {
                 }))
             }
         } else if (first_byte & 0x80) == 0x00 {
-            // UO-0 Packet (MSB is 0)
             if context.mode != Profile1DecompressorMode::FullContext {
                 return Err(RohcError::InvalidState(
                     "Received UO-0 packet but decompressor not in Full Context mode.".to_string(),

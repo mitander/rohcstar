@@ -103,6 +103,10 @@ pub struct Uo0Packet {
 /// for other UO-1 variants like UO-1-TS (Timestamp) or UO-1-ID (IP-ID).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Uo1Packet {
+    /// Context Identifier (CID).
+    /// - `None`: Indicates this UO-1 packet is for the implicit CID 0.
+    /// - `Some(u8)`: Indicates an Add-CID octet should be prepended for this small CID (1-15).
+    pub cid: Option<u8>,
     /// Least Significant Bits (LSBs) of the RTP Sequence Number.
     pub sn_lsb: u16, // For UO-1-SN, this is often 8 bits, but field allows for more.
     /// Number of LSBs used for the `sn_lsb` field (e.g., 8 for standard UO-1-SN).
@@ -189,6 +193,7 @@ mod tests {
         assert_eq!(default_uo1.crc8, 0);
 
         let custom_uo1_sn = Uo1Packet {
+            cid: None,
             sn_lsb: 0xAB, // 171
             num_sn_lsb_bits: 8,
             rtp_marker_bit_value: Some(true),
@@ -201,6 +206,7 @@ mod tests {
         assert_eq!(custom_uo1_sn.rtp_marker_bit_value, Some(true));
 
         let custom_uo1_ts = Uo1Packet {
+            cid: None,
             sn_lsb: 0x1234,
             num_sn_lsb_bits: 16, // Could be for a different UO-1 variant
             rtp_marker_bit_value: Some(false),
@@ -241,6 +247,7 @@ mod tests {
         assert_eq!(uo0, de_uo0);
 
         let uo1 = Uo1Packet {
+            cid: None,
             sn_lsb: 5,
             num_sn_lsb_bits: 8,
             rtp_marker_bit_value: Some(false),

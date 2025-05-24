@@ -356,7 +356,7 @@ pub fn parse_profile1_ir_packet(
             crc_type: "ROHC-CRC8".to_string(),
         });
     }
-    offset += 1; // Skip Profile ID
+    offset += 1;
 
     let static_ip_src = Ipv4Addr::new(
         data[offset],
@@ -459,7 +459,6 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
         }
     }
 
-    // UO-0 core byte: MSB is 0, then SN LSBs, then CRC3 LSBs.
     // RFC 3095, Section 5.7.4: `0 | SN (4 bits) | CRC-3 (3 bits)`
     // Shift SN to align before CRC3.
     let core_byte = (packet_data.sn_lsb << 3) | packet_data.crc3;
@@ -557,7 +556,30 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
             0
         });
 
-    Ok(vec![type_octet, packet_data.sn_lsb as u8, packet_data.crc8])
+    let core_packet_bytes = vec![type_octet, packet_data.sn_lsb as u8, packet_data.crc8];
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
+            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet.extend_from_slice(&core_packet_bytes);
+            Ok(final_packet)
+        } else if cid_val == 0 {
+            // CID 0 for UO-1 means no Add-CID
+            Ok(core_packet_bytes)
+        } else {
+            Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "cid".to_string(),
+                description: format!(
+                    "Invalid CID {} for UO-1 Add-CID encoding; expected 0 or 1-15.",
+                    cid_val
+                ),
+            })
+        }
+    } else {
+        // No CID provided (implicitly CID 0)
+        Ok(core_packet_bytes)
+    }
 }
 
 /// Parses a ROHC Profile 1 UO-1-SN packet.
@@ -603,6 +625,7 @@ pub fn parse_profile1_uo1_sn_packet(data: &[u8]) -> Result<Uo1Packet, RohcParsin
     let received_crc8 = data[2];
 
     Ok(Uo1Packet {
+        cid: None,
         sn_lsb: sn_lsb_val as u16,
         num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
         rtp_marker_bit_value: Some(marker_bit_is_set),

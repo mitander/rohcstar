@@ -10,34 +10,26 @@ use std::net::Ipv4Addr;
 use super::constants::{P1_DEFAULT_P_SN_OFFSET, P1_UO0_SN_LSB_WIDTH_DEFAULT};
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
+use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::packet_defs::RohcProfile;
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
-
-// Use the generic default for IR refresh unless P1 has a very specific one.
-// For now, assuming crate::constants::DEFAULT_IR_REFRESH_INTERVAL is fine.
-use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 
 /// Operational modes for the ROHC Profile 1 compressor.
 ///
 /// These modes dictate the type of ROHC packets the compressor should generate.
 /// Transitions between modes are governed by the ROHC state machine logic for Profile 1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Profile1CompressorMode {
     /// Initial state or after a context refresh.
     /// In this mode, the compressor must send an IR (Initialization/Refresh)
     /// or IR-DYN packet to establish or re-establish context with the decompressor.
+    #[default]
     InitializationAndRefresh,
     /// First Order compression state.
     /// After context is established, the compressor sends UO-0 or UO-1 packets,
     /// which are more compressed than IR packets.
     FirstOrder,
     // TODO: SecondOrder, // SO state
-}
-
-impl Default for Profile1CompressorMode {
-    fn default() -> Self {
-        Profile1CompressorMode::InitializationAndRefresh
-    }
 }
 
 /// Compressor context for ROHC Profile 1 (RTP/UDP/IP).
@@ -123,19 +115,16 @@ impl Profile1CompressorContext {
     /// # Parameters
     /// - `headers`: The uncompressed `RtpUdpIpv4Headers` of the current packet.
     pub fn initialize_context_from_uncompressed_headers(&mut self, headers: &RtpUdpIpv4Headers) {
-        // Update static fields
         self.ip_source = headers.ip_src;
         self.ip_destination = headers.ip_dst;
         self.udp_source_port = headers.udp_src_port;
         self.udp_destination_port = headers.udp_dst_port;
         self.rtp_ssrc = headers.rtp_ssrc;
 
-        // Update dynamic fields based on this "initializing" packet
         self.last_sent_rtp_sn_full = headers.rtp_sequence_number;
         self.last_sent_rtp_ts_full = headers.rtp_timestamp;
         self.last_sent_rtp_marker = headers.rtp_marker;
 
-        // Reset state for IR transmission
         self.mode = Profile1CompressorMode::InitializationAndRefresh;
         self.fo_packets_sent_since_ir = 0;
         // current_lsb_sn_width might be reset or kept depending on strategy
@@ -171,10 +160,11 @@ impl RohcCompressorContext for Profile1CompressorContext {
 ///
 /// These modes reflect the decompressor's confidence in its context synchronization
 /// with the compressor. (NC = No Context, SC = Static Context, FC = Full Context).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Profile1DecompressorMode {
     /// No Context (NC): The decompressor has no established context for the CID.
     /// It requires an IR packet to initialize.
+    #[default]
     NoContext,
     /// Static Context (SC): Only the static part of the context is reliably known.
     /// The decompressor might have received an IR packet without a dynamic part,
@@ -184,12 +174,6 @@ pub enum Profile1DecompressorMode {
     /// Full Context (FC): Both static and dynamic parts of the context are established.
     /// The decompressor can process highly compressed packets like UO-0.
     FullContext,
-}
-
-impl Default for Profile1DecompressorMode {
-    fn default() -> Self {
-        Profile1DecompressorMode::NoContext
-    }
 }
 
 /// Decompressor context for ROHC Profile 1 (RTP/UDP/IP).
@@ -327,10 +311,8 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Use the RtpUdpIpv4Headers from this profile's protocol_types
-    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
-    // Use the IrPacket from this profile's packet_types
     use crate::profiles::profile1::packet_types::IrPacket;
+    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
 
     #[test]
     fn profile1_compressor_context_new_and_initialize() {

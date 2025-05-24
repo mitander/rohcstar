@@ -59,7 +59,6 @@ impl ContextManager {
     }
 
     /// Retrieves a mutable reference to a compressor context by its CID.
-    ///     /// Retrieves an immutable reference to a compressor context by its CID.
     ///
     /// # Parameters
     /// - `cid`: The Context ID of the compressor context to retrieve.
@@ -99,14 +98,18 @@ impl ContextManager {
     /// - `cid`: The Context ID of the decompressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&Box<dyn RohcCompressorContext>)` if the context is found.
+    /// - `Ok(&dyn RohcCompressorContext)` if the context is found.
     /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
     pub fn get_compressor_context(
         &self,
         cid: u16,
-    ) -> Result<&Box<dyn RohcCompressorContext>, RohcError> {
+    ) -> Result<&dyn RohcCompressorContext, RohcError> {
         self.compressor_contexts
             .get(&cid)
+            .map(|boxed_context_ref| {
+                let context_ref: &dyn RohcCompressorContext = &**boxed_context_ref;
+                context_ref
+            })
             .ok_or(RohcError::ContextNotFound(cid))
     }
 
@@ -116,17 +119,20 @@ impl ContextManager {
     /// - `cid`: The Context ID of the decompressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&Box<dyn RohcDecompressorContext>)` if the context is found.
+    /// - `Ok(&dyn RohcDecompressorContext)` if the context is found.
     /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
     pub fn get_decompressor_context(
         &self,
         cid: u16,
-    ) -> Result<&Box<dyn RohcDecompressorContext>, RohcError> {
+    ) -> Result<&dyn RohcDecompressorContext, RohcError> {
         self.decompressor_contexts
             .get(&cid)
+            .map(|boxed_context_ref| {
+                let context_ref: &dyn RohcDecompressorContext = &**boxed_context_ref;
+                context_ref
+            })
             .ok_or(RohcError::ContextNotFound(cid))
     }
-
     /// Removes a compressor context by its CID.
     ///
     /// # Parameters

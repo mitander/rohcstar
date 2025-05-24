@@ -97,7 +97,6 @@ impl RohcEngine {
 
         match context_result {
             Ok(context_box) => {
-                // Context exists, get its profile ID and the handler
                 let profile_id = context_box.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or_else(|| {
                     RohcError::Internal(format!(
@@ -108,7 +107,6 @@ impl RohcEngine {
                 handler.compress(context_box.as_mut(), uncompressed_headers)
             }
             Err(RohcError::ContextNotFound(_)) => {
-                // Context does not exist, try to create it
                 let profile_to_use = profile_id_hint.ok_or_else(|| RohcError::Internal(
                     format!("Cannot create new compressor context for CID {} without a profile ID hint.", cid)
                 ))?;
@@ -172,7 +170,6 @@ impl RohcEngine {
         // 2. Get or Create Decompressor Context
         match self.context_manager.get_decompressor_context_mut(cid) {
             Ok(context_box) => {
-                // Context exists, get its profile ID and the handler
                 let profile_id = context_box.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or_else(|| {
                     RohcError::Internal(format!(

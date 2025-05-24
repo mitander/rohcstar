@@ -93,7 +93,6 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
         // If k=64, all bits are LSBs, so the value itself is the "encoded" LSBs.
         Ok(value)
     } else {
-        // Mask to extract the lowest num_lsb_bits.
         // (1 << k) creates a bitmask like 0...010...0 (k zeros).
         // Subtracting 1 yields 0...001...1 (k ones).
         let mask = (1u64 << num_lsb_bits) - 1;
@@ -180,7 +179,6 @@ pub fn decode_lsb(
         candidate_v = candidate_v.wrapping_add(window_size);
     }
 
-    // Check if this candidate_v is within the interpretation window.
     // The window is `[interval_base, interval_base + window_size - 1]`.
     // `candidate_v.wrapping_sub(interval_base)` calculates `(candidate_v - interval_base) mod 2^64`.
     // If this difference is less than `window_size`, it's in the window.

@@ -296,7 +296,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     assert_eq!(
         fo_count_after_p3, 2,
         "P3_SCID_UO1: Compressor FO count after second UO"
-    ); // This was the failing line, now expecting 2
+    );
 
     let decompressed_generic3 = engine.decompress(&rohc_packet3_framed).unwrap();
     let decomp_headers3 = match decompressed_generic3 {

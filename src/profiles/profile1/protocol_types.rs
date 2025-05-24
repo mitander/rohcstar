@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(headers.udp_dst_port, 2000);
         assert_eq!(headers.rtp_ssrc, 0x12345678);
         assert_eq!(headers.rtp_sequence_number, 100);
-        assert_eq!(headers.rtp_marker, true);
+        assert!(headers.rtp_marker);
         assert!(headers.validate_csrc_count());
     }
 
