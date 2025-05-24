@@ -5,15 +5,27 @@ edition = "2024"
 
 [dependencies]
 thiserror = "2"
-anyhow = "1"
-bytes = "1"
-bincode = { version = "2", features = ["derive"]}
-rand_core = { version = "0.9", optional = true }
-crc = "3.3.0"
-serde = { version = "1", features = ["derive"] }
-serde_with = { version = "3.4.0", features = ["std", "macros"] }
-serde_json = "1.0.140"
+bytes = "1.5"
+crc = "3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_with = { version = "3", features = ["macros"] }
 
 [dev-dependencies]
-rand_chacha = "0.9"
+serde_json = "1.0"
+rand = "0.9"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+
+
+[features]
+default = []
+test_utils = [] # Exposes test utilities for external integration testing.
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
+opt-level = 'z' # Optimize for size
+
+[profile.dev]
+opt-level = 0 # Default for dev
