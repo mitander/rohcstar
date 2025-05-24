@@ -17,7 +17,7 @@ use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc;
-use crate::encodings::{decode_lsb, encode_lsb, value_in_lsb_interval};
+use crate::encodings::{decode_lsb, encode_lsb};
 use crate::error::{RohcBuildingError, RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
@@ -211,15 +211,11 @@ impl ProfileHandler for Profile1Handler {
 
             // Check if UO-0 can be used:
             // - Marker bit must not have changed from context.
-            // - SN must be representable with context.current_lsb_sn_width (typically P1_UO0_SN_LSB_WIDTH_DEFAULT).
+            // - SN must be compressible with UO-0's LSB encoding (e.g., within +0 to +15 of last SN).
             // - Other fields (IP-ID, TS stride) must also be compressible by UO-0 (not fully modeled here).
             let marker_unchanged = current_marker == context.last_sent_rtp_marker;
-            let sn_encodable_for_uo0 = value_in_lsb_interval(
-                current_sn as u64,
-                context.last_sent_rtp_sn_full as u64,
-                P1_UO0_SN_LSB_WIDTH_DEFAULT, // UO-0 always uses its specific width
-                P1_DEFAULT_P_SN_OFFSET,      // Assuming default p_offset for UO-0
-            );
+            let diff_sn = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
+            let sn_encodable_for_uo0 = diff_sn < 16;
 
             let final_rohc_packet_bytes = if marker_unchanged && sn_encodable_for_uo0 {
                 let sn_lsb_val = encode_lsb(current_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT)? as u8;
