@@ -1,52 +1,30 @@
 //! `rohcstar`: A modern and memory-safe ROHC (Robust Header Compression) implementation in Rust.
 //!
-//! Implements ROHC Profile 1 (RTP/UDP/IP) in Unidirectional mode with an extensible
-//! architecture for future profile support. This implementation focuses on:
-//! - Memory safety without compromising performance
-//! - Clear separation of concerns between compression profiles
-//! - Extensibility for additional ROHC profiles
+//! This library provides a framework for ROHC compression and decompression,
+//! with an extensible architecture allowing for the addition of various ROHC profiles.
+//! The primary entry point for using the library is the `RohcEngine`.
 //!
-//! ## Core Components
-//! - `traits`: Core interfaces for ROHC operations
-//! - `context`: Compressor/decompressor state management
-//! - `profiles`: Profile-specific implementations (currently Profile 1)
-//! - `packet_processor`: Low-level packet parsing and building
+//! ## Core Concepts
+//!
+//! - **`RohcEngine`**: The central orchestrator for compression and decompression.
+//!   You register profile handlers with the engine and then use it to process packets.
+//! - **Profiles**: Implementations for specific ROHC standards (e.g., Profile 1 for RTP/UDP/IP).
+//!   Each profile is managed by a `ProfileHandler`.
+//! - **Contexts**: State maintained for each compression or decompression flow (CID).
+//!   Managed internally by the `RohcEngine` and `ContextManager`.
 
-// Core modules
 pub mod constants;
-pub mod context;
 pub mod context_manager;
 pub mod crc;
 pub mod encodings;
+pub mod engine;
 pub mod error;
 pub mod packet_defs;
-pub mod packet_processor;
 pub mod profiles;
-pub mod protocol_types;
 pub mod traits;
 
-// Fuzzing related
-pub mod fuzz_harnesses;
-
-// Traits
+pub use engine::RohcEngine;
+pub use error::{RohcBuildingError, RohcError, RohcParsingError};
+pub use packet_defs::{GenericUncompressedHeaders, RohcProfile};
 pub use traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
-
-// Contexts and Manager
-pub use context::{
-    CompressorMode, DecompressorMode, RtpUdpIpP1CompressorContext, RtpUdpIpP1DecompressorContext,
-};
-pub use context_manager::SimpleContextManager;
-
-// Enums and Definitions
-pub use packet_defs::{GenericUncompressedHeaders, RohcPacketDiscriminator, RohcProfile};
-// Re-export specific ROHC packet data structs if they are part of public API for certain profiles
-pub use packet_defs::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RohcUo1PacketProfile1};
-
-// Uncompressed Header Types
-pub use protocol_types::RtpUdpIpv4Headers;
-
-// Top-level Error
-pub use error::RohcError;
-
-// Specific Profile Handlers
-pub use profiles::p1_handler::Profile1Handler;
+pub mod fuzz_harnesses;

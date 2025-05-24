@@ -14,7 +14,7 @@ use crate::constants::{
 use crate::crc::calculate_rohc_crc8;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::{RohcIrProfile1Packet, RohcUo0PacketProfile1, RohcUo1PacketProfile1};
-use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::profiles::profile1::RtpUdpIpv4Headers;
 
 /// Parses RTP/UDP/IPv4 headers into structured format.
 ///
