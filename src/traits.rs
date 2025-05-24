@@ -131,7 +131,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     ///
     /// # Parameters
     /// - `context`: A mutable reference to a `RohcDecompressorContext`.
-    /// - `rohc_packet_data`: A slice containing the ROHC packet data to decompress.
+    /// - `packet_bytes`: A slice containing the ROHC packet data to decompress.
     ///
     /// # Returns
     /// A `Result` containing the reconstructed `GenericUncompressedHeaders`,
@@ -139,7 +139,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     fn decompress(
         &self,
         context: &mut dyn RohcDecompressorContext,
-        rohc_packet_data: &[u8],
+        packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError>;
 }
 

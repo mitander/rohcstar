@@ -22,7 +22,7 @@ pub struct IrPacket {
     /// this is the CID of the compressor's context.
     pub cid: u16,
     /// ROHC Profile Identifier. For Profile 1, this must be `RohcProfile::RtpUdpIp`.
-    pub profile: RohcProfile,
+    pub profile_id: RohcProfile,
     /// The 8-bit CRC calculated over the IR packet's payload (which includes the
     /// profile octet, static chain, and dynamic chain if present).
     pub crc8: u8,
@@ -60,9 +60,9 @@ impl Default for IrPacket {
     /// The `profile` field defaults to `RohcProfile::RtpUdpIp`.
     fn default() -> Self {
         Self {
-            cid: 0,                         // Typically set by engine or context
-            profile: RohcProfile::RtpUdpIp, // Specific to Profile 1
-            crc8: 0,                        // Must be calculated or verified
+            cid: 0,                            // Typically set by engine or context
+            profile_id: RohcProfile::RtpUdpIp, // Specific to Profile 1
+            crc8: 0,                           // Must be calculated or verified
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
             static_udp_src_port: 0,
@@ -115,7 +115,7 @@ pub struct Uo1Packet {
     /// Value of the RTP Marker bit.
     /// `Some(bool)` if explicitly conveyed by this UO-1 packet (typical for UO-1-SN).
     /// `None` if not conveyed by this particular UO-1 variant.
-    pub rtp_marker_bit_value: Option<bool>,
+    pub marker: bool,
 
     /// Optional Least Significant Bits (LSBs) of the RTP Timestamp.
     /// Present for UO-1-TS variants.
@@ -138,13 +138,13 @@ mod tests {
     fn ir_packet_defaults_and_construction() {
         let default_ir = IrPacket::default();
         assert_eq!(default_ir.cid, 0);
-        assert_eq!(default_ir.profile, RohcProfile::RtpUdpIp);
+        assert_eq!(default_ir.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(default_ir.static_ip_src, Ipv4Addr::UNSPECIFIED);
         assert_eq!(default_ir.dyn_rtp_sn, 0);
 
         let custom_ir = IrPacket {
             cid: 5,
-            profile: RohcProfile::RtpUdpIp,
+            profile_id: RohcProfile::RtpUdpIp,
             crc8: 0xAB,
             static_ip_src: "1.2.3.4".parse().unwrap(),
             static_ip_dst: "5.6.7.8".parse().unwrap(),
@@ -188,7 +188,7 @@ mod tests {
         let default_uo1 = Uo1Packet::default();
         assert_eq!(default_uo1.sn_lsb, 0);
         assert_eq!(default_uo1.num_sn_lsb_bits, 0); // Default u8 is 0
-        assert_eq!(default_uo1.rtp_marker_bit_value, None);
+        assert_eq!(default_uo1.marker, false);
         assert_eq!(default_uo1.ts_lsb, None);
         assert_eq!(default_uo1.crc8, 0);
 
@@ -196,20 +196,20 @@ mod tests {
             cid: None,
             sn_lsb: 0xAB, // 171
             num_sn_lsb_bits: 8,
-            rtp_marker_bit_value: Some(true),
+            marker: true,
             ts_lsb: None,
             num_ts_lsb_bits: None,
             crc8: 0xCD,
         };
         assert_eq!(custom_uo1_sn.sn_lsb, 0xAB);
         assert_eq!(custom_uo1_sn.num_sn_lsb_bits, 8);
-        assert_eq!(custom_uo1_sn.rtp_marker_bit_value, Some(true));
+        assert_eq!(custom_uo1_sn.marker, true);
 
         let custom_uo1_ts = Uo1Packet {
             cid: None,
             sn_lsb: 0x1234,
             num_sn_lsb_bits: 16, // Could be for a different UO-1 variant
-            rtp_marker_bit_value: Some(false),
+            marker: false,
             ts_lsb: Some(0x5678),
             num_ts_lsb_bits: Some(16),
             crc8: 0xEF,
@@ -222,7 +222,7 @@ mod tests {
     fn packet_types_serde_roundtrip() {
         let ir = IrPacket {
             cid: 1,
-            profile: RohcProfile::RtpUdpIp,
+            profile_id: RohcProfile::RtpUdpIp,
             crc8: 1,
             static_ip_src: "1.1.1.1".parse().unwrap(),
             static_ip_dst: "2.2.2.2".parse().unwrap(),
@@ -250,7 +250,7 @@ mod tests {
             cid: None,
             sn_lsb: 5,
             num_sn_lsb_bits: 8,
-            rtp_marker_bit_value: Some(false),
+            marker: false,
             ts_lsb: Some(6),
             num_ts_lsb_bits: Some(16),
             crc8: 7,

@@ -31,7 +31,7 @@ fn create_test_rtp_headers_minimal(sn: u16, ts: u32, marker: bool, ssrc: u32) ->
 fn default_ir_packet_data(cid: u16, ssrc: u32, sn: u16) -> IrPacket {
     IrPacket {
         cid,
-        profile: RohcProfile::RtpUdpIp,
+        profile_id: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1".parse().unwrap(),
         static_ip_dst: "2.2.2.2".parse().unwrap(),
         static_udp_src_port: 100,
@@ -73,7 +73,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
 
     // Build a packet as if for Profile 1, but then change the profile ID byte
     let mut ir_data = default_ir_packet_data(0, 0x12345678, 100);
-    ir_data.profile = RohcProfile::RtpUdpIp; // Ensure it's built for P1 initially
+    ir_data.profile_id = RohcProfile::RtpUdpIp; // Ensure it's built for P1 initially
 
     let mut ir_packet_bytes = build_profile1_ir_packet(&ir_data).unwrap();
 

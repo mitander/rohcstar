@@ -29,7 +29,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
     let sample_ir_data_for_harness = Profile1IrPacket {
         cid,
-        profile: RohcProfile::RtpUdpIp,
+        profile_id: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1"
             .parse()
             .expect("Harness: Static IP parsing failed"),

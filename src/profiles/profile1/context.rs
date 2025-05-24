@@ -257,7 +257,7 @@ impl Profile1DecompressorContext {
         // Ensure the IR packet's profile matches, though this is more of an assert
         // as the handler should have already dispatched correctly.
         debug_assert_eq!(
-            ir_packet.profile, self.profile_id,
+            ir_packet.profile_id, self.profile_id,
             "IR packet profile mismatch for P1DecompressorContext"
         );
 
@@ -361,7 +361,7 @@ mod tests {
 
         let ir_data = IrPacket {
             cid: 5, // Assuming CID consistency is handled by caller/engine
-            profile: RohcProfile::RtpUdpIp,
+            profile_id: RohcProfile::RtpUdpIp,
             crc8: 0x00, // Not checked by this method
             static_ip_src: "10.0.0.1".parse().unwrap(),
             static_ip_dst: "10.0.0.2".parse().unwrap(),

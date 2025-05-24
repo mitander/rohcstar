@@ -177,7 +177,7 @@ impl ProfileHandler for Profile1Handler {
 
             let ir_data = IrPacket {
                 cid: context.cid,
-                profile: self.profile_id(),
+                profile_id: self.profile_id(),
                 crc8: 0, // Calculated by build_profile1_ir_packet
                 static_ip_src: uncompressed_headers.ip_src,
                 static_ip_dst: uncompressed_headers.ip_dst,
@@ -248,7 +248,7 @@ impl ProfileHandler for Profile1Handler {
                     ts_for_crc,     // TS from context
                     current_marker, // Current Marker for CRC (UO-1-SN sends this)
                 );
-                let crc8_val = crc::calculate_rohc_crc8(&crc_input_bytes);
+                let calculated_crc8 = crc::calculate_rohc_crc8(&crc_input_bytes);
 
                 let cid = if context.cid > 0 && context.cid <= 15 {
                     Some(context.cid as u8)
@@ -268,10 +268,10 @@ impl ProfileHandler for Profile1Handler {
                     cid,
                     sn_lsb: sn_lsb_val,
                     num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
-                    rtp_marker_bit_value: Some(current_marker),
+                    marker: current_marker,
                     ts_lsb: None,
                     num_ts_lsb_bits: None,
-                    crc8: crc8_val,
+                    crc8: calculated_crc8,
                 };
                 context.current_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
 
@@ -290,7 +290,7 @@ impl ProfileHandler for Profile1Handler {
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
-        rohc_packet_data: &[u8],
+        packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
         let context = context_dyn
             .as_any_mut()
@@ -299,7 +299,7 @@ impl ProfileHandler for Profile1Handler {
                 RohcError::Internal("P1Handler::decompress: Incorrect context type.".to_string())
             })?;
 
-        if rohc_packet_data.is_empty() {
+        if packet_bytes.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
@@ -309,14 +309,14 @@ impl ProfileHandler for Profile1Handler {
 
         // The ROHC engine should have handled Add-CID octet and passed the core packet here.
         // The context.cid should be correctly set by the engine.
-        let first_byte = rohc_packet_data[0];
+        let first_byte = packet_bytes[0];
 
         // Discriminate packet type based on Profile 1 rules
         if (first_byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
-            let parsed_ir = parse_profile1_ir_packet(rohc_packet_data, context.cid())?;
-            if parsed_ir.profile != self.profile_id() {
+            let parsed_ir = parse_profile1_ir_packet(packet_bytes, context.cid())?;
+            if parsed_ir.profile_id != self.profile_id() {
                 return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
-                    parsed_ir.profile.into(),
+                    parsed_ir.profile_id.into(),
                 )));
             }
 
@@ -336,13 +336,8 @@ impl ProfileHandler for Profile1Handler {
                     "Received UO-1 packet but decompressor not in Full Context mode.".to_string(),
                 ));
             }
-            let parsed_uo1 = parse_profile1_uo1_sn_packet(rohc_packet_data)?;
-            let marker = parsed_uo1.rtp_marker_bit_value.ok_or_else(|| {
-                RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-                    field_name: "RTP Marker".to_string(),
-                    structure_name: "UO-1-SN Packet".to_string(),
-                })
-            })?;
+            let parsed_uo1 = parse_profile1_uo1_sn_packet(packet_bytes)?;
+            let marker = parsed_uo1.marker;
 
             let decoded_sn = decode_lsb(
                 parsed_uo1.sn_lsb as u64,
@@ -403,7 +398,7 @@ impl ProfileHandler for Profile1Handler {
                 )));
             };
 
-            let parsed_uo0 = parse_profile1_uo0_packet(rohc_packet_data, cid_for_uo0_parse)?;
+            let parsed_uo0 = parse_profile1_uo0_packet(packet_bytes, cid_for_uo0_parse)?;
 
             let decoded_sn = decode_lsb(
                 parsed_uo0.sn_lsb as u64,

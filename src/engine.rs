@@ -140,15 +140,15 @@ impl RohcEngine {
     /// 3. Dispatches the core ROHC packet data to the appropriate `ProfileHandler` for decompression.
     ///
     /// # Parameters
-    /// - `rohc_packet`: A byte slice containing the complete incoming ROHC packet.
+    /// - `rohc_packet_bytes`: A byte slice containing the complete incoming ROHC packet.
     ///
     /// # Returns
     /// A `Result` containing the reconstructed `GenericUncompressedHeaders`, or a `RohcError`.
     pub fn decompress(
         &mut self,
-        rohc_packet: &[u8],
+        rohc_packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        if rohc_packet.is_empty() {
+        if rohc_packet_bytes.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
@@ -157,7 +157,7 @@ impl RohcEngine {
         }
 
         // 1. Parse CID and get core packet slice
-        let (cid, _, core_packet_slice) = self.parse_cid_from_packet(rohc_packet)?;
+        let (cid, _, core_packet_slice) = self.parse_cid_from_packet(rohc_packet_bytes)?;
 
         if core_packet_slice.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
@@ -206,6 +206,9 @@ impl RohcEngine {
     /// Parses the CID information from the beginning of a ROHC packet.
     /// Handles implicit CID 0 and Add-CID octets for small CIDs.
     ///
+    /// # Parameters
+    /// - `rohc_packet_bytes`: A byte slice containing the complete incoming ROHC packet.
+    ///
     /// # Returns
     /// A tuple `(cid, is_add_cid_present, core_packet_slice)`.
     /// - `cid`: The determined Context ID.
@@ -213,9 +216,9 @@ impl RohcEngine {
     /// - `core_packet_slice`: Slice of the packet after any Add-CID octet.
     fn parse_cid_from_packet<'a>(
         &self,
-        rohc_packet: &'a [u8],
+        rohc_packet_bytes: &'a [u8],
     ) -> Result<(u16, bool, &'a [u8]), RohcError> {
-        if rohc_packet.is_empty() {
+        if rohc_packet_bytes.is_empty() {
             // This should have been caught by the caller, but defensive check.
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
@@ -224,7 +227,7 @@ impl RohcEngine {
             }));
         }
 
-        let first_byte = rohc_packet[0];
+        let first_byte = rohc_packet_bytes[0];
         if (first_byte & ROHC_ADD_CID_FEEDBACK_PREFIX_MASK) == ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE {
             // Ensure it's not an IR packet that happens to match the prefix loosely.
             // The ROHC_GENERIC_IR_PACKET_TYPE_BASE starts with 1111110...
@@ -240,15 +243,13 @@ impl RohcEngine {
             if (first_byte >> 4) == 0b1110 {
                 // Is it 1110xxxx?
                 let cid_val = (first_byte & ROHC_SMALL_CID_MASK) as u16;
-                if rohc_packet.is_empty() { /* this check is a bit redundant after first_byte access */
-                }
-                return Ok((cid_val, true, &rohc_packet[1..]));
+                return Ok((cid_val, true, &rohc_packet_bytes[1..]));
             }
             // If it starts with 1111xxxx (like IR), it's not an Add-CID octet.
             // Fall through to implicit CID 0.
         }
         // No Add-CID octet, or it was an IR/other packet starting differently. Assume implicit CID 0.
-        Ok((0, false, rohc_packet))
+        Ok((0, false, rohc_packet_bytes))
     }
 
     /// Attempts to peek at the ROHC profile ID from a core ROHC packet.
