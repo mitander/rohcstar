@@ -5,9 +5,10 @@
 //! It uses the Drifter fuzzing framework to test various aspects of
 //! ROHC packet processing, including compression and decompression.
 
-use crate::packet_defs::{RohcIrProfile1Packet, RohcProfile};
-use crate::packet_processor::build_ir_profile1_packet;
-use crate::profiles::p1_handler::Profile1Handler;
+use crate::packet_defs::RohcProfile;
+use crate::profiles::profile1::{
+    IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::build_profile1_ir_packet,
+};
 use crate::traits::ProfileHandler;
 
 /// Fuzz tests the Profile 1 U-mode decompressor.
@@ -26,7 +27,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let cid = 0u16;
 
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
-    let sample_ir_data_for_harness = RohcIrProfile1Packet {
+    let sample_ir_data_for_harness = Profile1IrPacket {
         cid,
         profile: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1"
@@ -41,10 +42,10 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         dyn_rtp_sn: 1,
         dyn_rtp_timestamp: 1000,
         dyn_rtp_marker: false,
-        crc8: 0,
+        crc8: 0, // Will be calculated by builder
     };
 
-    match build_ir_profile1_packet(&sample_ir_data_for_harness) {
+    match build_profile1_ir_packet(&sample_ir_data_for_harness) {
         Ok(sample_ir_bytes) => {
             // Attempt to process the sample IR to bring context to FullContext.
             // The decompress method expects the core packet bytes (after Add-CID is stripped).
