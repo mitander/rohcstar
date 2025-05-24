@@ -2,7 +2,7 @@
 // using the Profile1Handler.
 
 use rohcstar::constants::{
-    ADD_CID_OCTET_PREFIX_VALUE, DEFAULT_P_SN_OFFSET_DECOMPRESSOR, ROHC_IR_PACKET_TYPE_WITH_DYN,
+    ADD_CID_OCTET_PREFIX_VALUE, DEFAULT_P_SN_OFFSET, ROHC_IR_PACKET_TYPE_WITH_DYN,
     UO_1_SN_P1_MARKER_BIT_MASK, UO_1_SN_P1_PACKET_TYPE_BASE,
 };
 use rohcstar::context::{DecompressorMode as P1DecompressorMode, RtpUdpIpP1DecompressorContext};
@@ -402,7 +402,7 @@ fn p1_umode_uo0_sn_decoding_with_simulated_packet_loss() {
         .unwrap();
     assert_eq!(p1_decomp_ctx.last_reconstructed_rtp_sn_full, 100);
     assert_eq!(p1_decomp_ctx.mode, P1DecompressorMode::FullContext);
-    assert_eq!(p1_decomp_ctx.p_sn, DEFAULT_P_SN_OFFSET_DECOMPRESSOR);
+    assert_eq!(p1_decomp_ctx.p_sn, DEFAULT_P_SN_OFFSET);
 
     let headers_sn101 = create_sample_rtp_packet(101, 1160, false);
     let generic_h101 = GenericUncompressedHeaders::RtpUdpIpv4(headers_sn101);

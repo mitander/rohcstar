@@ -62,6 +62,9 @@ pub struct RtpUdpIpP1CompressorContext {
 impl RtpUdpIpP1CompressorContext {
     /// Creates a new compressor context for ROHC Profile 1.
     ///
+    /// # Note
+    /// Call `initialize_static_part_with_uncompressed_headers` before use.
+    ///
     /// # Parameters
     /// - `cid`: Context Identifier for this flow (0-65535)
     /// - `profile_id`: ROHC Profile ID (e.g., `RohcProfile::RtpUdpIp`)
