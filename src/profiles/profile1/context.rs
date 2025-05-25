@@ -335,11 +335,9 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profiles::profile1::packet_types::IrPacket;
-    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
 
     #[test]
-    fn profile1_compressor_context_new_and_initialize() {
+    fn compressor_context_new_initializes_fields_and_mode() {
         let mut comp_ctx = Profile1CompressorContext::new(1, 20);
         assert_eq!(comp_ctx.cid(), 1);
         assert_eq!(comp_ctx.profile_id(), RohcProfile::RtpUdpIp);
@@ -378,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn profile1_decompressor_context_new_and_initialize_from_ir() {
+    fn decompressor_context_new_and_initialization_from_ir_packet() {
         let mut decomp_ctx = Profile1DecompressorContext::new(5);
         assert_eq!(decomp_ctx.cid(), 5);
         assert_eq!(decomp_ctx.profile_id(), RohcProfile::RtpUdpIp);
