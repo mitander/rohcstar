@@ -210,9 +210,6 @@ pub fn is_uo1_sn_packet(packet: &[u8], cid: u16) -> bool {
     } else if cid <= 15 {
         4
     } else {
-        // Consider returning false instead of panic for a utility function
-        // Or ensure tests don't call with invalid CIDs for this helper.
-        // For now, let's stick to the panic to highlight test setup issues.
         panic!("Large CIDs not supported in this specific test helper: is_uo1_sn_packet");
     };
 
@@ -338,7 +335,7 @@ mod tests {
         assert!(
             is_uo1_sn_packet(&uo1_marker_true, 0),
             "Failed for UO-1 with M=1"
-        ); // THIS SHOULD NOW PASS
+        );
         assert!(!is_ir_packet(&uo1_marker_true, 0));
 
         // UO-1-SN packet for CID 0 (Marker = false)
@@ -347,7 +344,7 @@ mod tests {
         assert!(
             is_uo1_sn_packet(&uo1_marker_false, 0),
             "Failed for UO-1 with M=0"
-        ); // THIS SHOULD NOW PASS
+        );
         assert!(!is_ir_packet(&uo1_marker_false, 0));
     }
 }

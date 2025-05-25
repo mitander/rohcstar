@@ -235,7 +235,7 @@ fn p1_multiple_flows_different_cids() {
 
     let cid1: u16 = 1;
     let ssrc1: u32 = 0xAAAA1111;
-    let headers1_flow1 = create_rtp_headers(10, 100, false, ssrc1);
+    let headers1_flow1 = create_rtp_headers(10, 100, false, ssrc1); // TS = 100
     let generic1_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1_flow1.clone());
 
     let cid2: u16 = 2;
@@ -276,7 +276,7 @@ fn p1_multiple_flows_different_cids() {
     assert_eq!(engine.context_manager().decompressor_context_count(), 2);
 
     // Send another packet for flow 1 (should use CID 1 context)
-    let headers2_flow1 = create_rtp_headers(11, 110, false, ssrc1); // UO-0
+    let headers2_flow1 = create_rtp_headers(11, 100, false, ssrc1); // UO-0
     let generic2_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers2_flow1.clone());
     let compressed2_flow1 = engine
         .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic2_flow1)
@@ -294,6 +294,10 @@ fn p1_multiple_flows_different_cids() {
     assert_eq!(decompressed2_flow1.rtp_ssrc, ssrc1);
     assert_eq!(decompressed2_flow1.rtp_sequence_number, 11);
     assert_eq!(decompressed2_flow1.rtp_marker, headers1_flow1.rtp_marker); // From context
+    assert_eq!(
+        decompressed2_flow1.rtp_timestamp,
+        headers1_flow1.rtp_timestamp
+    ); // From context
 }
 
 // --- 4. SSRC Change Detection ---
@@ -494,7 +498,6 @@ fn p1_ir_refresh_interval_edge_cases() {
 
 #[test]
 fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
-    // Your current parse_profile1_ir_packet assumes IR-DYN (D-bit=1).
     // We need to construct a fake IR packet with D-bit=0.
     let handler = Profile1Handler::new();
     let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
@@ -525,8 +528,6 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
         1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + 1
     );
 
-    // Current `parse_profile1_ir_packet` expects D-bit to be set and thus expects dynamic chain length.
-    // It will likely fail with NotEnoughData because it expects more bytes for the dynamic chain.
     let result = handler.decompress(decomp_ctx_dyn.as_mut(), &ir_packet_bytes);
 
     match result {
