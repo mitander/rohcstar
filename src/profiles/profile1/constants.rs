@@ -26,6 +26,18 @@ pub const P1_UO_1_SN_PACKET_TYPE_PREFIX: u8 = 0b1010_0000; // 0xA0
 /// Mask for the Marker (M) bit in a UO-1-SN (Profile 1) packet's type octet.
 pub const P1_UO_1_SN_MARKER_BIT_MASK: u8 = 0b0000_0001; // 0x01
 
+// UO-1-TS (Unidirectional Optimistic, Type 1 with Timestamp) Packet Discriminator Components
+// Based on RFC 3095, Section 5.7.5 (UO-1-TS).
+/// Base value for a UO-1-TS packet type discriminator (Profile 1: `101xxxxx`).
+/// The format is `101TSI M` where TSI indicates TS variant and M is the marker bit.
+/// For UO-1-TS, TSI is `010` and M bit MUST be `0`.
+pub const P1_UO_1_TS_PACKET_TYPE_PREFIX: u8 = 0b1010_0000; // 0xA0 (Same base prefix as UO-1)
+/// Specific discriminator for UO-1-TS packets (TSI=`010`, M=`0` => `10100100`).
+pub const P1_UO_1_TS_DISCRIMINATOR: u8 = 0b1010_0100; // 0xA4
+/// Mask to check the UO-1-TS type, ensuring TSI bits are `010` and M bit is `0`.
+/// This mask checks bits 7-0 as `11111110`.
+pub const P1_UO_1_TS_TYPE_MASK: u8 = 0b1111_1110; // 0xFE
+
 // --- Profile 1 LSB Encoding Default Widths ---
 // These are typical LSB bit-widths used in Profile 1 packets.
 
@@ -107,10 +119,18 @@ mod tests {
     }
 
     #[test]
+    fn uo1_ts_constants_are_correct() {
+        assert_eq!(P1_UO_1_TS_PACKET_TYPE_PREFIX, 0xA0);
+        assert_eq!(P1_UO_1_TS_DISCRIMINATOR, 0xA4);
+        assert_eq!(P1_UO_1_TS_TYPE_MASK, 0xFE);
+    }
+
+    #[test]
     fn lsb_width_defaults_are_set() {
         assert_eq!(P1_UO0_SN_LSB_WIDTH_DEFAULT, 4);
         assert_eq!(P1_UO1_SN_LSB_WIDTH_DEFAULT, 8);
         assert_eq!(P1_UO1_TS_LSB_WIDTH_DEFAULT, 16);
+        assert_eq!(P1_UO1_IPID_LSB_WIDTH_DEFAULT, 8);
     }
 
     #[test]

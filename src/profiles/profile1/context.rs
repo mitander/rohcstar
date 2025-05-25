@@ -7,7 +7,10 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::net::Ipv4Addr;
 
-use super::constants::{P1_DEFAULT_P_SN_OFFSET, P1_UO0_SN_LSB_WIDTH_DEFAULT};
+use super::constants::{
+    P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET, P1_UO0_SN_LSB_WIDTH_DEFAULT,
+    P1_UO1_TS_LSB_WIDTH_DEFAULT,
+};
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
@@ -55,14 +58,18 @@ pub struct Profile1CompressorContext {
     /// The full RTP Sequence Number of the last successfully compressed and sent packet.
     pub last_sent_rtp_sn_full: u16,
     /// The full RTP Timestamp of the last successfully compressed and sent packet.
-    /// Note: For UO-0 and UO-1-SN, this timestamp is often not updated if it changes predictably.
     pub last_sent_rtp_ts_full: u32,
     /// The RTP Marker bit value of the last successfully compressed and sent packet.
     pub last_sent_rtp_marker: bool,
 
+    /// The `p` parameter for W-LSB encoding of RTP Timestamp.
+    pub p_ts: i64,
     /// Number of LSBs currently being used for RTP Sequence Number encoding
     /// (e.g., 4 for UO-0, 8 for UO-1-SN).
     pub current_lsb_sn_width: u8,
+    /// Number of LSBs currently being used for RTP Timestamp encoding
+    /// (e.g., 16 for UO-1-TS).
+    pub current_lsb_ts_width: u8,
 
     /// Counter for the number of First Order (FO) packets sent since the last IR packet.
     /// Used to trigger periodic IR refreshes for context robustness.
@@ -88,7 +95,7 @@ impl Profile1CompressorContext {
     /// A new `Profile1CompressorContext` instance.
     pub fn new(cid: u16, ir_refresh_interval: u32) -> Self {
         Self {
-            profile_id: RohcProfile::RtpUdpIp, // Fixed for Profile 1
+            profile_id: RohcProfile::RtpUdpIp,
             cid,
             ip_source: Ipv4Addr::UNSPECIFIED,
             ip_destination: Ipv4Addr::UNSPECIFIED,
@@ -99,7 +106,9 @@ impl Profile1CompressorContext {
             last_sent_rtp_sn_full: 0, // Should be initialized from first packet
             last_sent_rtp_ts_full: 0, // Should be initialized from first packet
             last_sent_rtp_marker: false,
-            current_lsb_sn_width: P1_UO0_SN_LSB_WIDTH_DEFAULT, // Default for initial UO-0 attempts
+            p_ts: P1_DEFAULT_P_TS_OFFSET,
+            current_lsb_sn_width: P1_UO0_SN_LSB_WIDTH_DEFAULT,
+            current_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
             fo_packets_sent_since_ir: 0,
             ir_refresh_interval,
         }
@@ -127,7 +136,20 @@ impl Profile1CompressorContext {
 
         self.mode = Profile1CompressorMode::InitializationAndRefresh;
         self.fo_packets_sent_since_ir = 0;
-        // current_lsb_sn_width might be reset or kept depending on strategy
+    }
+
+    /// Helper to get the CID for UO packet builders if it's a small CID.
+    /// Returns `None` for CID 0 (no Add-CID octet) or if CID > 15.
+    pub fn get_small_cid_for_packet(&self) -> Option<u8> {
+        if self.cid > 0 && self.cid <= 15 {
+            Some(self.cid as u8)
+        } else if self.cid == 0 {
+            None
+        } else {
+            // Large CIDs not typically sent with Add-CID for UO packets.
+            // The packet builder should handle this appropriately, possibly erroring.
+            None
+        }
     }
 }
 
@@ -182,7 +204,6 @@ pub enum Profile1DecompressorMode {
 /// correctly reconstruct original RTP/UDP/IPv4 headers from incoming ROHC Profile 1 packets.
 #[derive(Debug, Clone)]
 pub struct Profile1DecompressorContext {
-    // Context Identification
     pub profile_id: RohcProfile,
     pub cid: u16,
 
@@ -209,6 +230,11 @@ pub struct Profile1DecompressorContext {
     /// of the RTP Sequence Number.
     pub p_sn: i64,
 
+    /// The `p` parameter for W-LSB decoding of RTP Timestamp.
+    pub p_ts: i64,
+    /// Expected number of LSBs for the RTP Timestamp in UO-1-TS packets.
+    pub expected_lsb_ts_width: u8,
+
     /// Counter for consecutive CRC failures encountered while in Full Context (FC) mode.
     /// Used to trigger a fallback to Static Context (SC) mode.
     pub consecutive_crc_failures_in_fc: u8,
@@ -226,7 +252,7 @@ impl Profile1DecompressorContext {
     /// A new `Profile1DecompressorContext` instance.
     pub fn new(cid: u16) -> Self {
         Self {
-            profile_id: RohcProfile::RtpUdpIp, // Fixed for Profile 1
+            profile_id: RohcProfile::RtpUdpIp,
             cid,
             ip_source: Ipv4Addr::UNSPECIFIED,
             ip_destination: Ipv4Addr::UNSPECIFIED,
@@ -239,6 +265,8 @@ impl Profile1DecompressorContext {
             last_reconstructed_rtp_marker: false,
             expected_lsb_sn_width: P1_UO0_SN_LSB_WIDTH_DEFAULT,
             p_sn: P1_DEFAULT_P_SN_OFFSET,
+            p_ts: P1_DEFAULT_P_TS_OFFSET,
+            expected_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
             consecutive_crc_failures_in_fc: 0,
         }
     }
@@ -250,12 +278,7 @@ impl Profile1DecompressorContext {
     ///
     /// # Parameters
     /// - `ir_packet`: A reference to the parsed `IrPacket` data.
-    ///   The `cid` of the `ir_packet` should match this context's `cid`,
-    ///   or this context's `cid` should be updated by the caller if necessary
-    ///   (e.g., if the IR packet contained an Add-CID octet for this context).
     pub fn initialize_from_ir_packet(&mut self, ir_packet: &IrPacket) {
-        // Ensure the IR packet's profile matches, though this is more of an assert
-        // as the handler should have already dispatched correctly.
         debug_assert_eq!(
             ir_packet.profile_id, self.profile_id,
             "IR packet profile mismatch for P1DecompressorContext"
@@ -273,9 +296,10 @@ impl Profile1DecompressorContext {
 
         self.mode = Profile1DecompressorMode::FullContext;
         self.consecutive_crc_failures_in_fc = 0;
-        // Reset LSB parameters to defaults upon receiving a full IR.
         self.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         self.p_sn = P1_DEFAULT_P_SN_OFFSET;
+        self.p_ts = P1_DEFAULT_P_TS_OFFSET;
+        self.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
     }
 }
 
@@ -325,6 +349,8 @@ mod tests {
         );
         assert_eq!(comp_ctx.ir_refresh_interval, 20);
         assert_eq!(comp_ctx.current_lsb_sn_width, P1_UO0_SN_LSB_WIDTH_DEFAULT);
+        assert_eq!(comp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
+        assert_eq!(comp_ctx.current_lsb_ts_width, P1_UO1_TS_LSB_WIDTH_DEFAULT);
 
         let headers = RtpUdpIpv4Headers {
             ip_src: "1.1.1.1".parse().unwrap(),
@@ -358,11 +384,16 @@ mod tests {
         assert_eq!(decomp_ctx.profile_id(), RohcProfile::RtpUdpIp);
         assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::NoContext);
         assert_eq!(decomp_ctx.p_sn, P1_DEFAULT_P_SN_OFFSET);
+        assert_eq!(decomp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
+        assert_eq!(
+            decomp_ctx.expected_lsb_ts_width,
+            P1_UO1_TS_LSB_WIDTH_DEFAULT
+        );
 
         let ir_data = IrPacket {
-            cid: 5, // Assuming CID consistency is handled by caller/engine
+            cid: 5,
             profile_id: RohcProfile::RtpUdpIp,
-            crc8: 0x00, // Not checked by this method
+            crc8: 0x00,
             static_ip_src: "10.0.0.1".parse().unwrap(),
             static_ip_dst: "10.0.0.2".parse().unwrap(),
             static_udp_src_port: 1000,
@@ -417,7 +448,7 @@ mod tests {
     fn context_trait_downcasting_decompressor() {
         let mut decomp_ctx: Box<dyn RohcDecompressorContext> =
             Box::new(Profile1DecompressorContext::new(2));
-        decomp_ctx.set_cid(3); // Test set_cid via trait
+        decomp_ctx.set_cid(3);
 
         let specific_ctx_mut = decomp_ctx
             .as_any_mut()
@@ -425,7 +456,7 @@ mod tests {
         assert!(specific_ctx_mut.is_some());
         if let Some(ctx) = specific_ctx_mut {
             assert_eq!(ctx.cid, 3);
-            ctx.mode = Profile1DecompressorMode::StaticContext; // Modify through downcast
+            ctx.mode = Profile1DecompressorMode::StaticContext;
             assert_eq!(ctx.mode, Profile1DecompressorMode::StaticContext);
         }
     }

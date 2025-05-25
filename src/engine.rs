@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(engine.context_manager.decompressor_context_count(), 1);
 
         // Packet 2 (UO-0)
-        let headers2 = create_test_rtp_headers_for_engine(101, 1100, false); // TS changed but marker same
+        let headers2 = create_test_rtp_headers_for_engine(101, 1000, false);
         let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone());
         let compressed2 = engine
             .compress(0, Some(RohcProfile::RtpUdpIp), &generic_headers2)

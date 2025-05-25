@@ -144,12 +144,12 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
 
     let mut rtp_csrc_list_val = Vec::with_capacity(rtp_csrc_count_val as usize);
     let mut current_csrc_offset = rtp_start_offset + RTP_MIN_HEADER_LENGTH_BYTES;
-    for _i in 0..rtp_csrc_count_val {
+    for i in 0..rtp_csrc_count_val {
         if data.len() < current_csrc_offset + 4 {
             return Err(RohcParsingError::NotEnoughData {
                 needed: current_csrc_offset + 4,
                 got: data.len(),
-                context: format!("RTP CSRC list item {}", _i + 1),
+                context: format!("RTP CSRC list item {}", i + 1),
             });
         }
         rtp_csrc_list_val.push(u32::from_be_bytes([
@@ -246,7 +246,6 @@ pub fn build_profile1_ir_packet(ir_data: &IrPacket) -> Result<Vec<u8>, RohcBuild
     // 3. Profile Identifier (Start of CRC payload)
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
-        // Compare with actual P1 ID
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "Profile ID".to_string(),
             description: format!(
@@ -293,7 +292,7 @@ pub fn build_profile1_ir_packet(ir_data: &IrPacket) -> Result<Vec<u8>, RohcBuild
 /// determined it from the Add-CID octet or implicit rules (e.g., CID 0).
 ///
 /// # Parameters
-/// - `data`: Byte slice of the core IR packet.
+/// - `core_packet_bytes`: Byte slice of the core IR packet.
 /// - `cid_from_engine`: The CID determined by the ROHC engine.
 ///
 /// # Returns
@@ -329,7 +328,7 @@ pub fn parse_profile1_ir_packet(
         } else {
             0
         };
-    let expected_crc_payload_length = 1 + expected_chain_length;
+    let expected_crc_payload_length = offset + expected_chain_length;
     let expected_total_core_packet_length = offset + expected_crc_payload_length; // Type + Profile + Chains + CRC
 
     if core_packet_bytes.len() < expected_total_core_packet_length {
@@ -436,7 +435,7 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "sn_lsb".to_string(),
             description: format!(
-                "Value {} exceeds {} -bit representation for UO-0 SN.",
+                "Value {} exceeds {}-bit representation for UO-0 SN.",
                 packet_data.sn_lsb, P1_UO0_SN_LSB_WIDTH_DEFAULT
             ),
         });
@@ -524,7 +523,6 @@ pub fn parse_profile1_uo0_packet(
 ///
 /// # Parameters
 /// - `packet_data`: A reference to `Uo1Packet` containing SN LSBs, marker, and CRC-8.
-///   `num_sn_lsb_bits` must be 8 for this function.
 ///
 /// # Returns
 /// A `Result` containing the 3-byte core UO-1-SN packet as `Vec<u8>`, or a `RohcBuildingError`.
@@ -586,7 +584,7 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 /// Assumes `data` is the core UO-1-SN packet (typically 3 bytes), after Add-CID processing.
 ///
 /// # Parameters
-/// - `data`: Byte slice of the core UO-1-SN packet.
+/// - `core_packet_bytes`: Byte slice of the core UO-1-SN packet.
 ///
 /// # Returns
 /// A `Result` containing the parsed `Uo1Packet` or a `RohcParsingError`.
@@ -632,6 +630,120 @@ pub fn parse_profile1_uo1_sn_packet(
         marker: marker_bit_set,
         ts_lsb: None, // This parser is specific to UO-1-SN
         num_ts_lsb_bits: None,
+        crc8: received_crc8,
+    })
+}
+
+/// Builds a ROHC Profile 1 UO-1-TS packet.
+///
+/// This creates the core 4-byte UO-1-TS packet: Type (1) + TS LSB (2) + CRC-8 (1).
+/// The marker bit is taken from context and not transmitted in UO-1-TS.
+///
+/// # Parameters
+/// - `packet_data`: A reference to `Uo1Packet` containing TS LSBs and CRC-8.
+///   `num_ts_lsb_bits` must be `P1_UO1_TS_LSB_WIDTH_DEFAULT` (16) for this function.
+///   `marker` field is ignored as UO-1-TS doesn't transmit marker directly.
+///
+/// # Returns
+/// A `Result` containing the core UO-1-TS packet as `Vec<u8>`, or a `RohcBuildingError`.
+pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+    let ts_lsb =
+        packet_data
+            .ts_lsb
+            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "ts_lsb".to_string(),
+                description: "UO-1-TS requires timestamp LSBs".to_string(),
+            })?;
+
+    let num_ts_bits = packet_data.num_ts_lsb_bits.ok_or_else(|| {
+        RohcBuildingError::InvalidFieldValueForBuild {
+            field_name: "num_ts_lsb_bits".to_string(),
+            description: "UO-1-TS requires timestamp LSB bit count".to_string(),
+        }
+    })?;
+
+    if num_ts_bits != P1_UO1_TS_LSB_WIDTH_DEFAULT {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field_name: "num_ts_lsb_bits".to_string(),
+            description: format!(
+                "Profile 1 UO-1-TS builder expects {} LSBs for TS, got {}.",
+                P1_UO1_TS_LSB_WIDTH_DEFAULT, num_ts_bits
+            ),
+        });
+    }
+
+    let type_octet = P1_UO_1_TS_DISCRIMINATOR;
+
+    let core_packet_bytes = vec![
+        type_octet,
+        (ts_lsb >> 8) as u8,
+        (ts_lsb & 0xFF) as u8,
+        packet_data.crc8,
+    ];
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
+            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet.extend_from_slice(&core_packet_bytes);
+            Ok(final_packet)
+        } else if cid_val == 0 {
+            Ok(core_packet_bytes)
+        } else {
+            Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "cid".to_string(),
+                description: format!(
+                    "Invalid CID {} for UO-1-TS Add-CID encoding; expected 0 or 1-15.",
+                    cid_val
+                ),
+            })
+        }
+    } else {
+        Ok(core_packet_bytes)
+    }
+}
+
+/// Parses a ROHC Profile 1 UO-1-TS packet.
+///
+/// Assumes `core_packet_bytes` is the core UO-1-TS packet (typically 4 bytes),
+/// after Add-CID processing by the engine.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Byte slice of the core UO-1-TS packet.
+///
+/// # Returns
+/// A `Result` containing the parsed `Uo1Packet` or a `RohcParsingError`.
+pub fn parse_profile1_uo1_ts_packet(
+    core_packet_bytes: &[u8],
+) -> Result<Uo1Packet, RohcParsingError> {
+    let expected_len = 1 + (P1_UO1_TS_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    if core_packet_bytes.len() < expected_len {
+        return Err(RohcParsingError::NotEnoughData {
+            needed: expected_len,
+            got: core_packet_bytes.len(),
+            context: "UO-1-TS Packet Core".to_string(),
+        });
+    }
+
+    let type_octet = core_packet_bytes[0];
+
+    if (type_octet & P1_UO_1_TS_TYPE_MASK) != (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK) {
+        return Err(RohcParsingError::InvalidPacketType {
+            discriminator: type_octet,
+            profile_id: Some(RohcProfile::RtpUdpIp.into()),
+        });
+    }
+
+    let ts_lsb_val = u16::from_be_bytes([core_packet_bytes[1], core_packet_bytes[2]]);
+    let received_crc8 = core_packet_bytes[3];
+
+    Ok(Uo1Packet {
+        cid: None,
+        sn_lsb: 0,
+        num_sn_lsb_bits: 0,
+        marker: false,
+        ts_lsb: Some(ts_lsb_val),
+        num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
         crc8: received_crc8,
     })
 }
@@ -698,10 +810,9 @@ mod tests {
             dyn_rtp_sn: 10,
             dyn_rtp_timestamp: 100,
             dyn_rtp_marker: true,
-            crc8: 0, // Will be calculated by builder
+            crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content).unwrap();
-        // Expected length: Type(1)+Profile(1)+Static(16)+Dynamic(7)+CRC(1) = 26
         assert_eq!(
             built_bytes.len(),
             1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 1
@@ -723,7 +834,6 @@ mod tests {
             ..Default::default()
         };
         let built_bytes = build_profile1_ir_packet(&ir_content).unwrap();
-        // Expected: AddCID(1)+Type(1)+Profile(1)+Static(16)+Dynamic(7)+CRC(1) = 27
         assert_eq!(
             built_bytes.len(),
             1 + 1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 1
@@ -731,7 +841,6 @@ mod tests {
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        // parse_profile1_ir_packet expects core packet data (after Add-CID)
         let parsed_ir = parse_profile1_ir_packet(&built_bytes[1..], 5).unwrap();
         assert_eq!(parsed_ir.cid, 5);
     }
@@ -756,10 +865,10 @@ mod tests {
             cid: None,
             sn_lsb: 0x0A,
             crc3: 0x05,
-        }; // SN=10, CRC=5
+        };
         let built_bytes = build_profile1_uo0_packet(&uo0_data).unwrap();
         assert_eq!(built_bytes.len(), 1);
-        assert_eq!(built_bytes[0], (0x0A << 3) | 0x05); // 0b01010101 = 0x55
+        assert_eq!(built_bytes[0], (0x0A << 3) | 0x05);
 
         let parsed_uo0 = parse_profile1_uo0_packet(&built_bytes, None).unwrap();
         assert_eq!(parsed_uo0.cid, None);
@@ -775,7 +884,7 @@ mod tests {
             crc3: 0x01,
         };
         let built_bytes = build_profile1_uo0_packet(&uo0_data).unwrap();
-        assert_eq!(built_bytes.len(), 2); // AddCID + UO0 byte
+        assert_eq!(built_bytes.len(), 2);
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 7);
         assert_eq!(built_bytes[1], (0x03 << 3) | 0x01);
 
@@ -788,12 +897,11 @@ mod tests {
     fn build_and_parse_uo1_sn_packet_cid0_marker_true() {
         let uo1_data = Uo1Packet {
             sn_lsb: 0xAB,
-            num_sn_lsb_bits: 8,
+            num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
             marker: true,
             crc8: 0xCD,
             ..Default::default()
         };
-        // build_profile1_uo1_sn_packet does not handle Add-CID itself.
         let built_core_bytes = build_profile1_uo1_sn_packet(&uo1_data).unwrap();
         assert_eq!(built_core_bytes.len(), 3);
         let expected_type_octet = P1_UO_1_SN_PACKET_TYPE_PREFIX | P1_UO_1_SN_MARKER_BIT_MASK;
@@ -803,8 +911,8 @@ mod tests {
 
         let parsed_uo1 = parse_profile1_uo1_sn_packet(&built_core_bytes).unwrap();
         assert_eq!(parsed_uo1.sn_lsb, 0xAB);
-        assert_eq!(parsed_uo1.num_sn_lsb_bits, 8);
-        assert_eq!(parsed_uo1.marker, true);
+        assert_eq!(parsed_uo1.num_sn_lsb_bits, P1_UO1_SN_LSB_WIDTH_DEFAULT);
+        assert!(parsed_uo1.marker);
         assert_eq!(parsed_uo1.crc8, 0xCD);
     }
 
@@ -820,5 +928,56 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn build_and_parse_uo1_ts_packet_cid0() {
+        let uo1_ts_data = Uo1Packet {
+            cid: None,
+            sn_lsb: 0,
+            num_sn_lsb_bits: 0,
+            marker: false,
+            ts_lsb: Some(0x1234),
+            num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+            crc8: 0xAB,
+        };
+
+        let built_bytes = build_profile1_uo1_ts_packet(&uo1_ts_data).unwrap();
+        assert_eq!(built_bytes.len(), 4);
+        assert_eq!(built_bytes[0], P1_UO_1_TS_DISCRIMINATOR);
+        assert_eq!(built_bytes[1], 0x12);
+        assert_eq!(built_bytes[2], 0x34);
+        assert_eq!(built_bytes[3], 0xAB);
+
+        let parsed = parse_profile1_uo1_ts_packet(&built_bytes).unwrap();
+        assert_eq!(parsed.ts_lsb, Some(0x1234));
+        assert_eq!(parsed.num_ts_lsb_bits, Some(P1_UO1_TS_LSB_WIDTH_DEFAULT));
+        assert_eq!(parsed.crc8, 0xAB);
+        assert!(!parsed.marker);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_ts_packet_small_cid() {
+        let uo1_ts_data = Uo1Packet {
+            cid: Some(3),
+            sn_lsb: 0,
+            num_sn_lsb_bits: 0,
+            marker: false,
+            ts_lsb: Some(0x5678),
+            num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+            crc8: 0xCD,
+        };
+
+        let built_bytes = build_profile1_uo1_ts_packet(&uo1_ts_data).unwrap();
+        assert_eq!(built_bytes.len(), 5);
+        assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 3);
+        assert_eq!(built_bytes[1], P1_UO_1_TS_DISCRIMINATOR);
+        assert_eq!(built_bytes[2], 0x56);
+        assert_eq!(built_bytes[3], 0x78);
+        assert_eq!(built_bytes[4], 0xCD);
+
+        let parsed = parse_profile1_uo1_ts_packet(&built_bytes[1..]).unwrap();
+        assert_eq!(parsed.ts_lsb, Some(0x5678));
+        assert_eq!(parsed.crc8, 0xCD);
     }
 }
