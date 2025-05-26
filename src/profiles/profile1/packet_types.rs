@@ -123,10 +123,14 @@ pub struct Uo1Packet {
     /// Optional number of LSBs used for `ts_lsb`.
     pub num_ts_lsb_bits: Option<u8>,
 
+    /// Optional Least Significant Bits (LSBs) of the IP Identification.
+    /// Present for UO-1-ID variants.
+    pub ip_id_lsb: Option<u16>,
+    /// Optional number of LSBs used for `ip_id_lsb`.
+    pub num_ip_id_lsb_bits: Option<u8>,
+
     /// The 8-bit CRC. UO-1 packets typically use an 8-bit CRC for error detection.
     pub crc8: u8,
-    // TODO: pub ip_id_lsb: Option<u16>, // UO-1-IP-ID
-    // TODO: pub num_ip_id_lsb_bits: Option<u8>, // UO-1-IP-ID
 }
 
 #[cfg(test)]
@@ -199,6 +203,8 @@ mod tests {
             marker: true,
             ts_lsb: None,
             num_ts_lsb_bits: None,
+            ip_id_lsb: None,
+            num_ip_id_lsb_bits: None,
             crc8: 0xCD,
         };
         assert_eq!(custom_uo1_sn.sn_lsb, 0xAB);
@@ -212,6 +218,8 @@ mod tests {
             marker: false,
             ts_lsb: Some(0x5678),
             num_ts_lsb_bits: Some(16),
+            ip_id_lsb: None,
+            num_ip_id_lsb_bits: None,
             crc8: 0xEF,
         };
         assert_eq!(custom_uo1_ts.ts_lsb, Some(0x5678));
@@ -253,6 +261,8 @@ mod tests {
             marker: false,
             ts_lsb: Some(6),
             num_ts_lsb_bits: Some(16),
+            ip_id_lsb: None,
+            num_ip_id_lsb_bits: None,
             crc8: 7,
         };
         let ser_uo1 = serde_json::to_string(&uo1).unwrap();

@@ -630,6 +630,8 @@ pub fn parse_profile1_uo1_sn_packet(
         marker: marker_bit_set,
         ts_lsb: None, // This parser is specific to UO-1-SN
         num_ts_lsb_bits: None,
+        ip_id_lsb: None,
+        num_ip_id_lsb_bits: None,
         crc8: received_crc8,
     })
 }
@@ -744,6 +746,131 @@ pub fn parse_profile1_uo1_ts_packet(
         marker: false,
         ts_lsb: Some(ts_lsb_val),
         num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+        ip_id_lsb: None,
+        num_ip_id_lsb_bits: None,
+        crc8: received_crc8,
+    })
+}
+
+/// Builds a ROHC Profile 1 UO-1-ID packet.
+///
+/// This creates the core UO-1-ID packet, typically 3 bytes for an 8-bit IP-ID LSB field:
+/// Type (1) + IP-ID LSB (1) + CRC-8 (1).
+/// The SN is implicitly SN+1. TS and Marker are taken from context.
+/// It can prepend an Add-CID octet if `packet_data.cid` specifies a small CID (1-15).
+///
+/// # Parameters
+/// - `packet_data`: A reference to `Uo1Packet` containing IP-ID LSBs, CRC-8, and optional CID.
+///   `num_ip_id_lsb_bits` must be `P1_UO1_IPID_LSB_WIDTH_DEFAULT` (8) for this function.
+///
+/// # Returns
+/// A `Result` containing the built UO-1-ID packet as `Vec<u8>`, or a `RohcBuildingError`.
+pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+    let ip_id_lsb =
+        packet_data
+            .ip_id_lsb
+            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "ip_id_lsb".to_string(),
+                description: "UO-1-ID requires IP-ID LSBs".to_string(),
+            })?;
+
+    let num_ip_id_bits = packet_data.num_ip_id_lsb_bits.ok_or_else(|| {
+        RohcBuildingError::InvalidFieldValueForBuild {
+            field_name: "num_ip_id_lsb_bits".to_string(),
+            description: "UO-1-ID requires IP-ID LSB bit count".to_string(),
+        }
+    })?;
+
+    if num_ip_id_bits != P1_UO1_IPID_LSB_WIDTH_DEFAULT {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field_name: "num_ip_id_lsb_bits".to_string(),
+            description: format!(
+                "Profile 1 UO-1-ID builder expects {} LSBs for IP-ID, got {}.",
+                P1_UO1_IPID_LSB_WIDTH_DEFAULT, num_ip_id_bits
+            ),
+        });
+    }
+    if ip_id_lsb > 0xFF {
+        // Assuming P1_UO1_IPID_LSB_WIDTH_DEFAULT is 8
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field_name: "ip_id_lsb".to_string(),
+            description: "Value for UO-1-ID LSB exceeds 8-bit representation.".to_string(),
+        });
+    }
+
+    let type_octet = P1_UO_1_ID_DISCRIMINATOR;
+
+    let core_packet_bytes = vec![type_octet, ip_id_lsb as u8, packet_data.crc8];
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
+            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet.extend_from_slice(&core_packet_bytes);
+            Ok(final_packet)
+        } else if cid_val == 0 {
+            // CID 0 means no Add-CID octet
+            Ok(core_packet_bytes)
+        } else {
+            Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "cid".to_string(),
+                description: format!(
+                    "Invalid CID {} for UO-1-ID Add-CID encoding; expected 0 or 1-15.",
+                    cid_val
+                ),
+            })
+        }
+    } else {
+        // No CID provided (implicitly CID 0)
+        Ok(core_packet_bytes)
+    }
+}
+
+/// Parses a ROHC Profile 1 UO-1-ID packet.
+///
+/// Assumes `core_packet_bytes` is the core UO-1-ID packet (typically 3 bytes for an 8-bit
+/// IP-ID LSB field), after any Add-CID octet has been processed by the ROHC engine.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Byte slice of the core UO-1-ID packet.
+///
+/// # Returns
+/// A `Result` containing the parsed `Uo1Packet` (with IP-ID fields populated)
+/// or a `RohcParsingError`.
+pub fn parse_profile1_uo1_id_packet(
+    core_packet_bytes: &[u8],
+) -> Result<Uo1Packet, RohcParsingError> {
+    // For 8-bit IP-ID LSB width: Type (1) + IP-ID LSB (1) + CRC (1) = 3 bytes
+    let expected_len = 1 + (P1_UO1_IPID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    if core_packet_bytes.len() < expected_len {
+        return Err(RohcParsingError::NotEnoughData {
+            needed: expected_len,
+            got: core_packet_bytes.len(),
+            context: "UO-1-ID Packet Core".to_string(),
+        });
+    }
+
+    let type_octet = core_packet_bytes[0];
+
+    if type_octet != P1_UO_1_ID_DISCRIMINATOR {
+        return Err(RohcParsingError::InvalidPacketType {
+            discriminator: type_octet,
+            profile_id: Some(RohcProfile::RtpUdpIp.into()),
+        });
+    }
+
+    let ip_id_lsb_val = core_packet_bytes[1]; // Assuming 8-bit LSB field
+    let received_crc8 = core_packet_bytes[2];
+
+    Ok(Uo1Packet {
+        cid: None, // CID is determined by the engine before this parser is called
+        sn_lsb: 0, // SN is implicit (SN+1) for UO-1-ID, not in packet
+        num_sn_lsb_bits: 0,
+        marker: false, // Marker is from context for UO-1-ID, not in packet
+        ts_lsb: None,  // TS is from context for UO-1-ID, not in packet
+        num_ts_lsb_bits: None,
+        ip_id_lsb: Some(ip_id_lsb_val as u16),
+        num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
         crc8: received_crc8,
     })
 }
@@ -939,6 +1066,8 @@ mod tests {
             marker: false,
             ts_lsb: Some(0x1234),
             num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+            ip_id_lsb: None,
+            num_ip_id_lsb_bits: None,
             crc8: 0xAB,
         };
 
@@ -965,6 +1094,8 @@ mod tests {
             marker: false,
             ts_lsb: Some(0x5678),
             num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+            ip_id_lsb: None,
+            num_ip_id_lsb_bits: None,
             crc8: 0xCD,
         };
 
@@ -979,5 +1110,95 @@ mod tests {
         let parsed = parse_profile1_uo1_ts_packet(&built_bytes[1..]).unwrap();
         assert_eq!(parsed.ts_lsb, Some(0x5678));
         assert_eq!(parsed.crc8, 0xCD);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_id_packet_cid0() {
+        let uo1_id_data = Uo1Packet {
+            cid: None, // Implicit CID 0
+            ip_id_lsb: Some(0xEF),
+            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            crc8: 0x42,
+            ..Default::default() // Other fields not relevant for UO-1-ID building
+        };
+
+        let built_bytes = build_profile1_uo1_id_packet(&uo1_id_data).unwrap();
+        assert_eq!(built_bytes.len(), 3); // Type (1) + IP-ID LSB (1) + CRC (1)
+        assert_eq!(built_bytes[0], P1_UO_1_ID_DISCRIMINATOR);
+        assert_eq!(built_bytes[1], 0xEF); // IP-ID LSB
+        assert_eq!(built_bytes[2], 0x42); // CRC
+
+        let parsed = parse_profile1_uo1_id_packet(&built_bytes).unwrap();
+        assert_eq!(parsed.ip_id_lsb, Some(0xEF));
+        assert_eq!(
+            parsed.num_ip_id_lsb_bits,
+            Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT)
+        );
+        assert_eq!(parsed.crc8, 0x42);
+        assert_eq!(parsed.sn_lsb, 0); // Not in UO-1-ID
+        assert!(!parsed.marker); // Not in UO-1-ID
+    }
+
+    #[test]
+    fn build_and_parse_uo1_id_packet_small_cid() {
+        let uo1_id_data = Uo1Packet {
+            cid: Some(4), // Small CID
+            ip_id_lsb: Some(0x1A),
+            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            crc8: 0xB3,
+            ..Default::default()
+        };
+
+        let built_bytes = build_profile1_uo1_id_packet(&uo1_id_data).unwrap();
+        assert_eq!(built_bytes.len(), 4); // Add-CID (1) + Type (1) + IP-ID LSB (1) + CRC (1)
+        assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 4);
+        assert_eq!(built_bytes[1], P1_UO_1_ID_DISCRIMINATOR);
+        assert_eq!(built_bytes[2], 0x1A);
+        assert_eq!(built_bytes[3], 0xB3);
+
+        // Parse the core packet part (after Add-CID would be stripped by engine)
+        let parsed = parse_profile1_uo1_id_packet(&built_bytes[1..]).unwrap();
+        assert_eq!(parsed.ip_id_lsb, Some(0x1A));
+        assert_eq!(parsed.crc8, 0xB3);
+    }
+
+    #[test]
+    fn parse_uo1_id_wrong_discriminator() {
+        // Use a UO-1-TS discriminator, which is different from UO-1-ID
+        let bytes_wrong_type = vec![P1_UO_1_TS_DISCRIMINATOR, 0x12, 0x34];
+        let result = parse_profile1_uo1_id_packet(&bytes_wrong_type);
+        assert!(
+            matches!(result, Err(RohcParsingError::InvalidPacketType { discriminator, .. }) if discriminator == P1_UO_1_TS_DISCRIMINATOR)
+        );
+    }
+
+    #[test]
+    fn build_uo1_id_invalid_lsb_width() {
+        let uo1_id_data = Uo1Packet {
+            cid: None,
+            ip_id_lsb: Some(0xEF),
+            num_ip_id_lsb_bits: Some(7), // Invalid width
+            crc8: 0x42,
+            ..Default::default()
+        };
+        let result = build_profile1_uo1_id_packet(&uo1_id_data);
+        assert!(
+            matches!(result, Err(RohcBuildingError::InvalidFieldValueForBuild { field_name, .. }) if field_name == "num_ip_id_lsb_bits")
+        );
+    }
+
+    #[test]
+    fn build_uo1_id_lsb_value_too_large() {
+        let uo1_id_data = Uo1Packet {
+            cid: None,
+            ip_id_lsb: Some(0x1EF), // Too large for 8 bits
+            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT), // 8 bits
+            crc8: 0x42,
+            ..Default::default()
+        };
+        let result = build_profile1_uo1_id_packet(&uo1_id_data);
+        assert!(
+            matches!(result, Err(RohcBuildingError::InvalidFieldValueForBuild { field_name, .. }) if field_name == "ip_id_lsb")
+        );
     }
 }

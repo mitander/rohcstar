@@ -15,6 +15,7 @@ use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::packet_defs::RohcProfile;
+use crate::profiles::profile1::{P1_DEFAULT_P_IPID_OFFSET, P1_UO1_IPID_LSB_WIDTH_DEFAULT};
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
 
 /// Operational modes for the ROHC Profile 1 compressor.
@@ -71,6 +72,13 @@ pub struct Profile1CompressorContext {
     /// (e.g., 16 for UO-1-TS).
     pub current_lsb_ts_width: u8,
 
+    /// The full IP Identification of the last successfully compressed and sent packet.
+    pub last_sent_ip_id_full: u16,
+    /// The `p` parameter for W-LSB encoding of IP Identification.
+    pub p_ip_id: i64,
+    /// Number of LSBs currently being used for IP-ID encoding.
+    pub current_lsb_ip_id_width: u8,
+
     /// Counter for the number of First Order (FO) packets sent since the last IR packet.
     /// Used to trigger periodic IR refreshes for context robustness.
     pub fo_packets_sent_since_ir: u32,
@@ -110,6 +118,9 @@ impl Profile1CompressorContext {
             current_lsb_sn_width: P1_UO0_SN_LSB_WIDTH_DEFAULT,
             current_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
             fo_packets_sent_since_ir: 0,
+            last_sent_ip_id_full: 0, // Initialize IP-ID state
+            p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
+            current_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
             ir_refresh_interval,
         }
     }
@@ -133,6 +144,7 @@ impl Profile1CompressorContext {
         self.last_sent_rtp_sn_full = headers.rtp_sequence_number;
         self.last_sent_rtp_ts_full = headers.rtp_timestamp;
         self.last_sent_rtp_marker = headers.rtp_marker;
+        self.last_sent_ip_id_full = headers.ip_identification;
 
         self.mode = Profile1CompressorMode::InitializationAndRefresh;
         self.fo_packets_sent_since_ir = 0;
@@ -235,6 +247,13 @@ pub struct Profile1DecompressorContext {
     /// Expected number of LSBs for the RTP Timestamp in UO-1-TS packets.
     pub expected_lsb_ts_width: u8,
 
+    /// The full IP Identification of the last successfully reconstructed packet.
+    pub last_reconstructed_ip_id_full: u16,
+    /// Expected number of LSBs for the IP Identification in UO-1-ID packets.
+    pub expected_lsb_ip_id_width: u8,
+    /// The `p` parameter for W-LSB decoding of IP Identification.
+    pub p_ip_id: i64,
+
     /// Counter for consecutive CRC failures encountered while in Full Context (FC) mode.
     /// Used to trigger a fallback to Static Context (SC) mode.
     pub consecutive_crc_failures_in_fc: u8,
@@ -267,6 +286,9 @@ impl Profile1DecompressorContext {
             p_sn: P1_DEFAULT_P_SN_OFFSET,
             p_ts: P1_DEFAULT_P_TS_OFFSET,
             expected_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
+            last_reconstructed_ip_id_full: 0,
+            expected_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
+            p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
             consecutive_crc_failures_in_fc: 0,
         }
     }
@@ -294,12 +316,19 @@ impl Profile1DecompressorContext {
         self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
         self.last_reconstructed_rtp_marker = ir_packet.dyn_rtp_marker;
 
+        // IP-ID is not part of Profile 1 IR packet dynamic chain.
+        // It will be learned from the first UO-1-ID or similar packet.
+        // For now, after an IR, assume it's 0 or an unknown default.
+        self.last_reconstructed_ip_id_full = 0;
+
         self.mode = Profile1DecompressorMode::FullContext;
         self.consecutive_crc_failures_in_fc = 0;
         self.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         self.p_sn = P1_DEFAULT_P_SN_OFFSET;
         self.p_ts = P1_DEFAULT_P_TS_OFFSET;
         self.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
+        self.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
+        self.p_ip_id = P1_DEFAULT_P_IPID_OFFSET;
     }
 }
 
@@ -349,6 +378,11 @@ mod tests {
         assert_eq!(comp_ctx.current_lsb_sn_width, P1_UO0_SN_LSB_WIDTH_DEFAULT);
         assert_eq!(comp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
         assert_eq!(comp_ctx.current_lsb_ts_width, P1_UO1_TS_LSB_WIDTH_DEFAULT);
+        assert_eq!(comp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
+        assert_eq!(
+            comp_ctx.current_lsb_ip_id_width,
+            P1_UO1_IPID_LSB_WIDTH_DEFAULT
+        );
 
         let headers = RtpUdpIpv4Headers {
             ip_src: "1.1.1.1".parse().unwrap(),
@@ -359,6 +393,7 @@ mod tests {
             rtp_sequence_number: 10,
             rtp_timestamp: 1000,
             rtp_marker: false,
+            ip_identification: 500,
             ..Default::default()
         };
         comp_ctx.initialize_context_from_uncompressed_headers(&headers);
@@ -368,6 +403,7 @@ mod tests {
         assert_eq!(comp_ctx.last_sent_rtp_sn_full, 10);
         assert_eq!(comp_ctx.last_sent_rtp_ts_full, 1000);
         assert!(!comp_ctx.last_sent_rtp_marker);
+        assert_eq!(comp_ctx.last_sent_ip_id_full, 500);
         assert_eq!(
             comp_ctx.mode,
             Profile1CompressorMode::InitializationAndRefresh
@@ -386,6 +422,11 @@ mod tests {
         assert_eq!(
             decomp_ctx.expected_lsb_ts_width,
             P1_UO1_TS_LSB_WIDTH_DEFAULT
+        );
+        assert_eq!(decomp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
+        assert_eq!(
+            decomp_ctx.expected_lsb_ip_id_width,
+            P1_UO1_IPID_LSB_WIDTH_DEFAULT
         );
 
         let ir_data = IrPacket {
@@ -408,6 +449,7 @@ mod tests {
         assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 200);
         assert_eq!(decomp_ctx.last_reconstructed_rtp_ts_full, 20000);
         assert!(decomp_ctx.last_reconstructed_rtp_marker);
+        assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0);
         assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
         assert_eq!(decomp_ctx.consecutive_crc_failures_in_fc, 0);
         assert_eq!(

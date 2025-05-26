@@ -38,6 +38,10 @@ pub const P1_UO_1_TS_DISCRIMINATOR: u8 = 0b1010_0100; // 0xA4
 /// This mask checks bits 7-0 as `11111110`.
 pub const P1_UO_1_TS_TYPE_MASK: u8 = 0b1111_1110; // 0xFE
 
+// UO-1-ID (Unidirectional Optimistic, Type 1 with IP-ID) Packet Discriminator
+/// Specific discriminator for UO-1-ID packets (TSI=`110`, M=`0` => `10101100`).
+pub const P1_UO_1_ID_DISCRIMINATOR: u8 = 0b1010_1100; // 0xAC
+
 // --- Profile 1 LSB Encoding Default Widths ---
 // These are typical LSB bit-widths used in Profile 1 packets.
 
@@ -123,6 +127,11 @@ mod tests {
         assert_eq!(P1_UO_1_TS_PACKET_TYPE_PREFIX, 0xA0);
         assert_eq!(P1_UO_1_TS_DISCRIMINATOR, 0xA4);
         assert_eq!(P1_UO_1_TS_TYPE_MASK, 0xFE);
+    }
+
+    #[test]
+    fn uo1_id_constants_are_correct() {
+        assert_eq!(P1_UO_1_ID_DISCRIMINATOR, 0xAC);
     }
 
     #[test]
