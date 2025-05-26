@@ -33,7 +33,9 @@ pub enum Profile1CompressorMode {
     /// After context is established, the compressor sends UO-0 or UO-1 packets,
     /// which are more compressed than IR packets.
     FirstOrder,
-    // TODO: SecondOrder, // SO state
+    /// Second Order compression state.
+    /// Represents a highly stable context; compressor continues to send optimized UO packets.
+    SecondOrder,
 }
 
 /// Compressor context for ROHC Profile 1 (RTP/UDP/IP).
@@ -85,6 +87,10 @@ pub struct Profile1CompressorContext {
     /// The configured interval (in number of FO packets) after which an IR packet
     /// should be sent for context refresh. If 0, IR refresh based on count is disabled.
     pub ir_refresh_interval: u32,
+
+    /// Counter for the number of First Order (FO) packets sent consecutively.
+    /// Used to determine transition to Second Order (SO) state. Reset on IR.
+    pub consecutive_fo_packets_sent: u32,
 }
 
 impl Profile1CompressorContext {
@@ -122,6 +128,7 @@ impl Profile1CompressorContext {
             p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
             current_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
             ir_refresh_interval,
+            consecutive_fo_packets_sent: 0,
         }
     }
 
@@ -148,6 +155,7 @@ impl Profile1CompressorContext {
 
         self.mode = Profile1CompressorMode::InitializationAndRefresh;
         self.fo_packets_sent_since_ir = 0;
+        self.consecutive_fo_packets_sent = 0;
     }
 
     /// Helper to get the CID for UO packet builders if it's a small CID.
@@ -208,6 +216,9 @@ pub enum Profile1DecompressorMode {
     /// Full Context (FC): Both static and dynamic parts of the context are established.
     /// The decompressor can process highly compressed packets like UO-0.
     FullContext,
+    /// Second Order (SO): Highest compression state, implies a very stable context.
+    /// Decompressor continues to process optimized UO packets and monitors context validity.
+    SecondOrder,
 }
 
 /// Decompressor context for ROHC Profile 1 (RTP/UDP/IP).
@@ -257,6 +268,20 @@ pub struct Profile1DecompressorContext {
     /// Counter for consecutive CRC failures encountered while in Full Context (FC) mode.
     /// Used to trigger a fallback to Static Context (SC) mode.
     pub consecutive_crc_failures_in_fc: u8,
+    /// Counter for consecutive successful packet decodings in FC mode.
+    /// Used to trigger a transition to Second Order (SO) mode.
+    pub fc_packets_successful_streak: u32,
+
+    // SO State specific fields
+    /// Confidence in the static part of the context while in SO mode.
+    pub so_static_confidence: u32,
+    /// Confidence in the dynamic part of the context while in SO mode.
+    pub so_dynamic_confidence: u32,
+    /// Number of packets successfully received while in SO mode.
+    pub so_packets_received_in_so: u32,
+    /// Number of consecutive packet processing failures while in SO mode.
+    pub so_consecutive_failures: u32,
+    // Thresholds for SO->NC transition are constants.
 }
 
 impl Profile1DecompressorContext {
@@ -290,6 +315,11 @@ impl Profile1DecompressorContext {
             expected_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
             p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
             consecutive_crc_failures_in_fc: 0,
+            fc_packets_successful_streak: 0,
+            so_static_confidence: 0,
+            so_dynamic_confidence: 0,
+            so_packets_received_in_so: 0,
+            so_consecutive_failures: 0,
         }
     }
 
@@ -329,6 +359,28 @@ impl Profile1DecompressorContext {
         self.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
         self.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
         self.p_ip_id = P1_DEFAULT_P_IPID_OFFSET;
+        self.fc_packets_successful_streak = 0; // Reset streak on IR
+        // Reset SO fields too, as IR effectively re-syncs to FC or SC
+        self.so_static_confidence = 0;
+        self.so_dynamic_confidence = 0;
+        self.so_packets_received_in_so = 0;
+        self.so_consecutive_failures = 0;
+    }
+
+    /// Resets fields when transitioning to NoContext (NC) mode.
+    /// Static fields (IPs, ports, SSRC) are preserved as they might be reused if a new IR arrives for the same CID.
+    pub(super) fn reset_for_nc_transition(&mut self) {
+        self.last_reconstructed_rtp_sn_full = 0;
+        self.last_reconstructed_rtp_ts_full = 0;
+        self.last_reconstructed_rtp_marker = false;
+        self.last_reconstructed_ip_id_full = 0;
+        self.consecutive_crc_failures_in_fc = 0;
+        self.fc_packets_successful_streak = 0;
+        self.so_static_confidence = 0;
+        self.so_dynamic_confidence = 0;
+        self.so_packets_received_in_so = 0;
+        self.so_consecutive_failures = 0;
+        // Note: self.mode is set by the caller (handler)
     }
 }
 

@@ -183,7 +183,7 @@ fn p1_decompressor_stays_in_no_context_without_ir() {
 
     match result {
         Err(RohcError::InvalidState(msg)) => {
-            assert!(msg.contains("decompressor not in Full Context mode"));
+            assert!(msg.contains("Non-IR packet received but decompressor is in NoContext mode."));
         }
         _ => panic!(
             "Expected InvalidState error for UO packet in NoContext, got: {:?}",

@@ -74,6 +74,26 @@ pub const P1_DECOMPRESSOR_SC_TO_NC_K2: u8 = 3; // Example value
 /// Window size (n2) for SC->NC transition based on k2 failures.
 pub const P1_DECOMPRESSOR_SC_TO_NC_N2: u8 = 10; // Example value
 
+// --- Profile 1 Decompressor State Transition Thresholds (SO related) ---
+/// Number of consecutive First Order (FO) packets successfully sent before
+/// compressor may transition to Second Order (SO) state.
+pub const P1_COMPRESSOR_FO_TO_SO_THRESHOLD: u32 = 15; // Example value, e.g., after 15 UO packets
+/// Number of consecutive successfully decompressed packets in Full Context (FC)
+/// before decompressor may transition to Second Order (SO) state.
+pub const P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK: u32 = 20; // Example value
+/// Initial static confidence level upon entering SO state.
+pub const P1_SO_INITIAL_STATIC_CONFIDENCE: u32 = 10; // Example value
+/// Initial dynamic confidence level upon entering SO state.
+pub const P1_SO_INITIAL_DYNAMIC_CONFIDENCE: u32 = 10; // Example value
+/// Confidence boost upon successful UO/IR packet processing in SO state.
+pub const P1_SO_SUCCESS_CONFIDENCE_BOOST: u32 = 1; // Example value
+/// Confidence penalty upon failed packet processing in SO state.
+pub const P1_SO_FAILURE_CONFIDENCE_PENALTY: u32 = 2; // Example value
+/// Confidence threshold below which dynamic confidence triggers SO->NC.
+pub const P1_SO_TO_NC_CONFIDENCE_THRESHOLD: u32 = 3; // Example value
+/// Max consecutive failures in SO before triggering SO->NC.
+pub const P1_SO_MAX_CONSECUTIVE_FAILURES: u32 = 5; // Example value
+
 // --- Profile 1 W-LSB Default `p` Offsets ---
 // These are the default 'p' values for W-LSB interpretation intervals.
 // RFC 3095, Section 4.5.1. p=0 is a common starting point.
@@ -151,5 +171,18 @@ mod tests {
     #[test]
     fn crc_input_length_is_correct() {
         assert_eq!(P1_UO_CRC_INPUT_LENGTH_BYTES, 11);
+    }
+
+    #[test]
+    fn compressor_threshold_constants_are_correct() {
+        assert_eq!(P1_COMPRESSOR_FO_TO_SO_THRESHOLD, 15);
+    }
+
+    #[test]
+    fn decompressor_so_threshold_constants_are_set() {
+        assert_eq!(P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK, 20);
+        assert_eq!(P1_SO_INITIAL_DYNAMIC_CONFIDENCE, 10);
+        assert_eq!(P1_SO_MAX_CONSECUTIVE_FAILURES, 5);
+        assert_eq!(P1_SO_TO_NC_CONFIDENCE_THRESHOLD, 3);
     }
 }

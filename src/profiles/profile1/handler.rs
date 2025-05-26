@@ -123,6 +123,7 @@ impl Profile1Handler {
         context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
         context.mode = Profile1CompressorMode::FirstOrder;
         context.fo_packets_sent_since_ir = 0;
+        context.consecutive_fo_packets_sent = 0; // Reset on IR
 
         Ok(rohc_packet_bytes)
     }
@@ -188,7 +189,14 @@ impl Profile1Handler {
         context.last_sent_rtp_sn_full = current_sn;
         context.last_sent_rtp_ts_full = current_ts; // Always update to actual current TS for next decision
         context.last_sent_rtp_marker = current_marker;
-        context.fo_packets_sent_since_ir += 1;
+
+        if context.mode == Profile1CompressorMode::FirstOrder {
+            context.consecutive_fo_packets_sent += 1;
+            if context.consecutive_fo_packets_sent >= P1_COMPRESSOR_FO_TO_SO_THRESHOLD {
+                context.mode = Profile1CompressorMode::SecondOrder;
+            }
+        }
+        context.fo_packets_sent_since_ir += 1; // This counter is for IR refresh across FO/SO
 
         Ok(final_rohc_packet_bytes)
     }
@@ -447,6 +455,16 @@ impl Profile1Handler {
             context.last_reconstructed_rtp_sn_full = decoded_sn;
             // Marker & TS not updated by UO-0 from packet content
             context.consecutive_crc_failures_in_fc = 0;
+            context.fc_packets_successful_streak += 1;
+
+            if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
+                context.mode = Profile1DecompressorMode::SecondOrder;
+                context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
+                context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
+                context.so_packets_received_in_so = 0;
+                context.so_consecutive_failures = 0;
+                context.fc_packets_successful_streak = 0; // Reset after transition
+            }
             let reconstructed_headers = self.reconstruct_full_headers(
                 context,
                 decoded_sn,
@@ -459,6 +477,7 @@ impl Profile1Handler {
             ))
         } else {
             context.consecutive_crc_failures_in_fc += 1;
+            context.fc_packets_successful_streak = 0; // Reset streak on failure
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
             {
@@ -525,6 +544,16 @@ impl Profile1Handler {
             context.last_reconstructed_rtp_ts_full = decoded_ts; // Update TS
             // context.last_reconstructed_rtp_marker remains unchanged from context.
             context.consecutive_crc_failures_in_fc = 0;
+            context.fc_packets_successful_streak += 1;
+
+            if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
+                context.mode = Profile1DecompressorMode::SecondOrder;
+                context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
+                context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
+                context.so_packets_received_in_so = 0;
+                context.so_consecutive_failures = 0;
+                context.fc_packets_successful_streak = 0;
+            }
 
             let reconstructed_headers = self.reconstruct_full_headers(
                 context,
@@ -538,6 +567,7 @@ impl Profile1Handler {
             ))
         } else {
             context.consecutive_crc_failures_in_fc += 1;
+            context.fc_packets_successful_streak = 0;
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
             {
@@ -590,6 +620,16 @@ impl Profile1Handler {
             context.last_reconstructed_rtp_marker = marker;
             // UO-1-SN does not update TS from packet content.
             context.consecutive_crc_failures_in_fc = 0;
+            context.fc_packets_successful_streak += 1;
+
+            if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
+                context.mode = Profile1DecompressorMode::SecondOrder;
+                context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
+                context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
+                context.so_packets_received_in_so = 0;
+                context.so_consecutive_failures = 0;
+                context.fc_packets_successful_streak = 0;
+            }
             let reconstructed_headers = self.reconstruct_full_headers(
                 context,
                 decoded_sn,
@@ -602,6 +642,7 @@ impl Profile1Handler {
             ))
         } else {
             context.consecutive_crc_failures_in_fc += 1;
+            context.fc_packets_successful_streak = 0;
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
             {
@@ -676,6 +717,16 @@ impl Profile1Handler {
             context.last_reconstructed_ip_id_full = decoded_ip_id; // Update IP-ID in context
             // TS and Marker in context remain unchanged by UO-1-ID packet.
             context.consecutive_crc_failures_in_fc = 0;
+            context.fc_packets_successful_streak += 1;
+
+            if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
+                context.mode = Profile1DecompressorMode::SecondOrder;
+                context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
+                context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
+                context.so_packets_received_in_so = 0;
+                context.so_consecutive_failures = 0;
+                context.fc_packets_successful_streak = 0;
+            }
 
             let reconstructed_headers = self.reconstruct_full_headers(
                 context,
@@ -689,6 +740,7 @@ impl Profile1Handler {
             ))
         } else {
             context.consecutive_crc_failures_in_fc += 1;
+            context.fc_packets_successful_streak = 0;
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
             {
@@ -843,11 +895,23 @@ impl ProfileHandler for Profile1Handler {
             }));
         }
 
+        // Explicit check for NoContext: If in NoContext, only IR packets are valid.
+        // All other packet types require at least some context.
         let first_byte = packet_bytes[0];
+        if context.mode == Profile1DecompressorMode::NoContext
+            && ((first_byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != P1_ROHC_IR_PACKET_TYPE_BASE)
+        {
+            return Err(RohcError::InvalidState(
+                "Non-IR packet received but decompressor is in NoContext mode.".to_string(),
+            ));
+        }
 
         // Dispatch based on packet type discriminator
         if (first_byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
             // IR or IR-DYN Packet (0xFC or 0xFD)
+            // If an IR is received in SO mode, it should reset confidence and process as IR.
+            // The decompress_as_ir itself sets mode to FullContext.
+            // Resetting SO specific counters would happen there or on entry to FC.
             self.decompress_as_ir(context, packet_bytes)
         } else if (first_byte & P1_UO_1_TS_PACKET_TYPE_PREFIX) == P1_UO_1_TS_PACKET_TYPE_PREFIX {
             // UO-1 Packet (prefix 101xxxxx)
@@ -856,7 +920,15 @@ impl ProfileHandler for Profile1Handler {
                 return Err(RohcError::InvalidState(
                     "Received UO-1 packet but decompressor not in Full Context mode.".to_string(),
                 ));
+            } else if context.mode == Profile1DecompressorMode::SecondOrder {
+                // TODO: This is where decompress_in_so_state will be called in Commit 3.
+                // For now, as a placeholder, let UO-1 packets in SO mode be handled as if in FC.
+                // This means they might contribute to fc_packets_successful_streak, which is not ideal.
+                // Proper SO handling will manage its own confidence.
+                // Let's just proceed with current FC logic for UO-1 for now.
+                // It's better to have a known behavior than an unhandled path.
             }
+
             // Further discriminate UO-1 types
             if (first_byte & P1_UO_1_TS_TYPE_MASK)
                 == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
@@ -871,7 +943,16 @@ impl ProfileHandler for Profile1Handler {
             }
         } else if (first_byte & 0x80) == 0x00 {
             // UO-0 Packet (MSB is 0)
-            self.decompress_as_uo0(context, packet_bytes)
+            if context.mode == Profile1DecompressorMode::FullContext {
+                self.decompress_as_uo0(context, packet_bytes)
+            } else if context.mode == Profile1DecompressorMode::SecondOrder {
+                // TODO: Placeholder for decompress_in_so_state(context, packet_bytes) for UO-0.
+                self.decompress_as_uo0(context, packet_bytes) // Temporary: treat as FC
+            } else {
+                Err(RohcError::InvalidState(
+                    "UO-0 received but not in FC or SO mode.".to_string(),
+                ))
+            }
         } else {
             Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                 discriminator: first_byte,
