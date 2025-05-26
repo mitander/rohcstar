@@ -262,23 +262,29 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
     let initial_sn = 500;
     let initial_ts = 6000; // Base TS for context
     let initial_marker = false;
+
+    // Headers for IR packet. Its ip_identification will be based on initial_sn.
+    // This becomes the compressor's last_sent_ip_id_full.
+    let ir_headers_for_context = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
     establish_ir_context(
         &mut engine,
         cid,
-        initial_sn,
-        initial_ts,
-        initial_marker,
+        ir_headers_for_context.rtp_sequence_number,
+        ir_headers_for_context.rtp_timestamp,
+        ir_headers_for_context.rtp_marker,
         ssrc,
     );
 
     let sn_uo0_max = initial_sn + 15; // 515
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_uo0 = create_rtp_headers(sn_uo0_max, initial_ts, initial_marker, ssrc);
+    // To be UO-0, TS, Marker, and IP-ID must match context (from IR).
+    let mut headers_uo0 = create_rtp_headers(sn_uo0_max, initial_ts, initial_marker, ssrc);
+    headers_uo0.ip_identification = ir_headers_for_context.ip_identification; // Keep IP-ID same as IR context
+
     let compressed_uo0 = engine
         .compress(
             cid,
             Some(RohcProfile::RtpUdpIp),
-            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0),
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0.clone()), // Pass clone for IP-ID tracking
         )
         .unwrap();
     assert_eq!(
@@ -289,22 +295,26 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
     );
     let _ = engine.decompress(&compressed_uo0).unwrap();
 
-    // Compressor context now: SN=515, TS=initial_ts (6000)
+    // Compressor context now: SN=515, TS=initial_ts (6000), IP-ID=ir_headers_for_context.ip_identification
     // Packet: SN=515+16=531. SN diff is 16. Uncompressed TS is initial_ts + 20 = 6020.
+    // IP-ID will be 531 % 256, which is different from ir_headers_for_context.ip_identification.
     // This will be UO-1-SN as SN diff >= 16. TS change also means not UO-0. SN diff != 1 means not UO-1-TS.
-    let sn_force_uo1 = initial_sn + 15 + 16;
+    // UO-1-ID condition: marker_unchanged (T), ip_id_changed (T), sn_incremented_by_one (F because diff 16), !ts_changed (F) -> No
+    let sn_force_uo1 = sn_uo0_max + 16; // This is initial_sn + 15 + 16
     let headers_uo1 = create_rtp_headers(sn_force_uo1, initial_ts + 20, initial_marker, ssrc);
+
     let compressed_uo1 = engine
         .compress(
             cid,
             Some(RohcProfile::RtpUdpIp),
-            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo1),
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo1.clone()),
         )
         .unwrap();
     assert_eq!(
         compressed_uo1.len(),
         3,
-        "SN diff 16 (from 515) should be UO-1. Got: {:?}",
+        "SN diff 16 (from {}) should be UO-1. Got: {:?}",
+        sn_uo0_max, // SN of the UO-0 packet
         compressed_uo1
     );
     assert_eq!(
@@ -319,5 +329,5 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
         .unwrap()
         .clone();
     assert_eq!(decomp_uo1.rtp_sequence_number, sn_force_uo1);
-    assert_eq!(decomp_uo1.rtp_timestamp, initial_ts); // TS from context
+    assert_eq!(decomp_uo1.rtp_timestamp, initial_ts); // TS from context (because the *compressed* UO-0 didn't change it)
 }

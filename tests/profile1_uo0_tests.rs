@@ -28,18 +28,25 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     let initial_sn = 65534;
     let initial_ts = 1000; // Establish a base timestamp for UO-0 packets
     let initial_marker = false;
+
+    // Headers for IR packet. Its ip_identification will be based on initial_sn.
+    // After compression, this becomes the compressor's last_sent_ip_id_full.
+    let mut current_packet_headers =
+        create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
     establish_ir_context(
         &mut engine,
         cid,
-        initial_sn,
-        initial_ts,
-        initial_marker,
+        current_packet_headers.rtp_sequence_number,
+        current_packet_headers.rtp_timestamp,
+        current_packet_headers.rtp_marker,
         ssrc,
     );
+    // Note: establish_ir_context calls engine.compress, so compressor context is updated.
 
     // Packet: SN = 65535 (should be UO-0)
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_65535 = create_rtp_headers(65535, initial_ts, initial_marker, ssrc);
+    // To be UO-0, TS, Marker, and IP-ID must match context.
+    let mut headers_65535 = create_rtp_headers(65535, initial_ts, initial_marker, ssrc);
+    headers_65535.ip_identification = current_packet_headers.ip_identification; // Match IP-ID of previous packet (IR)
     let generic_65535 = GenericUncompressedHeaders::RtpUdpIpv4(headers_65535.clone());
     let compressed_65535 = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_65535)
@@ -58,10 +65,11 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         .clone();
     assert_eq!(decomp_65535.rtp_sequence_number, 65535);
     assert_eq!(decomp_65535.rtp_timestamp, initial_ts); // TS from context
+    current_packet_headers = headers_65535; // Update for next packet's IP-ID reference
 
     // Packet: SN = 0 (wraparound, should be UO-0)
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_0 = create_rtp_headers(0, initial_ts, initial_marker, ssrc);
+    let mut headers_0 = create_rtp_headers(0, initial_ts, initial_marker, ssrc);
+    headers_0.ip_identification = current_packet_headers.ip_identification; // Match IP-ID of previous packet
     let generic_0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_0.clone());
     let compressed_0 = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_0)
@@ -80,10 +88,11 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         .clone();
     assert_eq!(decomp_0.rtp_sequence_number, 0);
     assert_eq!(decomp_0.rtp_timestamp, initial_ts); // TS from context
+    current_packet_headers = headers_0; // Update for next packet's IP-ID reference
 
     // Packet: SN = 1 (should be UO-0)
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_1 = create_rtp_headers(1, initial_ts, initial_marker, ssrc);
+    let mut headers_1 = create_rtp_headers(1, initial_ts, initial_marker, ssrc);
+    headers_1.ip_identification = current_packet_headers.ip_identification; // Match IP-ID of previous packet
     let generic_1 = GenericUncompressedHeaders::RtpUdpIpv4(headers_1.clone());
     let compressed_1 = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_1)
@@ -210,21 +219,43 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
     let ssrc = 0xFAFBFCD;
 
     let base_ts_for_uo0_series = 3000;
-    establish_ir_context(&mut engine, cid, 200, base_ts_for_uo0_series, false, ssrc);
+    let initial_ir_sn = 200u16;
+    // The headers for IR will have ip_identification based on initial_ir_sn.
+    // This becomes the compressor's last_sent_ip_id_full.
+    let ir_headers_for_context =
+        create_rtp_headers(initial_ir_sn, base_ts_for_uo0_series, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers_for_context.rtp_sequence_number,
+        ir_headers_for_context.rtp_timestamp,
+        ir_headers_for_context.rtp_marker,
+        ssrc,
+    );
 
     for i in 1..=P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
-        // To generate UO-0 packets, their TS must match the context TS (base_ts_for_uo0_series)
-        let headers_good_uo0 =
-            create_rtp_headers(200 + i as u16, base_ts_for_uo0_series, false, ssrc);
-        let generic_good_uo0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_good_uo0);
+        // To generate UO-0 packets, their TS, Marker, and IP-ID must match the context.
+        // SN will increment.
+        let current_sn_for_uo0 = initial_ir_sn.wrapping_add(i as u16);
+        let mut headers_good_uo0 =
+            create_rtp_headers(current_sn_for_uo0, base_ts_for_uo0_series, false, ssrc);
+        // Ensure IP-ID remains constant to that of the established IR context
+        // for the generation of these UO-0 packets.
+        headers_good_uo0.ip_identification = ir_headers_for_context.ip_identification;
+        let generic_good_uo0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_good_uo0.clone());
 
         let mut compressed_uo0 = engine
             .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_good_uo0)
             .unwrap();
+
+        // Assert that a UO-0 packet was indeed generated *before* we corrupt it.
+        // This assertion was failing before, indicating UO-1-ID was generated.
         assert_eq!(
             compressed_uo0.len(),
             1,
-            "Should be a UO-0 packet. Got: {:?}",
+            "Should be a UO-0 packet before corruption. SN: {}, IP-ID: {}. Got: {:?}",
+            current_sn_for_uo0,
+            headers_good_uo0.ip_identification,
             compressed_uo0
         );
 
@@ -242,9 +273,10 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
                 result,
                 Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. }))
             ),
-            "Attempt {} should result in CRC mismatch. Got: {:?}",
+            "Attempt {} should result in CRC mismatch. Got: {:?}. Corrupted packet: {:?}",
             i,
-            result
+            result,
+            compressed_uo0
         );
 
         let decomp_ctx = get_decompressor_context(&engine, cid);
@@ -321,31 +353,36 @@ fn p1_uo1_ts_is_used_when_ts_changes_marker_sn_ok_for_uo1ts() {
     let initial_sn = 400;
     let initial_ts = 5000;
     let initial_marker = false;
+    // The headers for IR will have ip_identification based on initial_sn.
+    // This becomes the compressor's last_sent_ip_id_full.
+    let ir_headers_for_context = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
     establish_ir_context(
-        // Context: SN=400, TS=5000, M=false
+        // Context: SN=400, TS=5000, M=false, IP-ID from ir_headers_for_context
         &mut engine,
         cid,
-        initial_sn,
-        initial_ts,
-        initial_marker,
+        ir_headers_for_context.rtp_sequence_number,
+        ir_headers_for_context.rtp_timestamp,
+        ir_headers_for_context.rtp_marker,
         ssrc,
     );
 
     let next_sn = initial_sn + 1; // SN increments by 1
     let next_ts = initial_ts + 500; // TS changes significantly
     // Marker is same as context (false)
-    let headers_ts_change = create_rtp_headers(next_sn, next_ts, initial_marker, ssrc);
+    // For UO-1-TS to be selected, IP-ID must NOT change.
+    let mut headers_ts_change = create_rtp_headers(next_sn, next_ts, initial_marker, ssrc);
+    headers_ts_change.ip_identification = ir_headers_for_context.ip_identification; // Keep IP-ID same as context
     let generic_ts_change = GenericUncompressedHeaders::RtpUdpIpv4(headers_ts_change.clone());
 
     let compressed_packet = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_ts_change)
         .unwrap();
 
-    // Expect UO-1-TS because: Marker unchanged, TS changed, SN incremented by 1
+    // Expect UO-1-TS because: Marker unchanged, TS changed, SN incremented by 1, IP-ID unchanged
     assert_eq!(
         compressed_packet.len(),
         4, // UO-1-TS for CID 0 is 4 bytes
-        "Packet should be UO-1-TS due to TS change and SN+1, marker same. Got: {:?}",
+        "Packet should be UO-1-TS due to TS change and SN+1, marker same, IP-ID same. Got: {:?}",
         compressed_packet
     );
     assert_eq!(
