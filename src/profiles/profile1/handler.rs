@@ -332,24 +332,28 @@ impl Profile1Handler {
         current_sn: u16,
         current_ip_id: u16,
     ) -> Result<Vec<u8>, RohcError> {
-        let ip_id_lsb_val =
-            encode_lsb(current_ip_id as u64, context.current_lsb_ip_id_width)? as u16;
+        let ip_id_lsb_for_packet_field =
+            encode_lsb(current_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT)? as u8;
+
         let crc_input_bytes = self.build_uo1_id_crc_input(
             context.rtp_ssrc,
             current_sn,                    // SN is current_sn (implicitly last_sn + 1)
             context.last_sent_rtp_ts_full, // TS from context
             context.last_sent_rtp_marker,  // Marker from context
-            ip_id_lsb_val as u8,           // Assuming 8-bit LSBs for CRC input here
+            ip_id_lsb_for_packet_field,    // Use the 8-bit LSB that will go into the packet
         );
         let calculated_crc8 = crc::calculate_rohc_crc8(&crc_input_bytes);
+
         let uo1_id_packet_data = Uo1Packet {
             cid: context.get_small_cid_for_packet(),
-            ip_id_lsb: Some(ip_id_lsb_val),
-            num_ip_id_lsb_bits: Some(context.current_lsb_ip_id_width),
+            // Store the LSB that was actually used for the packet field and CRC
+            ip_id_lsb: Some(ip_id_lsb_for_packet_field as u16),
+            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
             crc8: calculated_crc8,
             ..Default::default()
         };
-        // context.current_lsb_ip_id_width remains as set in context (used for encoding).
+        // context.current_lsb_ip_id_width is used for W-LSB interpretation window,
+        // but the packet itself has a fixed-size field for IP-ID LSB in UO-1-ID.
         build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
     }
 
