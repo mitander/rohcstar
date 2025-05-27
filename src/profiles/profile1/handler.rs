@@ -954,65 +954,71 @@ impl Profile1Handler {
         debug_assert_eq!(context.mode, Profile1DecompressorMode::StaticContext);
         let first_byte = packet_bytes[0];
 
-        #[allow(unused_assignments)]
-        let mut is_considered_updating_packet_for_sc = false;
+        // Flag to indicate if the packet type *could* have updated dynamic context
+        // This is used to decide whether a parse/CRC failure increments k_failures.
+        let is_potentially_dynamic_updater_type = (first_byte & P1_UO_1_TS_PACKET_TYPE_PREFIX) == P1_UO_1_TS_PACKET_TYPE_PREFIX || // Any UO-1 variant
+            first_byte == P1_UO_1_ID_DISCRIMINATOR || // Explicitly UO-1-ID
+            // Also include unrecognized packet types that are not UO-0 and not IR,
+            // as the compressor might be sending something intended as an update.
+            !((first_byte & 0x80) == 0x00 || // Not UO-0
+              (first_byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE); // Not IR
 
-        let parse_reconstruct_result =
-            if (first_byte & P1_UO_1_TS_PACKET_TYPE_PREFIX) == P1_UO_1_TS_PACKET_TYPE_PREFIX {
-                is_considered_updating_packet_for_sc = true;
-                if (first_byte & P1_UO_1_TS_TYPE_MASK)
-                    == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
-                {
-                    self._parse_and_reconstruct_uo1_ts(context, packet_bytes)
-                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
-                } else if first_byte == P1_UO_1_ID_DISCRIMINATOR {
-                    self._parse_and_reconstruct_uo1_id(context, packet_bytes)
-                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
-                } else {
-                    // UO-1-SN
-                    self._parse_and_reconstruct_uo1_sn(context, packet_bytes)
-                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
-                }
-            } else if (first_byte & 0x80) == 0x00 {
-                // UO-0 packet
-                is_considered_updating_packet_for_sc = true; // Counts towards N2 window, but not K2 failures
-                Err(RohcError::InvalidState(
-                    "UO-0 packet received in StaticContext mode; cannot be processed.".to_string(),
-                ))
+        let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError>;
+
+        if (first_byte & P1_UO_1_TS_PACKET_TYPE_PREFIX) == P1_UO_1_TS_PACKET_TYPE_PREFIX {
+            // UO-1 packet type
+            let uo1_result = if (first_byte & P1_UO_1_TS_TYPE_MASK)
+                == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
+            {
+                self._parse_and_reconstruct_uo1_ts(context, packet_bytes)
+            } else if first_byte == P1_UO_1_ID_DISCRIMINATOR {
+                self._parse_and_reconstruct_uo1_id(context, packet_bytes)
             } else {
-                // Not IR (handled by main dispatch), not UO-1, not UO-0.
-                is_considered_updating_packet_for_sc = true;
+                self._parse_and_reconstruct_uo1_sn(context, packet_bytes)
+            };
+            parse_reconstruct_result = uo1_result.map(GenericUncompressedHeaders::RtpUdpIpv4);
+        } else if (first_byte & 0x80) == 0x00 {
+            // UO-0 packet
+            parse_reconstruct_result = Err(RohcError::InvalidState(
+                "UO-0 packet received in StaticContext mode; cannot establish dynamic context."
+                    .to_string(),
+            ));
+        } else {
+            // Not IR (handled by main dispatch), not UO-1, not UO-0.
+            parse_reconstruct_result =
                 Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                     discriminator: first_byte,
                     profile_id: Some(self.profile_id().into()),
-                }))
-            };
+                }));
+        }
 
         match parse_reconstruct_result {
             Ok(headers) => {
-                // Successfully processed an UO-1 in SC
+                // Successfully processed an updating packet (UO-1) in SC.
                 context.sc_to_nc_k_failures = 0;
-                context.sc_to_nc_n_window_count = 0;
+                context.sc_to_nc_n_window_count = 0; // Reset on any success in SC that updates state.
                 Ok(headers)
             }
-            Err(e) => {
-                if is_considered_updating_packet_for_sc {
-                    context.sc_to_nc_n_window_count =
-                        context.sc_to_nc_n_window_count.saturating_add(1);
-                    if !matches!(e, RohcError::InvalidState(_)) {
-                        // Don't count UO-0 InvalidState as a 'k' failure
-                        context.sc_to_nc_k_failures = context.sc_to_nc_k_failures.saturating_add(1);
-                    }
+            Err(ref e) => {
+                // Use `ref e` to inspect the error without consuming it
+                // ALL packets attempted in SC (even UO-0 resulting in InvalidState) count towards the N2 window.
+                context.sc_to_nc_n_window_count = context.sc_to_nc_n_window_count.saturating_add(1);
 
-                    if self.should_transition_sc_to_nc(context) {
-                        context.mode = Profile1DecompressorMode::NoContext;
-                        context.reset_for_nc_transition();
-                    } else if context.sc_to_nc_n_window_count >= P1_DECOMPRESSOR_SC_TO_NC_N2 {
-                        context.sc_to_nc_k_failures = 0;
-                        context.sc_to_nc_n_window_count = 0;
-                    }
+                // Only increment k_failures for actual parse/CRC errors of "potentially dynamic updater" types.
+                // An InvalidState from UO-0 doesn't count as a K2 failure.
+                if is_potentially_dynamic_updater_type && !matches!(e, RohcError::InvalidState(_)) {
+                    context.sc_to_nc_k_failures = context.sc_to_nc_k_failures.saturating_add(1);
                 }
-                Err(e)
+
+                if self.should_transition_sc_to_nc(context) {
+                    context.mode = Profile1DecompressorMode::NoContext;
+                    context.reset_for_nc_transition();
+                } else if context.sc_to_nc_n_window_count >= P1_DECOMPRESSOR_SC_TO_NC_N2 {
+                    // N2 window completed without K2 failures (or not enough to trigger NC). Reset counters.
+                    context.sc_to_nc_k_failures = 0;
+                    context.sc_to_nc_n_window_count = 0;
+                }
+                Err(e.clone()) // Return the original error (cloned)
             }
         }
     }
