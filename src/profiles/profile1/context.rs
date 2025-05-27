@@ -282,6 +282,12 @@ pub struct Profile1DecompressorContext {
     /// Number of consecutive packet processing failures while in SO mode.
     pub so_consecutive_failures: u32,
     // Thresholds for SO->NC transition are constants.
+
+    // SC State specific fields for SC->NC transition
+    /// Counts consecutive failures of updating packets within the SC_TO_NC window.
+    pub sc_to_nc_k_failures: u8,
+    /// Counts packets received in SC mode within the current SC_TO_NC window.
+    pub sc_to_nc_n_window_count: u8,
 }
 
 impl Profile1DecompressorContext {
@@ -320,6 +326,8 @@ impl Profile1DecompressorContext {
             so_dynamic_confidence: 0,
             so_packets_received_in_so: 0,
             so_consecutive_failures: 0,
+            sc_to_nc_k_failures: 0,
+            sc_to_nc_n_window_count: 0,
         }
     }
 
@@ -365,6 +373,8 @@ impl Profile1DecompressorContext {
         self.so_dynamic_confidence = 0;
         self.so_packets_received_in_so = 0;
         self.so_consecutive_failures = 0;
+        self.sc_to_nc_k_failures = 0;
+        self.sc_to_nc_n_window_count = 0;
     }
 
     /// Resets fields when transitioning to NoContext (NC) mode.
@@ -380,7 +390,8 @@ impl Profile1DecompressorContext {
         self.so_dynamic_confidence = 0;
         self.so_packets_received_in_so = 0;
         self.so_consecutive_failures = 0;
-        // Note: self.mode is set by the caller (handler)
+        self.sc_to_nc_k_failures = 0;
+        self.sc_to_nc_n_window_count = 0;
     }
 }
 
