@@ -377,21 +377,36 @@ impl Profile1DecompressorContext {
         self.sc_to_nc_n_window_count = 0;
     }
 
-    /// Resets fields when transitioning to NoContext (NC) mode.
-    /// Static fields (IPs, ports, SSRC) are preserved as they might be reused if a new IR arrives for the same CID.
+    /// Resets fields when transitioning to NoContext (NC) mode from any other mode.
+    /// Static fields (IPs, ports, SSRC) are preserved.
     pub(super) fn reset_for_nc_transition(&mut self) {
+        // Dynamic fields related to last reconstructed packet
         self.last_reconstructed_rtp_sn_full = 0;
         self.last_reconstructed_rtp_ts_full = 0;
         self.last_reconstructed_rtp_marker = false;
         self.last_reconstructed_ip_id_full = 0;
+
+        // FC mode counters
         self.consecutive_crc_failures_in_fc = 0;
         self.fc_packets_successful_streak = 0;
+
+        // SO mode counters and confidence
         self.so_static_confidence = 0;
         self.so_dynamic_confidence = 0;
         self.so_packets_received_in_so = 0;
         self.so_consecutive_failures = 0;
+
+        // SC mode counters
         self.sc_to_nc_k_failures = 0;
         self.sc_to_nc_n_window_count = 0;
+
+        // Optional but good practice
+        self.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
+        self.p_sn = P1_DEFAULT_P_SN_OFFSET;
+        self.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
+        self.p_ts = P1_DEFAULT_P_TS_OFFSET;
+        self.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
+        self.p_ip_id = P1_DEFAULT_P_IPID_OFFSET;
     }
 }
 
