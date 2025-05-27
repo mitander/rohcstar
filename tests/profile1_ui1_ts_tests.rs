@@ -72,10 +72,9 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
         "Decomp context Marker"
     );
 }
-
 #[test]
 fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100); // High refresh interval
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -85,17 +84,21 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     // Establish context: SN=200, TS=10000, M=false
     establish_ir_context(&mut engine, cid, 200, 10000, false, ssrc);
 
-    // Large TS jump, SN increments, marker same. Should be UO-1-TS.
-    let headers = create_rtp_headers(201, 50000, false, ssrc);
+    // Large TS jump, SN increments, marker same.
+    // Original TS jump was 40000 (50000 - 10000). Max safe delta for 16bit LSB is 32768.
+    // Reduce jump to be < 32768, e.g., +15000.
+    let new_ts = 10000 + 15000; // new_ts = 25000. TS diff = 15000.
+    let headers = create_rtp_headers(201, new_ts, false, ssrc);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
         .unwrap();
 
+    // UO-1-TS for CID 0 is 4 bytes.
     assert_eq!(
         compressed.len(),
         4,
-        "UO-1-TS for large TS jump. Expected 4, Got: {:?}",
+        "UO-1-TS for large TS jump. Expected 4, Got: {:?}", // This was line 95
         compressed
     );
     assert_eq!(
@@ -113,15 +116,19 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
         decompressed.rtp_sequence_number, 201,
         "SN after large TS jump"
     );
-    assert_eq!(decompressed.rtp_timestamp, 50000, "TS after large TS jump");
+    assert_eq!(decompressed.rtp_timestamp, new_ts, "TS after large TS jump"); // Use new_ts
 
     let decomp_ctx = get_decompressor_context(&engine, cid);
     assert_eq!(
         decomp_ctx.last_reconstructed_rtp_sn_full, 201,
         "Decomp context SN after large TS jump"
     );
+    assert_eq!(
+        decomp_ctx.last_reconstructed_rtp_ts_full,
+        new_ts, // Check against new_ts
+        "Decomp context TS after large TS jump"
+    );
 }
-
 #[test]
 fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let mut engine = RohcEngine::new(100);

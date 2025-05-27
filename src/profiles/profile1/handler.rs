@@ -49,6 +49,8 @@ impl Profile1Handler {
     /// - The compressor is in `InitializationAndRefresh` mode.
     /// - The IR refresh interval (`fo_packets_sent_since_ir`) has been met.
     /// - The SSRC of the current packet differs from the SSRC established in the context.
+    /// - A significant change in RTP Sequence Number, RTP Timestamp, or IP Identification occurs
+    ///   that might exceed the reliable encoding capability of UO packet LSBs.
     ///
     /// # Parameters
     /// - `context`: A reference to the current `Profile1CompressorContext`.
@@ -64,16 +66,79 @@ impl Profile1Handler {
         if context.mode == Profile1CompressorMode::InitializationAndRefresh {
             return true;
         }
+
         if context.ir_refresh_interval > 0
             && context.fo_packets_sent_since_ir >= context.ir_refresh_interval.saturating_sub(1)
         {
             return true;
         }
+
         if context.rtp_ssrc != 0 && context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
             return true;
         }
-        // TODO: Add logic for FO->IR transition if LSB encoding becomes insufficient for SN/TS/IP-ID.
-        false
+
+        // Check for LSB insufficiency due to large jumps.
+        // The principle is that if a value jumps by more than roughly half the range
+        // representable by its most common LSB encoding in UO-1 packets,
+        // it's safer to send an IR to avoid W-LSB ambiguity at the decompressor.
+
+        // 1. RTP Sequence Number (typically P1_UO1_SN_LSB_WIDTH_DEFAULT = 8 bits in UO-1-SN)
+        // Max jump safely resolvable without ambiguity is roughly 2^(k-1) - 1.
+        // A simpler threshold: if jump > 2^(k-1)
+        let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Typically 8 bits for UO-1-SN
+        if sn_k > 0 && sn_k < 16 {
+            // Ensure k is reasonable for u16 SN
+            // Max jump considered "safe" for LSB encoding without full context resync.
+            // 2^(k-1) represents half the unambiguous range of k LSBs.
+            let max_safe_sn_delta: u16 = 1 << (sn_k - 1);
+            let current_sn = uncompressed_headers.rtp_sequence_number;
+            let diff_sn_abs = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
+            let diff_sn_abs_alt = context.last_sent_rtp_sn_full.wrapping_sub(current_sn);
+
+            if core::cmp::min(diff_sn_abs, diff_sn_abs_alt) > max_safe_sn_delta {
+                // If the shortest distance (considering wrap-around) is too large
+                return true;
+            }
+        }
+
+        // 2. RTP Timestamp (typically P1_UO1_TS_LSB_WIDTH_DEFAULT = 16 bits in UO-1-TS)
+        let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT; // Typically 16 bits for UO-1-TS
+        if ts_k > 0 && ts_k < 32 {
+            // Ensure k is reasonable for u32 TS
+            let max_safe_ts_delta: u32 = 1 << (ts_k - 1);
+            let current_ts = uncompressed_headers.rtp_timestamp;
+            let diff_ts_abs = current_ts.wrapping_sub(context.last_sent_rtp_ts_full);
+            let diff_ts_abs_alt = context.last_sent_rtp_ts_full.wrapping_sub(current_ts);
+
+            if core::cmp::min(diff_ts_abs, diff_ts_abs_alt) > max_safe_ts_delta {
+                return true;
+            }
+        }
+
+        // 3. IP Identification (typically P1_UO1_IPID_LSB_WIDTH_DEFAULT = 8 bits in UO-1-ID)
+        // Force IR if IP-ID behavior is not "mostly incrementing by one" which UO-1-ID handles.
+        // A large arbitrary jump in IP-ID often warrants an IR if UO-1-ID is the primary
+        // way it's compressed, as UO-1-ID still relies on LSBs.
+        // This check is slightly different: UO-1-ID assumes SN+1. If IP-ID changes significantly
+        // *and* SN isn't +1, UO-1-SN might be chosen. If SN *is* +1 but IP-ID jumps a lot,
+        // the LSBs might not be enough.
+        if uncompressed_headers.ip_identification != context.last_sent_ip_id_full {
+            // Only check if IP-ID actually changed.
+            let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT; // Typically 8 bits
+            if ipid_k > 0 && ipid_k < 16 {
+                // Ensure k is reasonable for u16 IP-ID
+                let max_safe_ipid_delta: u16 = 1 << (ipid_k - 1);
+                let current_ip_id = uncompressed_headers.ip_identification;
+                let diff_ipid_abs = current_ip_id.wrapping_sub(context.last_sent_ip_id_full);
+                let diff_ipid_abs_alt = context.last_sent_ip_id_full.wrapping_sub(current_ip_id);
+
+                if core::cmp::min(diff_ipid_abs, diff_ipid_abs_alt) > max_safe_ipid_delta {
+                    return true;
+                }
+            }
+        }
+
+        false // No other conditions forced an IR
     }
 
     /// Handles the compressor logic for sending an IR (Initialization/Refresh) packet.
