@@ -1,6 +1,7 @@
 # ROHCスター
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<!-- TODO: Add CI Status Badge when available: [![CI Status](https://github.com/your_username/rohcstar/actions/workflows/rust.yml/badge.svg)](https://github.com/your_username/rohcstar/actions) -->
 
 **Rohcstar is a modern and memory-safe Rust implementation of the Robust Header Compression (ROHC) framework.**
 
@@ -16,21 +17,74 @@
 *   **Modularity & Testability:** Employ a clean, modular architecture for easy maintenance, extension with new ROHC profiles (e.g., ROHCv2, ROHC-TCP), and comprehensive validation.
 *   **Fuzz-Driven Development:** Utilize Drifter extensively from day one to continuously test for correctness, security vulnerabilities, and protocol conformance.
 
-## Core Features (Conceptual / In Development)
+## Current Status
+
+*   **Profile 0x0001 (RTP/UDP/IP) U-mode:**
+    *   [✓] IR, UO-0, UO-1-SN, UO-1-TS packet compression/decompression.
+    *   [~] UO-1-ID packet compression/decompression (CRC logic under review).
+    *   [✓] Basic NC, SC, FC decompressor state transitions.
+    *   [~] SO decompressor state logic partially implemented.
+    *   [~] Context timeout handling in progress.
+
+## Core Features
 
 *   **ROHC Profiles:**
-    *   **MVP:** Profile 0x0001 (RTP/UDP/IP).
-    *   **Post-MVP:** Profile 0x0002 (UDP/IP), Profile 0x0003 (IP-only), Profile 0x0000 (Uncompressed).
+    *   **Implemented (U-mode):** Profile 0x0001 (RTP/UDP/IP).
+    *   **Planned:** Profile 0x0002 (UDP/IP), Profile 0x0003 (IP-only), Profile 0x0000 (Uncompressed).
 *   **Compression Modes:**
-    *   **MVP:** Unidirectional (U-mode).
-    *   **Post-MVP:** Bidirectional Optimistic (O-mode), Bidirectional Reliable (R-mode).
+    *   **Implemented:** Unidirectional (U-mode) for Profile 1.
+    *   **Planned:** Bidirectional Optimistic (O-mode), Bidirectional Reliable (R-mode).
 *   **Context Management:** Robust handling of compression/decompression contexts, CID management, and state synchronization according to RFC 3095.
 *   **Packet Processing:** Efficient and RFC-compliant parsing and building of ROHC packets and relevant L3/L4 headers.
-*   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC) and transitions.
+*   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC, SO) and transitions.
 
-## Design
+## Basic Usage
 
-For a in-depth understanding of Rohcstar's architecture, components and roadmap, please refer to the [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md).
+```rust
+use rohcstar::{RohcEngine, GenericUncompressedHeaders, RohcProfile};
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+use std::net::Ipv4Addr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Create an engine
+    let mut engine = RohcEngine::new(20); // Default IR refresh interval
+
+    // 2. Register a profile handler
+    engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
+
+    // 3. Prepare uncompressed headers (example for Profile 1)
+    let uncompressed_rtp_headers = RtpUdpIpv4Headers {
+        ip_src: "192.168.1.10".parse().unwrap(),
+        ip_dst: "192.168.1.20".parse().unwrap(),
+        udp_src_port: 10010,
+        udp_dst_port: 20020,
+        rtp_ssrc: 0x12345678,
+        rtp_sequence_number: 100,
+        rtp_timestamp: 1000,
+        rtp_marker: false,
+        // ... other fields can be defaulted or set explicitly
+        ..Default::default()
+    };
+    let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(uncompressed_rtp_headers.clone());
+
+    // 4. Compress
+    let cid = 0u16; // Context ID
+    let compressed_packet = engine.compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers)?;
+    println!("Compressed packet length: {}", compressed_packet.len());
+
+    // 5. Decompress
+    let decompressed_headers_generic = engine.decompress(&compressed_packet)?;
+
+    if let Some(rtp_headers_out) = decompressed_headers_generic.as_rtp_udp_ipv4() {
+        assert_eq!(rtp_headers_out.rtp_ssrc, uncompressed_rtp_headers.rtp_ssrc);
+        assert_eq!(rtp_headers_out.rtp_sequence_number, uncompressed_rtp_headers.rtp_sequence_number);
+        println!("Decompression successful, SN matched: {}", rtp_headers_out.rtp_sequence_number);
+    } else {
+        eprintln!("Decompression failed or returned unexpected header type.");
+    }
+    Ok(())
+}
+```
 
 ## Integration with Drifter Fuzzer
 
@@ -40,6 +94,10 @@ The co-development of Rohcstar with its fuzzing counterpart, [Drifter](https://g
 *   **State Machine Integrity:** Generating sequences to explore and validate ROHC state transitions and context synchronization logic rigorously.
 *   **Security:** Uncovering memory safety issues, panics, and other potential vulnerabilities.
 *   **Conformance Testing:** (Future) Assisting in validating against known ROHC traces and expected behaviors described in RFCs.
+
+## Design
+
+For an in-depth understanding of Rohcstar's architecture, components, and roadmap, please refer to the [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md).
 
 ## License
 
