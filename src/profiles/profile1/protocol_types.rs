@@ -127,40 +127,6 @@ impl Default for RtpUdpIpv4Headers {
 }
 
 impl RtpUdpIpv4Headers {
-    /// A simple constructor for tests or basic setup, using minimal default values.
-    /// SSRC should typically be randomized for real streams.
-    #[cfg(any(test, feature = "test_utils"))]
-    pub fn new_simple(
-        ip_src: Ipv4Addr,
-        ip_dst: Ipv4Addr,
-        udp_src_port: u16,
-        udp_dst_port: u16,
-        rtp_ssrc: u32,
-        rtp_sequence_number: u16,
-        rtp_timestamp: u32,
-        rtp_marker: bool,
-    ) -> Self {
-        let mut headers = Self {
-            ip_src,
-            ip_dst,
-            udp_src_port,
-            udp_dst_port,
-            rtp_ssrc,
-            rtp_sequence_number,
-            rtp_timestamp,
-            rtp_marker,
-            ..Default::default()
-        };
-        // Recalculate lengths (simplified for this constructor)
-        // Actual IP total length and UDP length depend on RTP payload size which isn't known here.
-        // ROHC primarily compresses headers, so exact lengths of payload part are less critical
-        // for the ROHC logic itself, but good to have reasonable defaults.
-        let rtp_header_size = 12 + (headers.rtp_csrc_list.len() * 4) as u16; // CSRC handling not in simple
-        headers.udp_length = 8 + rtp_header_size; // UDP header + RTP header (no payload)
-        headers.ip_total_length = 20 + headers.udp_length; // IPv4 header + UDP segment
-        headers
-    }
-
     /// Validates that the CSRC count matches the length of the CSRC list.
     pub fn validate_csrc_count(&self) -> bool {
         self.rtp_csrc_count as usize == self.rtp_csrc_list.len()
@@ -172,6 +138,39 @@ impl RtpUdpIpv4Headers {
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+
+    #[derive(Debug, Clone)]
+    pub struct TestData {
+        pub ip_src: Ipv4Addr,
+        pub ip_dst: Ipv4Addr,
+        pub udp_src_port: u16,
+        pub udp_dst_port: u16,
+        pub rtp_ssrc: u32,
+        pub rtp_sequence_number: u16,
+        pub rtp_timestamp: u32,
+        pub rtp_marker: bool,
+    }
+
+    impl TestData {
+        pub fn to_rtp_headers(config: TestData) -> RtpUdpIpv4Headers {
+            let mut headers = RtpUdpIpv4Headers {
+                ip_src: config.ip_src,
+                ip_dst: config.ip_dst,
+                udp_src_port: config.udp_src_port,
+                udp_dst_port: config.udp_dst_port,
+                rtp_ssrc: config.rtp_ssrc,
+                rtp_sequence_number: config.rtp_sequence_number,
+                rtp_timestamp: config.rtp_timestamp,
+                rtp_marker: config.rtp_marker,
+                ..Default::default()
+            };
+            // Recalculate lengths (simplified for this constructor)
+            let rtp_header_size = 12 + (headers.rtp_csrc_list.len() * 4) as u16;
+            headers.udp_length = 8 + rtp_header_size;
+            headers.ip_total_length = 20 + headers.udp_length;
+            headers
+        }
+    }
 
     #[test]
     fn default_headers_have_sane_values() {
@@ -185,16 +184,18 @@ mod tests {
 
     #[test]
     fn new_simple_constructor_sets_basic_fields() {
-        let headers = RtpUdpIpv4Headers::new_simple(
-            Ipv4Addr::new(1, 1, 1, 1),
-            Ipv4Addr::new(2, 2, 2, 2),
-            1000,
-            2000,
-            0x12345678,
-            100,
-            10000,
-            true,
-        );
+        let test_data = TestData {
+            ip_src: Ipv4Addr::new(1, 1, 1, 1),
+            ip_dst: Ipv4Addr::new(2, 2, 2, 2),
+            udp_src_port: 1000,
+            udp_dst_port: 2000,
+            rtp_ssrc: 0x12345678,
+            rtp_sequence_number: 100,
+            rtp_timestamp: 10000,
+            rtp_marker: true,
+        };
+        let headers = TestData::to_rtp_headers(test_data);
+
         assert_eq!(headers.ip_src, Ipv4Addr::new(1, 1, 1, 1));
         assert_eq!(headers.udp_dst_port, 2000);
         assert_eq!(headers.rtp_ssrc, 0x12345678);
@@ -226,21 +227,22 @@ mod tests {
 
     #[test]
     fn serde_rtp_udp_ipv4_headers_roundtrip() {
-        let original = RtpUdpIpv4Headers::new_simple(
-            "192.168.1.10".parse().unwrap(),
-            "10.0.0.1".parse().unwrap(),
-            12345,
-            54321,
-            rand::random(), // SSRC
-            1001,
-            3000,
-            false,
-        );
+        let test_data = TestData {
+            ip_src: Ipv4Addr::new(192, 168, 1, 10),
+            ip_dst: Ipv4Addr::new(10, 0, 0, 1),
+            udp_src_port: 12345,
+            udp_dst_port: 54321,
+            rtp_ssrc: rand::random(),
+            rtp_sequence_number: 1001,
+            rtp_timestamp: 3000,
+            rtp_marker: false,
+        };
+        let headers = TestData::to_rtp_headers(test_data);
 
-        let serialized = serde_json::to_string_pretty(&original).unwrap();
+        let serialized = serde_json::to_string_pretty(&headers).unwrap();
         println!("Serialized RtpUdpIpv4Headers:\n{}", serialized);
         let deserialized: RtpUdpIpv4Headers = serde_json::from_str(&serialized).unwrap();
 
-        assert_eq!(original, deserialized);
+        assert_eq!(headers, deserialized);
     }
 }

@@ -15,11 +15,6 @@ serde_json = "1.0"
 rand = "0.9"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
 
-
-[features]
-default = []
-test_utils = [] # Exposes test utilities for external integration testing.
-
 [profile.release]
 lto = true
 codegen-units = 1

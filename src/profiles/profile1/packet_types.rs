@@ -192,7 +192,7 @@ mod tests {
         let default_uo1 = Uo1Packet::default();
         assert_eq!(default_uo1.sn_lsb, 0);
         assert_eq!(default_uo1.num_sn_lsb_bits, 0); // Default u8 is 0
-        assert_eq!(default_uo1.marker, false);
+        assert!(!default_uo1.marker);
         assert_eq!(default_uo1.ts_lsb, None);
         assert_eq!(default_uo1.crc8, 0);
 
@@ -209,7 +209,7 @@ mod tests {
         };
         assert_eq!(custom_uo1_sn.sn_lsb, 0xAB);
         assert_eq!(custom_uo1_sn.num_sn_lsb_bits, 8);
-        assert_eq!(custom_uo1_sn.marker, true);
+        assert!(custom_uo1_sn.marker);
 
         let custom_uo1_ts = Uo1Packet {
             cid: None,

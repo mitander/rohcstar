@@ -757,42 +757,35 @@ impl Profile1Handler {
     ) -> Result<GenericUncompressedHeaders, RohcError> {
         debug_assert_eq!(context.mode, Profile1DecompressorMode::SecondOrder);
 
-        let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError>;
-
-        match discriminated_type {
-            Profile1PacketType::Uo1Ts => {
-                parse_reconstruct_result = self
+        // Initialize parse_reconstruct_result directly with the match expression
+        let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError> =
+            match discriminated_type {
+                Profile1PacketType::Uo1Ts => self
                     ._parse_and_reconstruct_uo1_ts(context, packet_bytes)
-                    .map(GenericUncompressedHeaders::RtpUdpIpv4);
-            }
-            Profile1PacketType::Uo1Id => {
-                parse_reconstruct_result = self
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4),
+                Profile1PacketType::Uo1Id => self
                     ._parse_and_reconstruct_uo1_id(context, packet_bytes)
-                    .map(GenericUncompressedHeaders::RtpUdpIpv4);
-            }
-            Profile1PacketType::Uo1Sn { .. } => {
-                parse_reconstruct_result = self
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4),
+                Profile1PacketType::Uo1Sn { .. } => self
                     ._parse_and_reconstruct_uo1_sn(context, packet_bytes)
-                    .map(GenericUncompressedHeaders::RtpUdpIpv4);
-            }
-            Profile1PacketType::Uo0 => {
-                parse_reconstruct_result = self
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4),
+                Profile1PacketType::Uo0 => self
                     ._parse_and_reconstruct_uo0(context, packet_bytes)
-                    .map(GenericUncompressedHeaders::RtpUdpIpv4);
-            }
-            Profile1PacketType::Unknown(val) => {
-                parse_reconstruct_result =
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4),
+                Profile1PacketType::Unknown(val) => {
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                         discriminator: val,
                         profile_id: Some(self.profile_id().into()),
-                    }));
-            }
-            Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-                return Err(RohcError::Internal(
-                    "IR packet unexpectedly routed to decompress_in_so_state.".to_string(),
-                ));
-            }
-        }
+                    }))
+                }
+                Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
+                    // IRs should have been handled by the main `decompress` dispatcher
+                    // before calling mode-specific handlers. This indicates an internal logic error.
+                    return Err(RohcError::Internal(
+                        "IR packet unexpectedly routed to decompress_in_so_state.".to_string(),
+                    ));
+                }
+            };
 
         match parse_reconstruct_result {
             Ok(headers) => {

@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(add_cid_octet_for_cid_5 & ROHC_SMALL_CID_MASK, 5);
 
         // Example: CID 0 (often implicit, but can be signaled with Add-CID for padding)
-        let add_cid_octet_for_cid_0 = ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 0; // 0xE0
+        let add_cid_octet_for_cid_0 = ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE; // 0xE0
         assert_eq!(add_cid_octet_for_cid_0 & ROHC_SMALL_CID_MASK, 0);
     }
 

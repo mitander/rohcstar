@@ -138,7 +138,6 @@ impl Profile1PacketType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profiles::profile1::constants::*; // Import constants for direct use in tests
 
     #[test]
     fn test_from_first_byte_ir_packets() {
@@ -167,7 +166,7 @@ mod tests {
     #[test]
     fn test_from_first_byte_uo1_sn_packets() {
         assert_eq!(
-            Profile1PacketType::from_first_byte(P1_UO_1_SN_PACKET_TYPE_PREFIX | 0x00),
+            Profile1PacketType::from_first_byte(P1_UO_1_SN_PACKET_TYPE_PREFIX),
             Profile1PacketType::Uo1Sn { marker: false }
         ); // 10100000
         assert_eq!(
