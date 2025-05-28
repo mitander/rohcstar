@@ -140,7 +140,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_from_first_byte_ir_packets() {
+    fn from_first_byte_ir_packets() {
         assert_eq!(
             Profile1PacketType::from_first_byte(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY),
             Profile1PacketType::IrStatic
@@ -152,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_first_byte_uo0_packet() {
+    fn from_first_byte_uo0_packet() {
         assert_eq!(
             Profile1PacketType::from_first_byte(0x00),
             Profile1PacketType::Uo0
@@ -164,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_first_byte_uo1_sn_packets() {
+    fn from_first_byte_uo1_sn_packets() {
         assert_eq!(
             Profile1PacketType::from_first_byte(P1_UO_1_SN_PACKET_TYPE_PREFIX),
             Profile1PacketType::Uo1Sn { marker: false }
@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_first_byte_uo1_ts_packet() {
+    fn from_first_byte_uo1_ts_packet() {
         assert_eq!(
             Profile1PacketType::from_first_byte(P1_UO_1_TS_DISCRIMINATOR),
             Profile1PacketType::Uo1Ts
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_first_byte_uo1_id_packet() {
+    fn from_first_byte_uo1_id_packet() {
         assert_eq!(
             Profile1PacketType::from_first_byte(P1_UO_1_ID_DISCRIMINATOR),
             Profile1PacketType::Uo1Id
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_first_byte_unknown_packets() {
+    fn from_first_byte_unknown_packets() {
         assert_eq!(
             Profile1PacketType::from_first_byte(0x80),
             Profile1PacketType::Unknown(0x80)
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_ir() {
+    fn packet_type_is_ir() {
         assert!(Profile1PacketType::IrStatic.is_ir());
         assert!(Profile1PacketType::IrDynamic.is_ir());
         assert!(!Profile1PacketType::Uo0.is_ir());
@@ -222,14 +222,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_uo0() {
+    fn packet_type_is_uo0() {
         assert!(Profile1PacketType::Uo0.is_uo0());
         assert!(!Profile1PacketType::IrStatic.is_uo0());
         assert!(!Profile1PacketType::Uo1Ts.is_uo0());
     }
 
     #[test]
-    fn test_is_uo1() {
+    fn packet_type_is_uo1() {
         assert!(Profile1PacketType::Uo1Sn { marker: true }.is_uo1());
         assert!(Profile1PacketType::Uo1Ts.is_uo1());
         assert!(Profile1PacketType::Uo1Id.is_uo1());
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_dynamically_updating_type() {
+    fn packet_type_is_dynamically_updating() {
         assert!(Profile1PacketType::IrDynamic.is_dynamically_updating_type());
         assert!(Profile1PacketType::Uo1Sn { marker: false }.is_dynamically_updating_type());
         assert!(Profile1PacketType::Uo1Ts.is_dynamically_updating_type());
