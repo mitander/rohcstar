@@ -41,7 +41,6 @@ pub struct IrPacket {
     pub dyn_rtp_timestamp: Timestamp,
     /// RTP marker bit from dynamic chain.
     pub dyn_rtp_marker: bool,
-    // Field for TS_STRIDE in IR-DYN will be added in a later commit.
     // pub ts_stride: Option<u32>,
 }
 
@@ -101,8 +100,9 @@ pub struct Uo1Packet {
     pub ip_id_lsb: Option<u16>,
     /// Optional number of LSBs for `ip_id_lsb` (for UO-1-ID).
     pub num_ip_id_lsb_bits: Option<u8>,
-    // Field for TS_SCALED (for UO-1-RTP) will be added in Commit 2 of TS Stride implementation.
-    // pub ts_scaled: Option<u8>,
+    /// Optional TS_SCALED value for UO-1-RTP packets.
+    /// Represents `(current_ts - ts_offset) / ts_stride`.
+    pub ts_scaled: Option<u8>,
     /// The 8-bit CRC.
     pub crc8: u8,
 }
@@ -132,7 +132,6 @@ mod tests {
             dyn_rtp_sn: 100,
             dyn_rtp_timestamp: Timestamp::new(1000),
             dyn_rtp_marker: true,
-            // ts_stride: None, // Not yet added
         };
         assert_eq!(custom_ir.cid, 5);
         assert_eq!(custom_ir.static_rtp_ssrc, 0x12345678);
@@ -170,6 +169,7 @@ mod tests {
         assert_eq!(default_uo1.num_sn_lsb_bits, 0);
         assert!(!default_uo1.marker);
         assert_eq!(default_uo1.ts_lsb, None);
+        assert_eq!(default_uo1.ts_scaled, None);
         assert_eq!(default_uo1.crc8, 0);
 
         let custom_uo1_sn = Uo1Packet {
@@ -177,29 +177,22 @@ mod tests {
             sn_lsb: 0xAB,
             num_sn_lsb_bits: 8,
             marker: true,
-            ts_lsb: None,
-            num_ts_lsb_bits: None,
-            ip_id_lsb: None,
-            num_ip_id_lsb_bits: None,
             crc8: 0xCD,
-            // ts_scaled: None, // Not yet added
+            ..Default::default()
         };
         assert_eq!(custom_uo1_sn.sn_lsb, 0xAB);
         assert!(custom_uo1_sn.marker);
+        assert_eq!(custom_uo1_sn.ts_scaled, None);
 
-        let custom_uo1_ts = Uo1Packet {
+        let custom_uo1_rtp = Uo1Packet {
             cid: None,
-            sn_lsb: 0x1234,
-            num_sn_lsb_bits: 16,
-            marker: false,
-            ts_lsb: Some(0x5678),
-            num_ts_lsb_bits: Some(16),
-            ip_id_lsb: None,
-            num_ip_id_lsb_bits: None,
+            marker: true,
+            ts_scaled: Some(123),
             crc8: 0xEF,
-            // ts_scaled: None, // Not yet added
+            ..Default::default()
         };
-        assert_eq!(custom_uo1_ts.ts_lsb, Some(0x5678));
+        assert!(custom_uo1_rtp.marker);
+        assert_eq!(custom_uo1_rtp.ts_scaled, Some(123));
     }
 
     #[test]
@@ -239,6 +232,7 @@ mod tests {
             num_ts_lsb_bits: Some(16),
             ip_id_lsb: None,
             num_ip_id_lsb_bits: None,
+            ts_scaled: Some(10),
             crc8: 7,
         };
         let ser_uo1 = serde_json::to_string(&uo1).unwrap();

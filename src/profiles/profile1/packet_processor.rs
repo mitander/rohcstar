@@ -21,7 +21,16 @@ use crate::crc::CrcCalculators;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 
-// parse_rtp_udp_ipv4_headers remains the same as previously corrected.
+/// Parses raw bytes representing an RTP/UDP/IPv4 packet into `RtpUdpIpv4Headers`.
+///
+/// This function assumes the input `data` starts with the IPv4 header. It performs
+/// basic validation of header lengths and protocol types.
+///
+/// # Parameters
+/// * `data` - A byte slice starting with the IPv4 header.
+///
+/// # Returns
+/// A `Result` containing the parsed `RtpUdpIpv4Headers` or a `RohcParsingError`.
 pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < IPV4_MIN_HEADER_LENGTH_BYTES {
         return Err(RohcParsingError::NotEnoughData {
@@ -191,12 +200,25 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
     })
 }
 
+/// Builds a ROHC Profile 1 IR (Initialization/Refresh) packet.
+///
+/// This function constructs the byte representation of an IR or IR-DYN packet.
+/// It includes an Add-CID octet if the CID is small and non-zero.
+/// The CRC-8 is calculated over the profile, static chain, and dynamic chain (if present).
+///
+/// # Parameters
+/// * `ir_data` - A reference to `IrPacket` containing all necessary field values.
+/// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 computation.
+///
+/// # Returns
+/// A `Result` containing the built IR packet as `Vec<u8>`, or a `RohcBuildingError`.
 pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut final_packet_bytes = Vec::with_capacity(32);
-    let mut crc_payload_for_calc = Vec::new(); // This Vec is ONLY for CRC calculation
+    let mut final_packet_bytes = Vec::with_capacity(32); // Max size with potential extensions
+    let mut crc_payload_for_calc =
+        Vec::with_capacity(1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 5);
 
     // 1. Add-CID Octet (Optional)
     if ir_data.cid > 0 && ir_data.cid <= 15 {
@@ -213,7 +235,9 @@ pub fn build_profile1_ir_packet(
     }
 
     // 2. ROHC Packet Type Octet
-    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN); // Assuming IR-DYN for now
+    // For simplicity in this stage, always build IR-DYN (D-bit=1).
+    // A more advanced implementation might choose IR-Static based on context.
+    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
     // 3. Profile Identifier
     let profile_u8: u8 = ir_data.profile_id.into();
@@ -221,33 +245,38 @@ pub fn build_profile1_ir_packet(
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "Profile ID".to_string(),
             description: format!(
-                "IR packet for ROHC Profile 1 (0x{:02X}), got 0x{:02X}.",
+                "IR packet is for ROHC Profile 1 (0x{:02X}), but got 0x{:02X}.",
                 u8::from(RohcProfile::RtpUdpIp),
                 profile_u8
             ),
         });
     }
     final_packet_bytes.push(profile_u8);
-    crc_payload_for_calc.push(profile_u8); // Start CRC payload with Profile ID
+    crc_payload_for_calc.push(profile_u8);
 
     // 4. Static Chain
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_src.octets());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_dst.octets());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
-    // Append static chain to final packet *after* Profile ID
-    final_packet_bytes.extend_from_slice(&crc_payload_for_calc[1..]);
+    let static_chain_payload: Vec<u8> = {
+        let mut chain = Vec::with_capacity(P1_STATIC_CHAIN_LENGTH_BYTES);
+        chain.extend_from_slice(&ir_data.static_ip_src.octets());
+        chain.extend_from_slice(&ir_data.static_ip_dst.octets());
+        chain.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
+        chain.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
+        chain.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+        chain
+    };
+    crc_payload_for_calc.extend_from_slice(&static_chain_payload);
+    final_packet_bytes.extend_from_slice(&static_chain_payload);
 
     // 5. Dynamic Chain (assuming D-bit is 1 for IR-DYN)
-    let dynamic_chain_start_in_crc_payload = crc_payload_for_calc.len();
-    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
-    crc_payload_for_calc.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 });
-
-    // Append dynamic chain to final packet
-    final_packet_bytes
-        .extend_from_slice(&crc_payload_for_calc[dynamic_chain_start_in_crc_payload..]);
+    let dynamic_chain_payload: Vec<u8> = {
+        let mut chain = Vec::with_capacity(P1_DYNAMIC_CHAIN_LENGTH_BYTES);
+        chain.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
+        chain.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+        chain.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 }); // RTP Flags octet
+        chain
+    };
+    crc_payload_for_calc.extend_from_slice(&dynamic_chain_payload);
+    final_packet_bytes.extend_from_slice(&dynamic_chain_payload);
 
     // 6. Calculate CRC-8 over the constructed crc_payload_for_calc
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload_for_calc);
@@ -258,8 +287,21 @@ pub fn build_profile1_ir_packet(
     Ok(final_packet_bytes)
 }
 
+/// Parses a ROHC Profile 1 IR (Initialization/Refresh) packet.
+///
+/// The input `core_packet_bytes` should be the ROHC packet content starting
+/// with the ROHC packet type octet.
+/// The `cid_from_engine` must be provided by the caller.
+///
+/// # Parameters
+/// * `core_packet_bytes` - Byte slice of the core IR packet.
+/// * `cid_from_engine` - The CID determined by the ROHC engine.
+/// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 verification.
+///
+/// # Returns
+/// A `Result` containing the parsed `IrPacket` or a `RohcParsingError`.
 pub fn parse_profile1_ir_packet(
-    core_packet_bytes: &[u8], // Starts with Packet Type Octet (e.g., 0xFD)
+    core_packet_bytes: &[u8],
     cid_from_engine: u16,
     crc_calculators: &CrcCalculators,
 ) -> Result<IrPacket, RohcParsingError> {
@@ -283,29 +325,21 @@ pub fn parse_profile1_ir_packet(
     }
     let d_bit_set = (packet_type_octet & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0;
 
-    // CRC payload starts from the Profile ID octet.
-    // `current_offset` is now pointing at the Profile ID octet.
     let crc_payload_start_index = current_offset;
+    let mut expected_payload_len = 1 + P1_STATIC_CHAIN_LENGTH_BYTES; // ProfileID + Static
+    if d_bit_set {
+        expected_payload_len += P1_DYNAMIC_CHAIN_LENGTH_BYTES;
+    }
+    // Note: If/when TS_STRIDE extension is added, its length (if present) must be added to expected_payload_len here.
 
-    let dynamic_chain_len = if d_bit_set {
-        P1_DYNAMIC_CHAIN_LENGTH_BYTES
-    } else {
-        0
-    };
-
-    let extension_len = 0;
-    let chains_total_len = P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len + extension_len;
-    let crc_payload_len_for_validation = 1 + chains_total_len; // ProfileID + all chains
-
-    let end_of_crc_payload_exclusive = crc_payload_start_index + crc_payload_len_for_validation;
+    let end_of_crc_payload_exclusive = crc_payload_start_index + expected_payload_len;
     let crc_octet_index = end_of_crc_payload_exclusive;
 
     if core_packet_bytes.len() <= crc_octet_index {
-        // Need at least one byte for CRC itself
         return Err(RohcParsingError::NotEnoughData {
             needed: crc_octet_index + 1,
             got: core_packet_bytes.len(),
-            context: "IR Packet (CRC field and payload)".to_string(),
+            context: "IR Packet (CRC field and defined payload)".to_string(),
         });
     }
 
@@ -322,14 +356,12 @@ pub fn parse_profile1_ir_packet(
         });
     }
 
-    // Parse Profile Identifier (already at current_offset)
     let profile_octet = core_packet_bytes[current_offset];
     if profile_octet != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcParsingError::InvalidProfileId(profile_octet));
     }
-    current_offset += 1; // Move past ProfileID
+    current_offset += 1;
 
-    // Parse Static Chain
     let static_ip_src = Ipv4Addr::new(
         core_packet_bytes[current_offset],
         core_packet_bytes[current_offset + 1],
@@ -362,9 +394,7 @@ pub fn parse_profile1_ir_packet(
     ]);
     current_offset += 4;
 
-    // Parse Dynamic Chain (if D-bit was set)
     let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker) = if d_bit_set {
-        // Check if enough bytes remain for dynamic chain
         if core_packet_bytes.len() < current_offset + P1_DYNAMIC_CHAIN_LENGTH_BYTES {
             return Err(RohcParsingError::NotEnoughData {
                 needed: current_offset + P1_DYNAMIC_CHAIN_LENGTH_BYTES,
@@ -406,15 +436,7 @@ pub fn parse_profile1_ir_packet(
     })
 }
 
-// Functions build_profile1_uo0_packet, parse_profile1_uo0_packet,
-// build_profile1_uo1_sn_packet, parse_profile1_uo1_sn_packet,
-// build_profile1_uo1_ts_packet, parse_profile1_uo1_ts_packet,
-// build_profile1_uo1_id_packet, parse_profile1_uo1_id_packet
-// remain the same as previously provided, assuming their internal CRC logic
-// is correct or that they are called by the handler which provides CrcCalculators.
-// For brevity, only IR packet functions are fully re-listed here.
-// The previous full file for packet_processor.rs had these correct w.r.t Timestamp newtype.
-
+/// Builds a ROHC Profile 1 UO-0 packet.
 pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -451,6 +473,7 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
     Ok(final_packet)
 }
 
+/// Parses a ROHC Profile 1 UO-0 packet.
 pub fn parse_profile1_uo0_packet(
     core_packet_data: &[u8],
     cid_from_engine: Option<u8>,
@@ -468,7 +491,6 @@ pub fn parse_profile1_uo0_packet(
 
     let packet_byte = core_packet_data[0];
     if (packet_byte & 0x80) != 0 {
-        // MSB must be 0 for UO-0
         return Err(RohcParsingError::InvalidPacketType {
             discriminator: packet_byte,
             profile_id: Some(RohcProfile::RtpUdpIp.into()),
@@ -485,6 +507,7 @@ pub fn parse_profile1_uo0_packet(
     })
 }
 
+/// Builds a ROHC Profile 1 UO-1-SN packet.
 pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     if packet_data.num_sn_lsb_bits != P1_UO1_SN_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -496,7 +519,6 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
         });
     }
     if packet_data.sn_lsb > 0xFF {
-        // For 8-bit LSB width
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "sn_lsb".to_string(),
             description: "Value for UO-1-SN LSB exceeds 8-bit representation.".to_string(),
@@ -530,11 +552,11 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
             })
         }
     } else {
-        // Implicit CID 0
         Ok(core_packet_bytes)
     }
 }
 
+/// Parses a ROHC Profile 1 UO-1-SN packet.
 pub fn parse_profile1_uo1_sn_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -560,7 +582,7 @@ pub fn parse_profile1_uo1_sn_packet(
     let received_crc8 = core_packet_bytes[2];
 
     Ok(Uo1Packet {
-        cid: None, // CID determined by engine
+        cid: None,
         sn_lsb: sn_lsb_val as u16,
         num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
         marker: marker_bit_set,
@@ -568,10 +590,12 @@ pub fn parse_profile1_uo1_sn_packet(
         num_ts_lsb_bits: None,
         ip_id_lsb: None,
         num_ip_id_lsb_bits: None,
+        ts_scaled: None, // Initialize new field
         crc8: received_crc8,
     })
 }
 
+/// Builds a ROHC Profile 1 UO-1-TS packet.
 pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ts_lsb =
         packet_data
@@ -626,6 +650,7 @@ pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
     }
 }
 
+/// Parses a ROHC Profile 1 UO-1-TS packet.
 pub fn parse_profile1_uo1_ts_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -658,10 +683,12 @@ pub fn parse_profile1_uo1_ts_packet(
         num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
         ip_id_lsb: None,
         num_ip_id_lsb_bits: None,
+        ts_scaled: None, // New field initialized
         crc8: received_crc8,
     })
 }
 
+/// Builds a ROHC Profile 1 UO-1-ID packet.
 pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ip_id_lsb =
         packet_data
@@ -718,6 +745,7 @@ pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
     }
 }
 
+/// Parses a ROHC Profile 1 UO-1-ID packet.
 pub fn parse_profile1_uo1_id_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -750,6 +778,7 @@ pub fn parse_profile1_uo1_id_packet(
         num_ts_lsb_bits: None,
         ip_id_lsb: Some(ip_id_lsb_val as u16),
         num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+        ts_scaled: None, // New field initialized
         crc8: received_crc8,
     })
 }
@@ -818,7 +847,6 @@ mod tests {
         assert_eq!(built_bytes.len(), expected_len);
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        // When Add-CID is NOT present (CID 0), core_packet_bytes IS built_bytes
         let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
@@ -831,21 +859,19 @@ mod tests {
     #[test]
     fn build_and_parse_ir_packet_small_cid() {
         let crc_calculators = CrcCalculators::new();
-        let ir_content_ts_val: u32 = 50; // Use a u32 for create_ir_packet_data
+        let ir_content_ts_val: u32 = 50;
         let ir_content = IrPacket {
             cid: 5,
-            dyn_rtp_timestamp: Timestamp::new(ir_content_ts_val), // Set the specific TS for building
-            // For other fields, if not specified, Default::default() would be used.
-            // It's better to be explicit for fields being tested if they deviate from pure default.
-            profile_id: RohcProfile::RtpUdpIp, // from Default
-            static_ip_src: "0.0.0.0".parse().unwrap(), // from Default
-            static_ip_dst: "0.0.0.0".parse().unwrap(), // from Default
-            static_udp_src_port: 0,            // from Default
-            static_udp_dst_port: 0,            // from Default
-            static_rtp_ssrc: 0,                // from Default
-            dyn_rtp_sn: 0,                     // from Default
-            dyn_rtp_marker: false,             // from Default
-            crc8: 0,                           // Placeholder, from Default
+            dyn_rtp_timestamp: Timestamp::new(ir_content_ts_val),
+            profile_id: RohcProfile::RtpUdpIp,
+            static_ip_src: "0.0.0.0".parse().unwrap(),
+            static_ip_dst: "0.0.0.0".parse().unwrap(),
+            static_udp_src_port: 0,
+            static_udp_dst_port: 0,
+            static_rtp_ssrc: 0,
+            dyn_rtp_sn: 0,
+            dyn_rtp_marker: false,
+            crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
         let expected_len =
@@ -854,17 +880,14 @@ mod tests {
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        // Pass core packet (after Add-CID) and the CID to parser
         let parsed_ir = parse_profile1_ir_packet(&built_bytes[1..], 5, &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 5);
-        // Now assert against the actual value used for building
         assert_eq!(
             parsed_ir.dyn_rtp_timestamp,
             Timestamp::new(ir_content_ts_val)
         );
-        // Assert other fields if they were set to non-default in ir_content
-        assert_eq!(parsed_ir.static_rtp_ssrc, 0); // Default was used
-        assert_eq!(parsed_ir.dyn_rtp_sn, 0); // Default was used
+        assert_eq!(parsed_ir.static_rtp_ssrc, 0);
+        assert_eq!(parsed_ir.dyn_rtp_sn, 0);
     }
 
     #[test]
@@ -879,7 +902,6 @@ mod tests {
         let crc_idx = built_bytes.len() - 1;
         built_bytes[crc_idx] = built_bytes[crc_idx].wrapping_add(1);
 
-        // For CID 0, built_bytes is the core packet
         let result = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators);
         assert!(matches!(result, Err(RohcParsingError::CrcMismatch { .. })));
     }

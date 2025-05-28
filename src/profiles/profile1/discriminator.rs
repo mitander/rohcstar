@@ -23,9 +23,9 @@ pub enum Profile1PacketType {
     Uo1Ts,
     /// Unidirectional Optimistic type 1, IP-ID variant.
     Uo1Id,
-    // Future: Add Feedback types if relevant for U-mode error reporting or extended uses.
-    // Future: Add SO (Second Order) specific types if their discriminators are distinct
-    //         and not just UO-0/UO-1 used in SO state.
+    /// Unidirectional Optimistic type 1, RTP variant (carries TS_SCALED).
+    /// Includes the marker bit value from the packet.
+    Uo1Rtp { marker: bool },
     /// An unknown or unrecognized packet type for Profile 1.
     /// Contains the problematic first byte.
     Unknown(u8),
@@ -36,23 +36,20 @@ impl Profile1PacketType {
     ///
     /// This function assumes the input `byte` is the first byte of the ROHC packet
     /// *after* any Add-CID octet processing has been handled by the ROHC engine.
+    /// The order of checks is important to correctly discriminate between UO-1 variants.
     ///
-    /// # Parameter
-    ///
+    /// # Parameters
     /// * `byte` - The first byte of the core ROHC Profile 1 packet.
     ///
     /// # Returns
-    ///
     /// The corresponding `Profile1PacketType`.
     pub fn from_first_byte(byte: u8) -> Self {
         // Check for IR / IR-DYN packets (Type: 1111110D)
         if (byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
             if (byte & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0 {
-                // D-bit is 1
-                Profile1PacketType::IrDynamic
+                Profile1PacketType::IrDynamic // D-bit is 1
             } else {
-                // D-bit is 0
-                Profile1PacketType::IrStatic
+                Profile1PacketType::IrStatic // D-bit is 0
             }
         }
         // Check for UO-0 packets (Type: 0xxxxxxx)
@@ -60,25 +57,36 @@ impl Profile1PacketType {
             Profile1PacketType::Uo0
         }
         // Check for UO-1 base prefix (Type: 101xxxxx)
-        else if (byte & P1_UO_1_TS_PACKET_TYPE_PREFIX/*0xA0, effectively checks 101.....*/)
-            == P1_UO_1_TS_PACKET_TYPE_PREFIX
-        {
-            // Discriminate between UO-1 variants
-            // UO-1-TS (Type: 10100100 = 0xA4)
-            if (byte & P1_UO_1_TS_TYPE_MASK) == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK) {
+        // P1_UO_1_TS_PACKET_TYPE_PREFIX is 0b1010_0000. Masking with 0b1110_0000 (0xE0)
+        // checks for the `101` prefix common to UO-1 packets.
+        else if (byte & 0xE0) == P1_UO_1_TS_PACKET_TYPE_PREFIX {
+            // Order of UO-1 checks:
+            // 1. UO-1-RTP (1010100M) - Most specific with TSI=100
+            // 2. UO-1-ID  (10101100) - Specific TSI=110, M=0
+            // 3. UO-1-TS  (10100100) - Specific TSI=010, M=0
+            // 4. UO-1-SN  (1010000M) - TSI=000 (fallback)
+
+            if (byte & 0b1111_1110) == P1_UO_1_RTP_DISCRIMINATOR_BASE {
+                // Base is 0xA8 (10101000)
+                let marker = (byte & P1_UO_1_RTP_MARKER_BIT_MASK) != 0;
+                Profile1PacketType::Uo1Rtp { marker }
+            } else if byte == P1_UO_1_ID_DISCRIMINATOR {
+                // 0xAC (10101100)
+                Profile1PacketType::Uo1Id
+            } else if (byte & P1_UO_1_TS_TYPE_MASK)
+                == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
+            {
+                // 0xA4 (10100100)
                 Profile1PacketType::Uo1Ts
             }
-            // UO-1-ID (Type: 10101100 = 0xAC)
-            else if byte == P1_UO_1_ID_DISCRIMINATOR {
-                Profile1PacketType::Uo1Id
-            }
-            // UO-1-SN (Type: 1010000M)
-            // Check that bits 3-1 (TSI field in UO-1 general format) are 000
+            // Check for UO-1-SN (Type: 1010000M) after other specific UO-1 types
+            // This ensures that bits 3-1 (TSI field) are 000.
             else if (byte & !P1_UO_1_SN_MARKER_BIT_MASK) == P1_UO_1_SN_PACKET_TYPE_PREFIX {
+                // P1_UO_1_SN_PACKET_TYPE_PREFIX is 0xA0 (10100000)
                 let marker = (byte & P1_UO_1_SN_MARKER_BIT_MASK) != 0;
                 Profile1PacketType::Uo1Sn { marker }
             }
-            // If it matched UO-1 prefix but none of the above specific UO-1 types
+            // If it matched the `101xxxxx` UO-1 prefix but none of the specific variants above
             else {
                 Profile1PacketType::Unknown(byte)
             }
@@ -102,35 +110,30 @@ impl Profile1PacketType {
         matches!(self, Profile1PacketType::Uo0)
     }
 
-    /// Returns `true` if the packet type is any UO-1 variant (`Uo1Sn`, `Uo1Ts`, `Uo1Id`).
+    /// Returns `true` if the packet type is any UO-1 variant.
     pub fn is_uo1(&self) -> bool {
         matches!(
             self,
             Profile1PacketType::Uo1Sn { .. }
                 | Profile1PacketType::Uo1Ts
                 | Profile1PacketType::Uo1Id
+                | Profile1PacketType::Uo1Rtp { .. }
         )
     }
 
     /// Identifies packets that normally update the dynamic part of the ROHC context.
-    /// This is relevant for state transition logic like SC->NC (K2/N2 rule).
-    ///
-    /// IR-DYN, UO-1-SN, UO-1-TS, and UO-1-ID are considered dynamic updaters.
-    /// IR-Static primarily updates static context. UO-0 relies on existing dynamic context.
-    /// Unknown packets are conservatively considered as potential (failed) updaters.
     ///
     /// # Returns
-    ///
     /// `true` if the packet type is considered a dynamic updater, `false` otherwise.
     pub fn is_dynamically_updating_type(&self) -> bool {
         match self {
-            Profile1PacketType::IrDynamic | // IR-DYN explicitly carries full dynamic info
-            Profile1PacketType::Uo1Sn { .. } |
-            Profile1PacketType::Uo1Ts |
-            Profile1PacketType::Uo1Id => true,
-            Profile1PacketType::Unknown(_) => true, // A failed parse of an unknown type might have been an updater
-            Profile1PacketType::IrStatic |
-            Profile1PacketType::Uo0 => false,
+            Profile1PacketType::IrDynamic
+            | Profile1PacketType::Uo1Sn { .. }
+            | Profile1PacketType::Uo1Ts
+            | Profile1PacketType::Uo1Id
+            | Profile1PacketType::Uo1Rtp { .. } => true,
+            Profile1PacketType::Unknown(_) => true, // Conservatively assume unknown might have been an updater
+            Profile1PacketType::IrStatic | Profile1PacketType::Uo0 => false,
         }
     }
 }
@@ -156,7 +159,7 @@ mod tests {
         assert_eq!(
             Profile1PacketType::from_first_byte(0x00),
             Profile1PacketType::Uo0
-        ); // 0 SSSS CCC
+        );
         assert_eq!(
             Profile1PacketType::from_first_byte(0x7F),
             Profile1PacketType::Uo0
@@ -166,51 +169,77 @@ mod tests {
     #[test]
     fn from_first_byte_uo1_sn_packets() {
         assert_eq!(
-            Profile1PacketType::from_first_byte(P1_UO_1_SN_PACKET_TYPE_PREFIX),
+            Profile1PacketType::from_first_byte(P1_UO_1_SN_PACKET_TYPE_PREFIX), // 10100000
             Profile1PacketType::Uo1Sn { marker: false }
-        ); // 10100000
+        );
         assert_eq!(
             Profile1PacketType::from_first_byte(
-                P1_UO_1_SN_PACKET_TYPE_PREFIX | P1_UO_1_SN_MARKER_BIT_MASK
+                P1_UO_1_SN_PACKET_TYPE_PREFIX | P1_UO_1_SN_MARKER_BIT_MASK // 10100001
             ),
             Profile1PacketType::Uo1Sn { marker: true }
-        ); // 10100001
+        );
     }
 
     #[test]
     fn from_first_byte_uo1_ts_packet() {
         assert_eq!(
-            Profile1PacketType::from_first_byte(P1_UO_1_TS_DISCRIMINATOR),
+            Profile1PacketType::from_first_byte(P1_UO_1_TS_DISCRIMINATOR), // 10100100
             Profile1PacketType::Uo1Ts
-        ); // 10100100
+        );
     }
 
     #[test]
     fn from_first_byte_uo1_id_packet() {
         assert_eq!(
-            Profile1PacketType::from_first_byte(P1_UO_1_ID_DISCRIMINATOR),
+            Profile1PacketType::from_first_byte(P1_UO_1_ID_DISCRIMINATOR), // 10101100
             Profile1PacketType::Uo1Id
-        ); // 10101100
+        );
+    }
+
+    #[test]
+    fn from_first_byte_uo1_rtp_packets() {
+        assert_eq!(
+            Profile1PacketType::from_first_byte(P1_UO_1_RTP_DISCRIMINATOR_BASE), // 10101000
+            Profile1PacketType::Uo1Rtp { marker: false }
+        );
+        assert_eq!(
+            Profile1PacketType::from_first_byte(
+                P1_UO_1_RTP_DISCRIMINATOR_BASE | P1_UO_1_RTP_MARKER_BIT_MASK // 10101001
+            ),
+            Profile1PacketType::Uo1Rtp { marker: true }
+        );
+        // Ensure it's preferred over UO-1-SN if the bits match UO-1-RTP's TSI=100 pattern
+        // Example: 0xA8 (10101000) is UO-1-RTP, not UO-1-SN
+        assert_ne!(
+            Profile1PacketType::from_first_byte(0xA8),
+            Profile1PacketType::Uo1Sn { marker: false }
+        );
     }
 
     #[test]
     fn from_first_byte_unknown_packets() {
         assert_eq!(
-            Profile1PacketType::from_first_byte(0x80),
+            Profile1PacketType::from_first_byte(0x80), // Not UO-0, not 101xxxxx, not IR
             Profile1PacketType::Unknown(0x80)
-        ); // Not UO-0, not UO-1 prefix, not IR
+        );
         assert_eq!(
-            Profile1PacketType::from_first_byte(0xFF),
+            Profile1PacketType::from_first_byte(0xFF), // Not IR, UO-0. If 101xxxx, it's unknown variant
             Profile1PacketType::Unknown(0xFF)
-        ); // Not UO-0, UO-1 prefix but not recognized variant, not IR
+        );
         assert_eq!(
-            Profile1PacketType::from_first_byte(0xF0),
+            Profile1PacketType::from_first_byte(0xF0), // Not specific IR
             Profile1PacketType::Unknown(0xF0)
-        ); // Not specific IR
+        );
+        // 101 0001 0 - UO-1 prefix, TSI=001, M=0. TSI=001 is not a defined variant.
         assert_eq!(
             Profile1PacketType::from_first_byte(0b10100010),
             Profile1PacketType::Unknown(0b10100010)
-        ); // UO-1 prefix, but TSI=001 (undefined for MVP)
+        );
+        // 101 1111 0 - UO-1 prefix, TSI=111, M=0. TSI=111 is not a defined variant.
+        assert_eq!(
+            Profile1PacketType::from_first_byte(0b10111110),
+            Profile1PacketType::Unknown(0b10111110)
+        );
     }
 
     #[test]
@@ -219,6 +248,7 @@ mod tests {
         assert!(Profile1PacketType::IrDynamic.is_ir());
         assert!(!Profile1PacketType::Uo0.is_ir());
         assert!(!Profile1PacketType::Uo1Sn { marker: false }.is_ir());
+        assert!(!Profile1PacketType::Uo1Rtp { marker: false }.is_ir());
     }
 
     #[test]
@@ -233,6 +263,7 @@ mod tests {
         assert!(Profile1PacketType::Uo1Sn { marker: true }.is_uo1());
         assert!(Profile1PacketType::Uo1Ts.is_uo1());
         assert!(Profile1PacketType::Uo1Id.is_uo1());
+        assert!(Profile1PacketType::Uo1Rtp { marker: true }.is_uo1());
         assert!(!Profile1PacketType::Uo0.is_uo1());
         assert!(!Profile1PacketType::IrDynamic.is_uo1());
     }
@@ -243,6 +274,7 @@ mod tests {
         assert!(Profile1PacketType::Uo1Sn { marker: false }.is_dynamically_updating_type());
         assert!(Profile1PacketType::Uo1Ts.is_dynamically_updating_type());
         assert!(Profile1PacketType::Uo1Id.is_dynamically_updating_type());
+        assert!(Profile1PacketType::Uo1Rtp { marker: false }.is_dynamically_updating_type());
         assert!(Profile1PacketType::Unknown(0xFF).is_dynamically_updating_type());
 
         assert!(!Profile1PacketType::IrStatic.is_dynamically_updating_type());

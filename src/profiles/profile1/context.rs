@@ -487,7 +487,7 @@ impl Profile1DecompressorContext {
     /// RTP (SN, TS, Marker) are also set. IP-ID is typically reset for Profile 1
     /// as it's not part of the IR-DYN dynamic chain.
     /// TS Stride fields are reset here; they will be updated if the IR packet
-    /// contains a TS_STRIDE extension (handled in a later commit's parsing logic).
+    /// contains a TS_STRIDE extension.
     /// The `last_accessed` time is **not** updated by this method; the caller should handle that.
     ///
     /// # Parameters
