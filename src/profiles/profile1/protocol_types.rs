@@ -132,6 +132,21 @@ impl RtpUdpIpv4Headers {
         self.rtp_csrc_count as usize == self.rtp_csrc_list.len()
             && self.rtp_csrc_count <= RTP_MAX_CSRC_COUNT
     }
+
+    /// Sets the IP Identification field for these headers.
+    ///
+    /// This is primarily a test helper to allow explicit control over the IP-ID
+    /// for constructing specific test scenarios, especially for ROHC packet selection logic.
+    ///
+    /// # Parameters
+    /// - `ip_id`: The `u16` value to set as the IP Identification.
+    ///
+    /// # Returns
+    /// `Self` with the updated IP Identification, allowing for method chaining.
+    pub fn with_ip_id(mut self, ip_id: u16) -> Self {
+        self.ip_identification = ip_id;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +259,17 @@ mod tests {
         let deserialized: RtpUdpIpv4Headers = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(headers, deserialized);
+    }
+
+    #[test]
+    fn with_ip_id_helper() {
+        let headers1 = RtpUdpIpv4Headers::default();
+        assert_eq!(headers1.ip_identification, 0);
+
+        let headers2 = headers1.with_ip_id(12345);
+        assert_eq!(headers2.ip_identification, 12345);
+
+        let headers3 = headers2.with_ip_id(5);
+        assert_eq!(headers3.ip_identification, 5);
     }
 }

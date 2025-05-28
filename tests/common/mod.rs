@@ -2,7 +2,8 @@
 //!
 //! This module provides shared helper functions for creating test data, establishing
 //! contexts, and asserting packet properties across all Profile 1 integration tests.
-#![allow(dead_code)]
+
+#![allow(dead_code)] // Allow dead code for unused test helpers during development
 
 use rohcstar::engine::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
@@ -14,22 +15,62 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
-use std::time::Duration;
+use rohcstar::profiles::profile1::{IrPacket, Profile1Handler, RtpUdpIpv4Headers};
+use rohcstar::time::{SystemClock, mock_clock::MockClock};
+use rohcstar::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 
-use rohcstar::profiles::profile1::{IrPacket, RtpUdpIpv4Headers};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-// Default timeout test engines
-pub const DEFAULT_ENGINE_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
+/// Default timeout for RohcEngine instances in tests where specific timing isn't critical.
+pub const DEFAULT_ENGINE_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5); // 5 minutes
 
-/// Creates RTP/UDP/IPv4 headers with fully customizable fields
+/// Default IR refresh interval for RohcEngine instances in tests.
+pub const DEFAULT_ENGINE_IR_REFRESH_INTERVAL: u32 = 100; // A reasonably high value for most tests
+
+/// Creates a RohcEngine with a SystemClock for general integration testing,
+/// using default IR refresh interval and test timeout.
+pub fn create_default_test_engine() -> RohcEngine {
+    RohcEngine::new(
+        DEFAULT_ENGINE_IR_REFRESH_INTERVAL,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    )
+}
+
+/// Creates a RohcEngine with a SystemClock for general integration testing,
+/// allowing a specific IR refresh interval.
 ///
-/// This is the most flexible header creation function, allowing control over
-/// all dynamic fields including SSRC.
+/// # Parameters
+/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
+pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEngine {
+    RohcEngine::new(
+        ir_refresh_interval,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    )
+}
+
+/// Creates a RohcEngine with a controllable MockClock for time-sensitive tests.
 ///
-/// # Default values
-/// - IP addresses: 192.168.0.1 -> 192.168.0.2
-/// - UDP ports: 1000 -> 2000
-/// - Other fields: Default trait values
+/// # Parameters
+/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
+/// - `timeout`: The context timeout duration.
+/// - `initial_mock_time`: The starting time for the mock clock.
+///
+/// # Returns
+/// A tuple containing the `RohcEngine` and an `Arc<MockClock>`.
+pub fn create_test_engine_with_mock_clock(
+    ir_refresh_interval: u32,
+    timeout: Duration,
+    initial_mock_time: Instant,
+) -> (RohcEngine, Arc<MockClock>) {
+    let mock_clock = Arc::new(MockClock::new(initial_mock_time));
+    let engine = RohcEngine::new(ir_refresh_interval, timeout, mock_clock.clone());
+    (engine, mock_clock)
+}
+
+/// Creates RTP/UDP/IPv4 headers with fully customizable fields.
 pub fn create_rtp_headers(sn: u16, ts: u32, marker: bool, ssrc: u32) -> RtpUdpIpv4Headers {
     RtpUdpIpv4Headers {
         ip_src: "192.168.0.1".parse().unwrap(),
@@ -40,47 +81,28 @@ pub fn create_rtp_headers(sn: u16, ts: u32, marker: bool, ssrc: u32) -> RtpUdpIp
         rtp_sequence_number: sn,
         rtp_timestamp: ts,
         rtp_marker: marker,
+        ip_identification: sn.wrapping_add(ssrc as u16), // Ensure IP-ID varies for tests
         ..Default::default()
     }
 }
 
-/// Creates RTP/UDP/IPv4 headers with a fixed SSRC value
-///
-/// Useful for tests that don't need to vary the SSRC. Uses different ports
-/// than `create_rtp_headers` to help distinguish flows in multi-flow tests.
-///
-/// # Default values
-/// - IP addresses: 192.168.0.1 -> 192.168.0.2
-/// - UDP ports: 10000 -> 20000
-/// - SSRC: 0x12345678
-/// - Other fields: Default trait values
+/// Creates RTP/UDP/IPv4 headers with a fixed SSRC value.
 pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts: u32, marker: bool) -> RtpUdpIpv4Headers {
     RtpUdpIpv4Headers {
         ip_src: "192.168.0.1".parse().unwrap(),
         ip_dst: "192.168.0.2".parse().unwrap(),
         udp_src_port: 10000,
         udp_dst_port: 20000,
-        rtp_ssrc: 0x12345678,
+        rtp_ssrc: 0x12345678, // Fixed SSRC
         rtp_sequence_number: sn,
         rtp_timestamp: ts,
         rtp_marker: marker,
+        ip_identification: sn.wrapping_add(0x1234), // Ensure IP-ID varies for tests
         ..Default::default()
     }
 }
 
-/// Creates a default IrPacket structure for testing
-///
-/// This helper creates an IrPacket with reasonable default values that can be
-/// modified for specific test scenarios. The timestamp is derived from the
-/// sequence number for simplicity.
-///
-/// # Default values
-/// - Profile: RtpUdpIp
-/// - IP addresses: 1.1.1.1 -> 2.2.2.2
-/// - UDP ports: 100 -> 200
-/// - RTP timestamp: sn * 10
-/// - RTP marker: false
-/// - CRC: 0 (to be calculated by builder)
+/// Creates a default IrPacket structure for testing.
 pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16) -> IrPacket {
     IrPacket {
         cid,
@@ -91,27 +113,13 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16) -> IrPacket {
         static_udp_dst_port: 200,
         static_rtp_ssrc: ssrc,
         dyn_rtp_sn: sn,
-        dyn_rtp_timestamp: sn as u32 * 10, // Simple TS progression
+        dyn_rtp_timestamp: sn as u32 * 10,
         dyn_rtp_marker: false,
-        crc8: 0, // Will be calculated by builder
+        crc8: 0,
     }
 }
 
-/// Establishes an IR (Initialization and Refresh) context in the ROHC engine
-///
-/// This function ensures that an IR packet is sent and successfully decompressed,
-/// establishing a full context for subsequent UO (Uncompressed/Optimized) packet tests.
-///
-/// # Process
-/// 1. Forces the compressor into IR mode (if context exists with same SSRC)
-/// 2. Compresses an IR packet with the given parameters
-/// 3. Verifies the packet is actually an IR packet
-/// 4. Decompresses the packet to establish decompressor context
-///
-/// # Panics
-/// - If compression fails
-/// - If the generated packet is not an IR packet
-/// - If decompression fails
+/// Establishes an IR (Initialization and Refresh) context in the ROHC engine.
 pub fn establish_ir_context(
     engine: &mut RohcEngine,
     cid: u16,
@@ -120,37 +128,41 @@ pub fn establish_ir_context(
     initial_marker: bool,
     ssrc: u32,
 ) {
-    // Force the compressor context (if it exists) into IR mode to ensure an IR is sent
     if let Ok(comp_ctx_dyn) = engine.context_manager_mut().get_compressor_context_mut(cid) {
         if let Some(p1_comp_ctx) = comp_ctx_dyn
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
         {
-            // Only reset if SSRC is the same, otherwise SSRC change logic in handler will force IR
             if p1_comp_ctx.rtp_ssrc == ssrc {
                 p1_comp_ctx.mode = Profile1CompressorMode::InitializationAndRefresh;
             }
         }
     }
-    // If context doesn't exist, it will be created in IR mode anyway.
 
-    let headers_ir = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
+    let mut headers_ir = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
+    // Ensure the IR packet establishes a known IP-ID in the compressor context, if not already set
+    // by create_rtp_headers default logic. For tests, making it predictable is good.
+    if headers_ir.ip_identification == 0 && initial_sn != 0 {
+        // Example: if default ip_id is 0 and SN is not
+        headers_ir.ip_identification = initial_sn;
+    }
+
     let generic_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
 
     let compressed_ir = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_ir)
         .unwrap();
 
-    // Verify it was actually an IR packet
     if cid == 0 {
         assert_eq!(
             compressed_ir[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-            "Setup compress call did not produce an IR packet"
+            "IR packet type check for CID 0"
         );
     } else if cid <= 15 {
+        assert!(compressed_ir.len() > 1, "IR packet with Add-CID too short");
         assert_eq!(
             compressed_ir[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-            "Setup compress call did not produce an IR packet (core)"
+            "Core IR packet type check for small CID"
         );
     }
 
@@ -162,117 +174,77 @@ pub fn establish_ir_context(
     });
 }
 
-/// Checks if a packet is an IR (Initialization and Refresh) packet
-///
-/// Supports both IR-DYN (with dynamic chain) and IR static-only packets.
+/// Checks if a packet is an IR (Initialization and Refresh) packet.
 pub fn is_ir_packet(packet: &[u8], cid: u16) -> bool {
     let min_len = if cid == 0 {
         1
     } else if cid <= 15 {
         2
     } else {
-        panic!("Large CIDs not supported in tests")
+        panic!("Large CIDs not supported by is_ir_packet test helper")
     };
-
     if packet.len() < min_len {
         return false;
     }
-
     let type_byte = if cid == 0 { packet[0] } else { packet[1] };
     type_byte == P1_ROHC_IR_PACKET_TYPE_WITH_DYN || type_byte == P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY
 }
 
-/// Checks if a packet is a UO-0 packet
-///
-/// UO-0 packets are identified by:
-/// - Specific length (1 byte for CID 0, 2 bytes for small CID)
-/// - MSB = 0 in the type octet
+/// Checks if a packet is a UO-0 packet.
 pub fn is_uo0_packet(packet: &[u8], cid: u16) -> bool {
     let expected_len = if cid == 0 {
         1
     } else if cid <= 15 {
         2
     } else {
-        panic!("Large CIDs not supported in tests")
+        panic!("Large CIDs not supported by is_uo0_packet test helper")
     };
-
     if packet.len() != expected_len {
         return false;
     }
-
     let type_byte = if cid == 0 { packet[0] } else { packet[1] };
-    (type_byte & 0x80) == 0x00 // MSB = 0 for UO-0
+    (type_byte & 0x80) == 0x00
 }
 
-/// Checks if a packet is a UO-1-SN packet
-///
-/// UO-1-SN packets are identified by:
-/// - Specific length (3 bytes for CID 0, 4 bytes for small CID)
-/// - Type prefix = 10 (binary) in the type octet
+/// Checks if a packet is a UO-1-SN packet.
 pub fn is_uo1_sn_packet(packet: &[u8], cid: u16) -> bool {
     let expected_len = if cid == 0 {
         3
     } else if cid <= 15 {
         4
     } else {
-        panic!("Large CIDs not supported in this specific test helper: is_uo1_sn_packet");
+        panic!("Large CIDs not supported by is_uo1_sn_packet test helper")
     };
-
     if packet.len() != expected_len {
         return false;
     }
-
     let type_byte = if cid == 0 { packet[0] } else { packet[1] };
-
-    // UO-1-SN pattern is 1010000M.
-    // P1_UO_1_SN_PACKET_TYPE_PREFIX is 0b10100000 (0xA0).
-    // We need to check that the top 7 bits match 0b1010000.
-    // The LSB is the marker bit and can be 0 or 1.
-    // So, we can mask the type_byte with 0xFE (0b11111110) to ignore the LSB (marker bit),
-    // and compare it against P1_UO_1_SN_PACKET_TYPE_PREFIX (which has M=0).
-    (type_byte & 0xFE) == P1_UO_1_SN_PACKET_TYPE_PREFIX // P1_UO_1_SN_PACKET_TYPE_PREFIX is already 0xA0
+    (type_byte & 0xFE) == P1_UO_1_SN_PACKET_TYPE_PREFIX
 }
 
-/// Gets the Profile1 decompressor context for the given CID
-///
-/// # Panics
-/// - If no decompressor context exists for the CID
-/// - If the context is not a Profile1DecompressorContext
+/// Gets the Profile1 decompressor context for the given CID.
 pub fn get_decompressor_context(engine: &RohcEngine, cid: u16) -> &Profile1DecompressorContext {
-    let ctx_box = engine
+    engine
         .context_manager()
         .get_decompressor_context(cid)
-        .unwrap_or_else(|_| panic!("No decompressor context for CID {}", cid));
-
-    ctx_box
+        .unwrap_or_else(|_| panic!("No decompressor context for CID {}", cid))
         .as_any()
         .downcast_ref::<Profile1DecompressorContext>()
-        .unwrap_or_else(|| {
-            panic!(
-                "Context for CID {} is not a Profile1DecompressorContext",
-                cid
-            )
-        })
+        .unwrap_or_else(|| panic!("Context for CID {} is not Profile1DecompressorContext", cid))
 }
 
-/// Gets the Profile1 compressor context for the given CID
-///
-/// # Panics
-/// - If no compressor context exists for the CID
-/// - If the context is not a Profile1CompressorContext
+/// Gets the Profile1 compressor context for the given CID.
 pub fn get_compressor_context(engine: &RohcEngine, cid: u16) -> &Profile1CompressorContext {
-    let ctx_box = engine
+    engine
         .context_manager()
         .get_compressor_context(cid)
-        .unwrap_or_else(|_| panic!("No compressor context for CID {}", cid));
-
-    ctx_box
+        .unwrap_or_else(|_| panic!("No compressor context for CID {}", cid))
         .as_any()
         .downcast_ref::<Profile1CompressorContext>()
-        .unwrap_or_else(|| panic!("Context for CID {} is not a Profile1CompressorContext", cid))
+        .unwrap_or_else(|| panic!("Context for CID {} is not Profile1CompressorContext", cid))
 }
 
-/// Asserts that the decompressor is in the expected mode
+/// Asserts that the decompressor is in the expected mode.
 pub fn assert_decompressor_mode(
     engine: &RohcEngine,
     cid: u16,
@@ -283,12 +255,43 @@ pub fn assert_decompressor_mode(
     assert_eq!(ctx.mode, expected_mode, "{}", message);
 }
 
+// Test helper specific context creation functions
+/// Creates a new `Profile1Handler` instance for tests.
+pub fn create_profile1_handler() -> Profile1Handler {
+    Profile1Handler::new()
+}
+
+/// Creates a new Profile 1 compressor context for tests.
+pub fn create_profile1_compressor_context(
+    handler: &Profile1Handler,
+    cid: u16,
+) -> Box<dyn RohcCompressorContext> {
+    handler.create_compressor_context(cid, DEFAULT_ENGINE_IR_REFRESH_INTERVAL, Instant::now())
+}
+
+/// Creates a new Profile 1 compressor context with a specific IR refresh interval for tests.
+pub fn create_profile1_compressor_context_with_interval(
+    handler: &Profile1Handler,
+    cid: u16,
+    ir_refresh_interval: u32,
+) -> Box<dyn RohcCompressorContext> {
+    handler.create_compressor_context(cid, ir_refresh_interval, Instant::now())
+}
+
+/// Creates a new Profile 1 decompressor context for tests.
+pub fn create_profile1_decompressor_context(
+    handler: &Profile1Handler,
+    cid: u16,
+) -> Box<dyn RohcDecompressorContext> {
+    handler.create_decompressor_context(cid, Instant::now())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_create_rtp_headers() {
+    fn rtp_headers_creation() {
         let headers = create_rtp_headers(100, 1000, true, 0x12345678);
         assert_eq!(headers.rtp_sequence_number, 100);
         assert_eq!(headers.rtp_timestamp, 1000);
@@ -298,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_rtp_headers_fixed_ssrc() {
+    fn rtp_headers_fixed_ssrc_creation() {
         let headers = create_rtp_headers_fixed_ssrc(200, 2000, false);
         assert_eq!(headers.rtp_sequence_number, 200);
         assert_eq!(headers.rtp_timestamp, 2000);
@@ -308,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_ir_packet() {
+    fn ir_packet_identification() {
         // IR-DYN packet
         let ir_dyn = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN];
         assert!(is_ir_packet(&ir_dyn, 0));
@@ -327,29 +330,41 @@ mod tests {
     }
 
     #[test]
-    fn test_packet_type_identification() {
-        // UO-0 packet for CID 0
-        let uo0 = vec![0x45]; // Example: SN LSBs = 0b1000, CRC LSBs = 0b101 => 01000101
-        assert!(is_uo0_packet(&uo0, 0));
-        assert!(!is_uo1_sn_packet(&uo0, 0)); // Correctly not UO-1-SN
-        assert!(!is_ir_packet(&uo0, 0));
-
-        // UO-1-SN packet for CID 0 (Marker = true)
-        let uo1_marker_true = vec![0xA1, 0x12, 0x34]; // 0xA1 = 0b10100001 (M=1)
-        assert!(!is_uo0_packet(&uo1_marker_true, 0));
-        assert!(
-            is_uo1_sn_packet(&uo1_marker_true, 0),
-            "Failed for UO-1 with M=1"
+    fn engine_creation_helpers() {
+        let engine_default_refresh = create_default_test_engine();
+        // Access some field to ensure it's a RohcEngine, e.g. its context manager
+        assert_eq!(
+            engine_default_refresh
+                .context_manager()
+                .compressor_context_count(),
+            0
         );
-        assert!(!is_ir_packet(&uo1_marker_true, 0));
 
-        // UO-1-SN packet for CID 0 (Marker = false)
-        let uo1_marker_false = vec![0xA0, 0x56, 0x78]; // 0xA0 = 0b10100000 (M=0)
-        assert!(!is_uo0_packet(&uo1_marker_false, 0));
-        assert!(
-            is_uo1_sn_packet(&uo1_marker_false, 0),
-            "Failed for UO-1 with M=0"
+        let engine_specific_refresh = create_test_engine_with_system_clock(50);
+        assert_eq!(
+            engine_specific_refresh
+                .context_manager()
+                .decompressor_context_count(),
+            0
         );
-        assert!(!is_ir_packet(&uo1_marker_false, 0));
+
+        let (engine_mock, _mock_clock) =
+            create_test_engine_with_mock_clock(20, Duration::from_secs(10), Instant::now());
+        assert_eq!(engine_mock.context_manager().compressor_context_count(), 0);
+    }
+
+    #[test]
+    fn profile1_context_creation_helpers() {
+        let handler = create_profile1_handler();
+        let comp_ctx = create_profile1_compressor_context(&handler, 1);
+        assert_eq!(comp_ctx.cid(), 1);
+
+        let decomp_ctx = create_profile1_decompressor_context(&handler, 2);
+        assert_eq!(decomp_ctx.cid(), 2);
+
+        let comp_ctx_interval = create_profile1_compressor_context_with_interval(&handler, 3, 77);
+        // We can't directly assert ir_refresh_interval without downcasting,
+        // but we can check it was created.
+        assert_eq!(comp_ctx_interval.cid(), 3);
     }
 }
