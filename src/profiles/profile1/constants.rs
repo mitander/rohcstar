@@ -110,10 +110,20 @@ pub const P1_DEFAULT_P_IPID_OFFSET: i64 = 0;
 /// Static chain length for Profile 1 (RTP/UDP/IP) in bytes.
 /// Includes: IP_Src(4) + IP_Dst(4) + UDP_Src(2) + UDP_Dst(2) + RTP_SSRC(4) = 16 bytes.
 pub const P1_STATIC_CHAIN_LENGTH_BYTES: usize = 16;
-/// Dynamic chain length for Profile 1 (RTP/UDP/IP) in bytes when the D-bit is set in an IR packet.
+/// Base dynamic chain length for Profile 1 (RTP/UDP/IP) in bytes when the D-bit is set in an IR packet.
 /// Includes: RTP_SN(2) + RTP_TS(4) + RTP_Flags(1) = 7 bytes.
-/// (RTP_Flags octet contains M-bit and reserved bits).
-pub const P1_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 7;
+/// (RTP_Flags octet contains M-bit and other flags like TS_STRIDE_PRESENT).
+/// Note: Actual length varies if TS_STRIDE is present.
+pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 7;
+/// Length of the TS_STRIDE field when present in the IR dynamic chain, in bytes.
+pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;
+
+// --- Profile 1 IR Dynamic Chain RTP Flags Bitmasks ---
+/// Bitmask for the Marker (M) bit in the RTP_Flags octet of the IR dynamic chain. (MSB: Bit 7)
+pub const P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK: u8 = 0x80;
+// pub const P1_IR_DYN_RTP_FLAGS_X_BIT_MASK: u8 = 0x01; // (LSB: Bit 0 for EXTENSION, if needed)
+/// Bitmask for the TS_STRIDE_PRESENT flag in the RTP_Flags octet of the IR dynamic chain. (Bit 1)
+pub const P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK: u8 = 0x02;
 
 // --- Profile 1 CRC Input Lengths ---
 
@@ -178,7 +188,14 @@ mod tests {
     #[test]
     fn chain_length_constants_are_correct() {
         assert_eq!(P1_STATIC_CHAIN_LENGTH_BYTES, 16);
-        assert_eq!(P1_DYNAMIC_CHAIN_LENGTH_BYTES, 7);
+        assert_eq!(P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, 7);
+        assert_eq!(P1_TS_STRIDE_EXTENSION_LENGTH_BYTES, 4);
+    }
+
+    #[test]
+    fn ir_dyn_rtp_flags_masks_are_correct() {
+        assert_eq!(P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK, 0x80);
+        assert_eq!(P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK, 0x02);
     }
 
     #[test]

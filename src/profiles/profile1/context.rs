@@ -518,11 +518,9 @@ impl Profile1DecompressorContext {
 
         // Reset TS stride related fields. These will be updated if the IR packet
         // (specifically IR-DYN) carries a TS_STRIDE extension.
-        self.ts_stride = None;
-        // The base for any potential future stride detection (or if IR signals stride)
-        // becomes the timestamp from this IR packet.
-        self.ts_offset = ir_packet.dyn_rtp_timestamp;
-        self.ts_scaled_mode = false;
+        self.ts_stride = ir_packet.ts_stride; // Updated to use stride from IR if present
+        self.ts_offset = ir_packet.dyn_rtp_timestamp; // Base is IR's TS if stride is set/inferred
+        self.ts_scaled_mode = ir_packet.ts_stride.is_some(); // Activate if IR carried stride
     }
 
     /// Resets dynamic fields and state machine counters when transitioning to NoContext (NC) mode.
@@ -753,6 +751,7 @@ mod tests {
             dyn_rtp_sn: 200,
             dyn_rtp_timestamp: Timestamp::new(20000),
             dyn_rtp_marker: true,
+            ts_stride: None,
         };
 
         decomp_ctx.initialize_from_ir_packet(&ir_data);
@@ -772,7 +771,7 @@ mod tests {
         );
         // TS Stride after IR without extension
         assert_eq!(decomp_ctx.ts_stride, None);
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000)); // Base is IR TS
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000)); // Base is IR's TS
         assert!(!decomp_ctx.ts_scaled_mode);
     }
 

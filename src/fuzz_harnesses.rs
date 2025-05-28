@@ -47,6 +47,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         dyn_rtp_sn: 1,
         dyn_rtp_timestamp: Timestamp::new(1000),
         dyn_rtp_marker: false,
+        ts_stride: None, // Added missing field
         crc8: 0,
     };
 

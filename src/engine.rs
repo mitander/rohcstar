@@ -342,7 +342,7 @@ mod tests {
     use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
     use crate::profiles::profile1::protocol_types::Timestamp;
     use crate::profiles::profile1::{
-        P1_DYNAMIC_CHAIN_LENGTH_BYTES, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
+        P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
         P1_STATIC_CHAIN_LENGTH_BYTES, P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX,
         Profile1Handler, RtpUdpIpv4Headers,
     };
@@ -530,7 +530,7 @@ mod tests {
 
         let mut fake_ir_packet_bytes = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN, 0xFF]; // 0xFF is unsupported
         fake_ir_packet_bytes.extend_from_slice(
-            &[0u8; P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 1],
+            &[0u8; P1_STATIC_CHAIN_LENGTH_BYTES + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES + 1],
         );
 
         let result = engine.decompress(&fake_ir_packet_bytes);

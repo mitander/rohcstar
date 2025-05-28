@@ -205,6 +205,8 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
 /// This function constructs the byte representation of an IR or IR-DYN packet.
 /// It includes an Add-CID octet if the CID is small and non-zero.
 /// The CRC-8 is calculated over the profile, static chain, and dynamic chain (if present).
+/// If `ir_data.ts_stride` is `Some`, the TS_STRIDE_PRESENT flag is set in the RTP_Flags
+/// octet and the 4-byte stride value is appended to the dynamic chain.
 ///
 /// # Parameters
 /// * `ir_data` - A reference to `IrPacket` containing all necessary field values.
@@ -216,9 +218,13 @@ pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut final_packet_bytes = Vec::with_capacity(32);
-    let mut crc_payload_for_calc =
-        Vec::with_capacity(1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 5);
+    let mut final_packet_bytes = Vec::with_capacity(32); // Initial capacity
+    let mut crc_payload_for_calc = Vec::with_capacity(
+        1 + P1_STATIC_CHAIN_LENGTH_BYTES
+            + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
+            + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+            + 5,
+    );
 
     if ir_data.cid > 0 && ir_data.cid <= 15 {
         final_packet_bytes
@@ -233,7 +239,7 @@ pub fn build_profile1_ir_packet(
         });
     }
 
-    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN); // Assuming D-bit always 1 for this builder
 
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
@@ -249,20 +255,52 @@ pub fn build_profile1_ir_packet(
     final_packet_bytes.push(profile_u8);
     crc_payload_for_calc.push(profile_u8);
 
-    let static_chain_start_index = crc_payload_for_calc.len();
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_src.octets());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_dst.octets());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
-    final_packet_bytes.extend_from_slice(&crc_payload_for_calc[static_chain_start_index..]);
+    // Static Chain
+    let static_chain_start_index_in_final = final_packet_bytes.len();
+    final_packet_bytes.extend_from_slice(&ir_data.static_ip_src.octets());
+    final_packet_bytes.extend_from_slice(&ir_data.static_ip_dst.octets());
+    final_packet_bytes.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
+    final_packet_bytes.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
+    final_packet_bytes.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+    crc_payload_for_calc
+        .extend_from_slice(&final_packet_bytes[static_chain_start_index_in_final..]);
 
-    let dynamic_chain_start_in_crc_payload = crc_payload_for_calc.len();
-    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
-    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
-    crc_payload_for_calc.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 });
-    final_packet_bytes
-        .extend_from_slice(&crc_payload_for_calc[dynamic_chain_start_in_crc_payload..]);
+    // Dynamic Chain (SN, TS, RTP_Flags, optional TS_Stride)
+    let dynamic_chain_start_index_in_final = final_packet_bytes.len();
+    final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
+    final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+
+    let mut rtp_flags_octet = 0u8;
+    if ir_data.dyn_rtp_marker {
+        rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK;
+    }
+    eprintln!(
+        "[build_profile1_ir_packet] Received ir_data.ts_stride: {:?}",
+        ir_data.ts_stride
+    );
+    if ir_data.ts_stride.is_some() {
+        rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK;
+        eprintln!(
+            "[build_profile1_ir_packet] TS_STRIDE_BIT_MASK (0x{:02X}) was set. rtp_flags_octet is now: 0x{:02X}",
+            P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK, rtp_flags_octet
+        );
+    } else {
+        eprintln!(
+            "[build_profile1_ir_packet] ir_data.ts_stride is None. rtp_flags_octet is: 0x{:02X}",
+            rtp_flags_octet
+        );
+    }
+    final_packet_bytes.push(rtp_flags_octet);
+    eprintln!(
+        "[build_profile1_ir_packet] Final rtp_flags_octet pushed to final_packet_bytes: 0x{:02X}",
+        rtp_flags_octet
+    );
+
+    if let Some(stride_val) = ir_data.ts_stride {
+        final_packet_bytes.extend_from_slice(&stride_val.to_be_bytes());
+    }
+    crc_payload_for_calc
+        .extend_from_slice(&final_packet_bytes[dynamic_chain_start_index_in_final..]);
 
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload_for_calc);
     final_packet_bytes.push(calculated_crc8);
@@ -274,6 +312,8 @@ pub fn build_profile1_ir_packet(
 /// The input `core_packet_bytes` should be the ROHC packet content starting
 /// with the ROHC packet type octet.
 /// The `cid_from_engine` must be provided by the caller.
+/// This function now checks for and parses the optional TS_STRIDE extension
+/// in the dynamic chain if the corresponding flag in RTP_Flags is set.
 ///
 /// # Parameters
 /// * `core_packet_bytes` - Byte slice of the core IR packet.
@@ -307,17 +347,39 @@ pub fn parse_profile1_ir_packet(
     }
     let d_bit_set = (packet_type_octet & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0;
 
-    let crc_payload_start_index = current_offset;
-    let dynamic_chain_len = if d_bit_set {
-        P1_DYNAMIC_CHAIN_LENGTH_BYTES
-    } else {
-        0
-    };
-    let extension_len = 0;
-    let chains_total_len = P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len + extension_len;
-    let crc_payload_len_for_validation = 1 + chains_total_len;
+    // Determine actual dynamic chain length including potential TS_STRIDE
+    // This needs to be done *before* calculating the CRC payload slice.
+    let mut actual_dynamic_chain_len = 0;
+    let mut ts_stride_present_in_dyn_chain = false;
 
-    let end_of_crc_payload_exclusive = crc_payload_start_index + crc_payload_len_for_validation;
+    if d_bit_set {
+        actual_dynamic_chain_len = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES; // Start with base length
+        // Calculate offset to RTP_Flags: Type(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4)
+        let rtp_flags_octet_offset_in_core = 1 + P1_STATIC_CHAIN_LENGTH_BYTES + 2 + 4;
+        if core_packet_bytes.len() > current_offset + rtp_flags_octet_offset_in_core {
+            // current_offset is 1 here
+            let rtp_flags_octet_val =
+                core_packet_bytes[current_offset + rtp_flags_octet_offset_in_core];
+            if (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK) != 0 {
+                actual_dynamic_chain_len += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES;
+                ts_stride_present_in_dyn_chain = true;
+            }
+        } else if P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES > 0 {
+            // Only error if D-bit means there *should* be flags
+            return Err(RohcParsingError::NotEnoughData {
+                needed: current_offset + rtp_flags_octet_offset_in_core + 1, // +1 for the flags octet itself
+                got: core_packet_bytes.len(),
+                context: "IR Packet (RTP_Flags in dynamic chain)".to_string(),
+            });
+        }
+    }
+
+    let crc_payload_start_index_for_parse = current_offset; // current_offset is after Type octet
+    let chains_total_len_for_crc = P1_STATIC_CHAIN_LENGTH_BYTES + actual_dynamic_chain_len;
+    let crc_payload_len_for_validation = 1 + chains_total_len_for_crc; // Profile_ID + chains
+
+    let end_of_crc_payload_exclusive =
+        crc_payload_start_index_for_parse + crc_payload_len_for_validation;
     let crc_octet_index = end_of_crc_payload_exclusive;
 
     if core_packet_bytes.len() <= crc_octet_index {
@@ -329,7 +391,7 @@ pub fn parse_profile1_ir_packet(
     }
 
     let crc_payload_slice =
-        &core_packet_bytes[crc_payload_start_index..end_of_crc_payload_exclusive];
+        &core_packet_bytes[crc_payload_start_index_for_parse..end_of_crc_payload_exclusive];
     let received_crc8 = core_packet_bytes[crc_octet_index];
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(crc_payload_slice);
 
@@ -341,12 +403,14 @@ pub fn parse_profile1_ir_packet(
         });
     }
 
+    // Proceed with parsing fields now that CRC is validated
     let profile_octet = core_packet_bytes[current_offset];
     if profile_octet != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcParsingError::InvalidProfileId(profile_octet));
     }
-    current_offset += 1;
+    current_offset += 1; // Past Profile ID
 
+    // Static chain parsing
     let static_ip_src = Ipv4Addr::new(
         core_packet_bytes[current_offset],
         core_packet_bytes[current_offset + 1],
@@ -377,14 +441,16 @@ pub fn parse_profile1_ir_packet(
         core_packet_bytes[current_offset + 2],
         core_packet_bytes[current_offset + 3],
     ]);
-    current_offset += 4;
+    current_offset += 4; // End of static chain
 
-    let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker) = if d_bit_set {
-        if core_packet_bytes.len() < current_offset + P1_DYNAMIC_CHAIN_LENGTH_BYTES {
+    // Dynamic chain parsing
+    let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker, parsed_ts_stride) = if d_bit_set {
+        // Check if enough data for base dynamic chain
+        if core_packet_bytes.len() < current_offset + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES {
             return Err(RohcParsingError::NotEnoughData {
-                needed: current_offset + P1_DYNAMIC_CHAIN_LENGTH_BYTES,
+                needed: current_offset + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES,
                 got: core_packet_bytes.len(),
-                context: "IR Packet Dynamic Chain".to_string(),
+                context: "IR Packet Base Dynamic Chain".to_string(),
             });
         }
         let sn = u16::from_be_bytes([
@@ -399,13 +465,31 @@ pub fn parse_profile1_ir_packet(
             core_packet_bytes[current_offset + 3],
         ]);
         current_offset += 4;
-        let rtp_flags_octet = core_packet_bytes[current_offset];
-        // current_offset increment for flags octet is now correctly after all chain parsing (including future extensions).
-        // For Commit 1, since no extensions are parsed after flags, we increment it here.
-        let marker = (rtp_flags_octet & 0x80) == 0x80;
-        (sn, ts_val, marker)
+        let rtp_flags_octet_val = core_packet_bytes[current_offset];
+        current_offset += 1;
+        let marker = (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK) != 0;
+
+        let mut temp_ts_stride = None;
+        if ts_stride_present_in_dyn_chain {
+            // Use the flag determined before CRC validation
+            if core_packet_bytes.len() < current_offset + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES {
+                return Err(RohcParsingError::NotEnoughData {
+                    needed: current_offset + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
+                    got: core_packet_bytes.len(),
+                    context: "IR Packet TS_STRIDE Extension".to_string(),
+                });
+            }
+            temp_ts_stride = Some(u32::from_be_bytes([
+                core_packet_bytes[current_offset],
+                core_packet_bytes[current_offset + 1],
+                core_packet_bytes[current_offset + 2],
+                core_packet_bytes[current_offset + 3],
+            ]));
+            // current_offset += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES; // No increment if last field
+        }
+        (sn, ts_val, marker, temp_ts_stride)
     } else {
-        (0, 0, false)
+        (0, 0, false, None)
     };
 
     Ok(IrPacket {
@@ -420,6 +504,7 @@ pub fn parse_profile1_ir_packet(
         dyn_rtp_sn,
         dyn_rtp_timestamp: Timestamp::new(dyn_rtp_timestamp_val),
         dyn_rtp_marker,
+        ts_stride: parsed_ts_stride,
     })
 }
 
@@ -936,11 +1021,12 @@ mod tests {
             dyn_rtp_sn: 10,
             dyn_rtp_timestamp: Timestamp::new(100),
             dyn_rtp_marker: true,
+            ts_stride: None, // No TS stride for this test case
             crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
-        let expected_len = 1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 1;
-        assert_eq!(built_bytes.len(), expected_len);
+        // Base IR len: type(1) + profile(1) + static(16) + base_dyn(7) + crc(1) = 26
+        assert_eq!(built_bytes.len(), 26); // For CID 0, no Add-CID octet
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
         let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
@@ -949,6 +1035,55 @@ mod tests {
         assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
         assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content.dyn_rtp_timestamp);
         assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
+        assert_eq!(parsed_ir.ts_stride, None);
+        assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
+    }
+
+    #[test]
+    fn build_and_parse_ir_packet_cid0_with_ts_stride() {
+        let crc_calculators = CrcCalculators::new();
+        let ir_content = IrPacket {
+            cid: 0,
+            profile_id: RohcProfile::RtpUdpIp,
+            static_ip_src: "1.1.1.1".parse().unwrap(),
+            static_ip_dst: "2.2.2.2".parse().unwrap(),
+            static_udp_src_port: 100,
+            static_udp_dst_port: 200,
+            static_rtp_ssrc: 0xABC,
+            dyn_rtp_sn: 10,
+            dyn_rtp_timestamp: Timestamp::new(100),
+            dyn_rtp_marker: false,
+            ts_stride: Some(160), // With TS stride
+            crc8: 0,
+        };
+        let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        // Expected len: type(1)+profile(1)+static(16)+base_dyn(7)+ts_stride_ext(4)+crc(1) = 30
+        assert_eq!(built_bytes.len(), 30);
+        assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+        // The RTP_Flags octet (at offset 1+1+16+2+4 = 24 from start of ROHC packet for CID0)
+        // This means index 23 if built_bytes[0] is type, index 24 if first element is add-CID then type.
+        // For CID 0, built_bytes[0] is type.
+        // Type(0) Profile(1) Static(2-17) SN(18-19) TS(20-23) Flags(24) Stride(25-28) CRC(29)
+        let rtp_flags_byte_index = 1 + // ProfileID for CRC payload start
+                                    P1_STATIC_CHAIN_LENGTH_BYTES + // Static chain
+                                    2 + // SN
+                                    4; // TS
+        // Note: built_bytes[0] is Type, built_bytes[1] is Profile
+        // So absolute index in built_bytes is 1 + rtp_flags_byte_index
+        assert_eq!(
+            built_bytes[1 + rtp_flags_byte_index] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            "TS Stride bit not set in IR"
+        );
+
+        let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
+        assert_eq!(parsed_ir.cid, 0);
+        assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
+        assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
+        assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content.dyn_rtp_timestamp);
+        assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
+        assert_eq!(parsed_ir.ts_stride, Some(160));
         assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
     }
 
@@ -967,12 +1102,12 @@ mod tests {
             static_rtp_ssrc: 0,
             dyn_rtp_sn: 0,
             dyn_rtp_marker: false,
+            ts_stride: None,
             crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
-        let expected_len =
-            1 + 1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 1;
-        assert_eq!(built_bytes.len(), expected_len);
+        // Expected len: AddCID(1)+type(1)+profile(1)+static(16)+base_dyn(7)+crc(1) = 27
+        assert_eq!(built_bytes.len(), 27);
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
@@ -984,6 +1119,7 @@ mod tests {
         );
         assert_eq!(parsed_ir.static_rtp_ssrc, 0);
         assert_eq!(parsed_ir.dyn_rtp_sn, 0);
+        assert_eq!(parsed_ir.ts_stride, None);
     }
 
     #[test]

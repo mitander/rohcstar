@@ -117,42 +117,77 @@ impl Profile1Handler {
         context: &mut Profile1CompressorContext,
         uncompressed_headers: &RtpUdpIpv4Headers,
     ) -> Result<Vec<u8>, RohcError> {
-        if context.mode == Profile1CompressorMode::InitializationAndRefresh
-            || context.rtp_ssrc == 0
-            || context.rtp_ssrc != uncompressed_headers.rtp_ssrc
-        {
+        let ssrc_changed_or_initial =
+            context.rtp_ssrc == 0 || context.rtp_ssrc != uncompressed_headers.rtp_ssrc;
+
+        let ir_packet_ts_stride_to_send: Option<u32>;
+
+        if ssrc_changed_or_initial {
+            // Full context re-initialization is mandatory. Resets all stride information.
             context.initialize_context_from_uncompressed_headers(uncompressed_headers);
+            // After re-init, ts_scaled_mode is false, ts_stride is None.
+            // So, the IR packet should not signal any stride.
+            ir_packet_ts_stride_to_send = None;
+        } else {
+            // SSRC did not change. The IR packet should signal the stride if the compressor
+            // *was* in scaled mode *before* its internal stride state is updated by this IR packet's timestamp.
+            if context.ts_scaled_mode {
+                ir_packet_ts_stride_to_send = context.ts_stride;
+            } else {
+                ir_packet_ts_stride_to_send = None;
+            }
         }
+
+        // Now, update the compressor's internal stride detection state based on this IR packet's TS
+        // relative to the *previous* packet's TS (or based on the reset state if SSRC changed).
+        // This affects the compressor's state for packets *after* this IR.
+        context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp);
 
         let ir_data = IrPacket {
             cid: context.cid,
             profile_id: self.profile_id(),
-            crc8: 0,
-            static_ip_src: context.ip_source,
+            crc8: 0,                          // Will be calculated by builder
+            static_ip_src: context.ip_source, // Use current context values, possibly updated by initialize_context...
             static_ip_dst: context.ip_destination,
             static_udp_src_port: context.udp_source_port,
             static_udp_dst_port: context.udp_destination_port,
-            static_rtp_ssrc: context.rtp_ssrc,
+            static_rtp_ssrc: context.rtp_ssrc, // SSRC from context (which is now same as uncompressed_headers.rtp_ssrc)
             dyn_rtp_sn: uncompressed_headers.rtp_sequence_number,
             dyn_rtp_timestamp: uncompressed_headers.rtp_timestamp,
             dyn_rtp_marker: uncompressed_headers.rtp_marker,
+            ts_stride: ir_packet_ts_stride_to_send, // Use the value determined above
         };
+
+        // Log current states for clarity if needed, similar to existing eprintln!
+        eprintln!(
+            "[handler::compress_as_ir] SSRC changed/initial: {}. IR will send ts_stride: {:?}",
+            ssrc_changed_or_initial, ir_packet_ts_stride_to_send
+        );
+        eprintln!(
+            "[handler::compress_as_ir] Compressor state AFTER update_ts_stride_detection for this IR: ts_scaled_mode: {}, context.ts_stride: {:?}",
+            context.ts_scaled_mode, context.ts_stride
+        );
 
         let rohc_packet_bytes = build_profile1_ir_packet(&ir_data, &self.crc_calculators)
             .map_err(RohcError::Building)?;
 
+        // Update last sent fields for the compressor's context to reflect this IR packet
         context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
         context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
         context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
         context.last_sent_ip_id_full = uncompressed_headers.ip_identification;
+
         context.mode = Profile1CompressorMode::FirstOrder;
         context.fo_packets_sent_since_ir = 0;
         context.consecutive_fo_packets_sent = 0;
 
-        context.ts_stride = None;
-        context.ts_offset = Timestamp::new(0);
-        context.ts_stride_packets = 0;
-        context.ts_scaled_mode = false;
+        // The commented-out logic block regarding ts_offset reset if not signalling stride
+        // might need to be revisited, but the primary issue for the test failure is the
+        // timing of ir_data.ts_stride determination.
+        // If `ir_packet_ts_stride_to_send.is_none()`, it implies either SSRC changed (full reset already done)
+        // or scaled_mode was off. The `update_ts_stride_detection` call would already handle
+        // resetting/re-evaluating stride based on the current IR's timestamp.
+        // The decompressor uses the IR's TS as its ts_offset if it gets stride from IR.
 
         Ok(rohc_packet_bytes)
     }
@@ -388,6 +423,19 @@ impl Profile1Handler {
             )));
         }
         context.initialize_from_ir_packet(&parsed_ir);
+
+        // If IR packet carried TS_STRIDE, update decompressor context accordingly
+        if let Some(stride_from_ir) = parsed_ir.ts_stride {
+            context.ts_stride = Some(stride_from_ir);
+            context.ts_offset = parsed_ir.dyn_rtp_timestamp; // Base TS is from this IR packet
+            context.ts_scaled_mode = true; // Compressor is signalling scaled mode is active/intended
+        } else {
+            // If IR packet does not carry TS_STRIDE, decompressor should clear its stride knowledge
+            // or not activate scaled mode based on this IR alone.
+            // initialize_from_ir_packet already resets stride to None and ts_scaled_mode to false,
+            // and sets ts_offset to IR's TS, which is correct for new stride detection.
+        }
+
         Ok(self.reconstruct_full_headers(
             context,
             parsed_ir.dyn_rtp_sn,
@@ -602,9 +650,14 @@ impl Profile1Handler {
                 )
             })?;
 
+        // If TS_STRIDE is known (either from IR or inferred) and we successfully parsed
+        // a UO-1-RTP (which implies compressor is using scaled TS),
+        // then decompressor should also consider itself in TS scaled mode.
         if context.ts_stride.is_some() && !context.ts_scaled_mode {
             context.ts_scaled_mode = true;
         }
+        // This might redundantly call inference if already in scaled mode, but it's harmless.
+        // If TS_STRIDE was set by IR, this inference might confirm or adjust based on actual packets.
         context.infer_ts_stride_from_decompressed_ts(reconstructed_ts);
 
         let crc_input_bytes = self.build_uo_crc_input(
@@ -1039,6 +1092,7 @@ impl ProfileHandler for Profile1Handler {
         };
 
         if context.rtp_ssrc == 0 || context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
+            // This will reset ts_stride state if SSRC changes or it's the very first packet.
             context.initialize_context_from_uncompressed_headers(uncompressed_headers);
         }
 
@@ -1088,9 +1142,11 @@ impl ProfileHandler for Profile1Handler {
                 }
             }
             _ => {
+                // For FC, SC, SO modes, IR packets always lead to reinitialization.
                 if discriminated_type.is_ir() {
                     return self.decompress_as_ir(context, packet_bytes);
                 }
+                // Handle non-IR packets based on current decompressor mode.
                 match context.mode {
                     Profile1DecompressorMode::FullContext => match discriminated_type {
                         Profile1PacketType::Uo0 => self.decompress_as_uo0(context, packet_bytes),
@@ -1113,7 +1169,7 @@ impl ProfileHandler for Profile1Handler {
                             }))
                         }
                         Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-                            unreachable!("IR types handled")
+                            unreachable!("IR types handled by the outer if-branch")
                         }
                     },
                     Profile1DecompressorMode::StaticContext => {
@@ -1122,7 +1178,9 @@ impl ProfileHandler for Profile1Handler {
                     Profile1DecompressorMode::SecondOrder => {
                         self.decompress_in_so_state(context, packet_bytes, discriminated_type)
                     }
-                    Profile1DecompressorMode::NoContext => unreachable!(),
+                    Profile1DecompressorMode::NoContext => {
+                        unreachable!("NoContext handled by the outer match")
+                    }
                 }
             }
         };
@@ -1194,6 +1252,85 @@ mod tests {
             .downcast_ref::<Profile1DecompressorContext>()
             .unwrap();
         assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
+        // Check if TS stride was reset by non-stride IR
+        assert_eq!(decomp_ctx.ts_stride, None);
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000)); // Base is IR's TS
+        assert!(!decomp_ctx.ts_scaled_mode);
+    }
+
+    #[test]
+    fn ir_with_ts_stride_compression_and_decompression() {
+        let handler = Profile1Handler::new();
+        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+        let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+
+        // Prime compressor context to have TS stride active
+        let comp_ctx = comp_ctx_dyn
+            .as_any_mut()
+            .downcast_mut::<Profile1CompressorContext>()
+            .unwrap();
+        comp_ctx.rtp_ssrc = 0x12345678; // SSRC must be set for stride detection
+        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1000);
+        comp_ctx.update_ts_stride_detection(Timestamp::new(1160)); // Stride = 160, packets = 1
+        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1160);
+        comp_ctx.update_ts_stride_detection(Timestamp::new(1320)); // Stride = 160, packets = 2
+        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1320);
+        comp_ctx.update_ts_stride_detection(Timestamp::new(1480)); // Stride = 160, packets = 3 -> scaled_mode=true
+        assert!(comp_ctx.ts_scaled_mode);
+        assert_eq!(comp_ctx.ts_stride, Some(160));
+        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000)); // Offset captured at first detection
+
+        // Now, create IR headers. The IR should carry the TS_STRIDE.
+        let headers_ir = create_test_rtp_headers(200, Timestamp::new(3000), false);
+        let generic_headers_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
+
+        // Force IR (e.g. by setting mode, or just call compress_as_ir directly if that's cleaner for test)
+        comp_ctx_dyn
+            .as_any_mut()
+            .downcast_mut::<Profile1CompressorContext>()
+            .unwrap()
+            .mode = Profile1CompressorMode::InitializationAndRefresh;
+
+        let compressed_ir = handler
+            .compress(comp_ctx_dyn.as_mut(), &generic_headers_ir)
+            .unwrap();
+
+        // For CID 0, packet structure is: Type(0), Profile(1), Static(2-17), SN(18-19), TS(20-23), Flags(24), ...
+        let rtp_flags_octet_index_in_packet = 24;
+        assert_eq!(
+            // <- fails here
+            compressed_ir[rtp_flags_octet_index_in_packet] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            "TS Stride bit not set in IR"
+        );
+
+        let decompressed_generic_ir = handler
+            .decompress(decomp_ctx_dyn.as_mut(), &compressed_ir)
+            .unwrap();
+        let decomp_headers_ir = decompressed_generic_ir.as_rtp_udp_ipv4().unwrap();
+
+        assert_eq!(decomp_headers_ir.rtp_sequence_number, 200);
+        assert_eq!(decomp_headers_ir.rtp_timestamp, Timestamp::new(3000));
+
+        let decomp_ctx = decomp_ctx_dyn
+            .as_any()
+            .downcast_ref::<Profile1DecompressorContext>()
+            .unwrap();
+        assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
+        assert!(
+            decomp_ctx.ts_scaled_mode,
+            "Decompressor TS scaled mode not activated by IR stride"
+        );
+        assert_eq!(
+            decomp_ctx.ts_stride,
+            Some(160),
+            "Decompressor TS stride not set by IR"
+        );
+        assert_eq!(
+            decomp_ctx.ts_offset,
+            Timestamp::new(3000),
+            "Decompressor TS offset not set to IR TS"
+        );
     }
 
     #[test]
