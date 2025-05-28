@@ -218,12 +218,15 @@ pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut final_packet_bytes = Vec::with_capacity(32); // Initial capacity
+    let mut final_packet_bytes = Vec::with_capacity(32);
     let mut crc_payload_for_calc = Vec::with_capacity(
         1 + P1_STATIC_CHAIN_LENGTH_BYTES
             + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
-            + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
-            + 5,
+            + if ir_data.ts_stride.is_some() {
+                P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+            } else {
+                0
+            },
     );
 
     if ir_data.cid > 0 && ir_data.cid <= 15 {
@@ -239,7 +242,7 @@ pub fn build_profile1_ir_packet(
         });
     }
 
-    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN); // Assuming D-bit always 1 for this builder
+    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
@@ -255,7 +258,6 @@ pub fn build_profile1_ir_packet(
     final_packet_bytes.push(profile_u8);
     crc_payload_for_calc.push(profile_u8);
 
-    // Static Chain
     let static_chain_start_index_in_final = final_packet_bytes.len();
     final_packet_bytes.extend_from_slice(&ir_data.static_ip_src.octets());
     final_packet_bytes.extend_from_slice(&ir_data.static_ip_dst.octets());
@@ -265,7 +267,6 @@ pub fn build_profile1_ir_packet(
     crc_payload_for_calc
         .extend_from_slice(&final_packet_bytes[static_chain_start_index_in_final..]);
 
-    // Dynamic Chain (SN, TS, RTP_Flags, optional TS_Stride)
     let dynamic_chain_start_index_in_final = final_packet_bytes.len();
     final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
     final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
@@ -274,27 +275,10 @@ pub fn build_profile1_ir_packet(
     if ir_data.dyn_rtp_marker {
         rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK;
     }
-    eprintln!(
-        "[build_profile1_ir_packet] Received ir_data.ts_stride: {:?}",
-        ir_data.ts_stride
-    );
     if ir_data.ts_stride.is_some() {
         rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK;
-        eprintln!(
-            "[build_profile1_ir_packet] TS_STRIDE_BIT_MASK (0x{:02X}) was set. rtp_flags_octet is now: 0x{:02X}",
-            P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK, rtp_flags_octet
-        );
-    } else {
-        eprintln!(
-            "[build_profile1_ir_packet] ir_data.ts_stride is None. rtp_flags_octet is: 0x{:02X}",
-            rtp_flags_octet
-        );
     }
     final_packet_bytes.push(rtp_flags_octet);
-    eprintln!(
-        "[build_profile1_ir_packet] Final rtp_flags_octet pushed to final_packet_bytes: 0x{:02X}",
-        rtp_flags_octet
-    );
 
     if let Some(stride_val) = ir_data.ts_stride {
         final_packet_bytes.extend_from_slice(&stride_val.to_be_bytes());
@@ -327,7 +311,7 @@ pub fn parse_profile1_ir_packet(
     cid_from_engine: u16,
     crc_calculators: &CrcCalculators,
 ) -> Result<IrPacket, RohcParsingError> {
-    let mut current_offset = 0;
+    let mut current_offset_for_fields = 0;
 
     if core_packet_bytes.is_empty() {
         return Err(RohcParsingError::NotEnoughData {
@@ -336,8 +320,8 @@ pub fn parse_profile1_ir_packet(
             context: "IR Packet Type Octet".to_string(),
         });
     }
-    let packet_type_octet = core_packet_bytes[current_offset];
-    current_offset += 1;
+    let packet_type_octet = core_packet_bytes[current_offset_for_fields];
+    current_offset_for_fields += 1; // Now points to ProfileID byte index in core_packet_bytes
 
     if (packet_type_octet & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != P1_ROHC_IR_PACKET_TYPE_BASE {
         return Err(RohcParsingError::InvalidPacketType {
@@ -347,52 +331,46 @@ pub fn parse_profile1_ir_packet(
     }
     let d_bit_set = (packet_type_octet & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0;
 
-    // Determine actual dynamic chain length including potential TS_STRIDE
-    // This needs to be done *before* calculating the CRC payload slice.
-    let mut actual_dynamic_chain_len = 0;
-    let mut ts_stride_present_in_dyn_chain = false;
+    let mut dynamic_chain_len_for_crc = 0;
+    let mut ts_stride_present_flag_for_crc = false;
 
     if d_bit_set {
-        actual_dynamic_chain_len = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES; // Start with base length
-        // Calculate offset to RTP_Flags: Type(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4)
-        let rtp_flags_octet_offset_in_core = 1 + P1_STATIC_CHAIN_LENGTH_BYTES + 2 + 4;
-        if core_packet_bytes.len() > current_offset + rtp_flags_octet_offset_in_core {
-            // current_offset is 1 here
-            let rtp_flags_octet_val =
-                core_packet_bytes[current_offset + rtp_flags_octet_offset_in_core];
+        dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
+        // Absolute index of RTP_Flags in core_packet_bytes:
+        // Type (1) + ProfileID (1) + Static (16) + SN (2) + TS (4) = 24th byte. Index is 24.
+        const RTP_FLAGS_ABSOLUTE_IDX: usize = 24;
+
+        if core_packet_bytes.len() > RTP_FLAGS_ABSOLUTE_IDX {
+            let rtp_flags_octet_val = core_packet_bytes[RTP_FLAGS_ABSOLUTE_IDX];
             if (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK) != 0 {
-                actual_dynamic_chain_len += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES;
-                ts_stride_present_in_dyn_chain = true;
+                dynamic_chain_len_for_crc += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES;
+                ts_stride_present_flag_for_crc = true;
             }
         } else if P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES > 0 {
-            // Only error if D-bit means there *should* be flags
             return Err(RohcParsingError::NotEnoughData {
-                needed: current_offset + rtp_flags_octet_offset_in_core + 1, // +1 for the flags octet itself
+                needed: RTP_FLAGS_ABSOLUTE_IDX + 1,
                 got: core_packet_bytes.len(),
-                context: "IR Packet (RTP_Flags in dynamic chain)".to_string(),
+                context: "IR Packet (RTP_Flags for CRC check)".to_string(),
             });
         }
     }
 
-    let crc_payload_start_index_for_parse = current_offset; // current_offset is after Type octet
-    let chains_total_len_for_crc = P1_STATIC_CHAIN_LENGTH_BYTES + actual_dynamic_chain_len;
-    let crc_payload_len_for_validation = 1 + chains_total_len_for_crc; // Profile_ID + chains
+    let crc_payload_start_index_in_core = current_offset_for_fields; // Starts from ProfileID
+    let crc_payload_len_for_validation =
+        1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len_for_crc;
+    let crc_octet_index_in_core = crc_payload_start_index_in_core + crc_payload_len_for_validation;
 
-    let end_of_crc_payload_exclusive =
-        crc_payload_start_index_for_parse + crc_payload_len_for_validation;
-    let crc_octet_index = end_of_crc_payload_exclusive;
-
-    if core_packet_bytes.len() <= crc_octet_index {
+    if core_packet_bytes.len() <= crc_octet_index_in_core {
         return Err(RohcParsingError::NotEnoughData {
-            needed: crc_octet_index + 1,
+            needed: crc_octet_index_in_core + 1,
             got: core_packet_bytes.len(),
             context: "IR Packet (CRC field and defined payload)".to_string(),
         });
     }
 
     let crc_payload_slice =
-        &core_packet_bytes[crc_payload_start_index_for_parse..end_of_crc_payload_exclusive];
-    let received_crc8 = core_packet_bytes[crc_octet_index];
+        &core_packet_bytes[crc_payload_start_index_in_core..crc_octet_index_in_core];
+    let received_crc8 = core_packet_bytes[crc_octet_index_in_core];
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(crc_payload_slice);
 
     if received_crc8 != calculated_crc8 {
@@ -403,89 +381,79 @@ pub fn parse_profile1_ir_packet(
         });
     }
 
-    // Proceed with parsing fields now that CRC is validated
-    let profile_octet = core_packet_bytes[current_offset];
+    // current_offset_for_fields is already 1 (index of ProfileID)
+    let profile_octet = core_packet_bytes[current_offset_for_fields];
     if profile_octet != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcParsingError::InvalidProfileId(profile_octet));
     }
-    current_offset += 1; // Past Profile ID
+    current_offset_for_fields += 1; // Past Profile ID
 
-    // Static chain parsing
     let static_ip_src = Ipv4Addr::new(
-        core_packet_bytes[current_offset],
-        core_packet_bytes[current_offset + 1],
-        core_packet_bytes[current_offset + 2],
-        core_packet_bytes[current_offset + 3],
+        core_packet_bytes[current_offset_for_fields],
+        core_packet_bytes[current_offset_for_fields + 1],
+        core_packet_bytes[current_offset_for_fields + 2],
+        core_packet_bytes[current_offset_for_fields + 3],
     );
-    current_offset += 4;
+    current_offset_for_fields += 4;
     let static_ip_dst = Ipv4Addr::new(
-        core_packet_bytes[current_offset],
-        core_packet_bytes[current_offset + 1],
-        core_packet_bytes[current_offset + 2],
-        core_packet_bytes[current_offset + 3],
+        core_packet_bytes[current_offset_for_fields],
+        core_packet_bytes[current_offset_for_fields + 1],
+        core_packet_bytes[current_offset_for_fields + 2],
+        core_packet_bytes[current_offset_for_fields + 3],
     );
-    current_offset += 4;
+    current_offset_for_fields += 4;
     let static_udp_src_port = u16::from_be_bytes([
-        core_packet_bytes[current_offset],
-        core_packet_bytes[current_offset + 1],
+        core_packet_bytes[current_offset_for_fields],
+        core_packet_bytes[current_offset_for_fields + 1],
     ]);
-    current_offset += 2;
+    current_offset_for_fields += 2;
     let static_udp_dst_port = u16::from_be_bytes([
-        core_packet_bytes[current_offset],
-        core_packet_bytes[current_offset + 1],
+        core_packet_bytes[current_offset_for_fields],
+        core_packet_bytes[current_offset_for_fields + 1],
     ]);
-    current_offset += 2;
+    current_offset_for_fields += 2;
     let static_rtp_ssrc = u32::from_be_bytes([
-        core_packet_bytes[current_offset],
-        core_packet_bytes[current_offset + 1],
-        core_packet_bytes[current_offset + 2],
-        core_packet_bytes[current_offset + 3],
+        core_packet_bytes[current_offset_for_fields],
+        core_packet_bytes[current_offset_for_fields + 1],
+        core_packet_bytes[current_offset_for_fields + 2],
+        core_packet_bytes[current_offset_for_fields + 3],
     ]);
-    current_offset += 4; // End of static chain
+    current_offset_for_fields += 4;
 
-    // Dynamic chain parsing
     let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker, parsed_ts_stride) = if d_bit_set {
-        // Check if enough data for base dynamic chain
-        if core_packet_bytes.len() < current_offset + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES {
-            return Err(RohcParsingError::NotEnoughData {
-                needed: current_offset + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES,
-                got: core_packet_bytes.len(),
-                context: "IR Packet Base Dynamic Chain".to_string(),
-            });
-        }
         let sn = u16::from_be_bytes([
-            core_packet_bytes[current_offset],
-            core_packet_bytes[current_offset + 1],
+            core_packet_bytes[current_offset_for_fields],
+            core_packet_bytes[current_offset_for_fields + 1],
         ]);
-        current_offset += 2;
+        current_offset_for_fields += 2;
         let ts_val = u32::from_be_bytes([
-            core_packet_bytes[current_offset],
-            core_packet_bytes[current_offset + 1],
-            core_packet_bytes[current_offset + 2],
-            core_packet_bytes[current_offset + 3],
+            core_packet_bytes[current_offset_for_fields],
+            core_packet_bytes[current_offset_for_fields + 1],
+            core_packet_bytes[current_offset_for_fields + 2],
+            core_packet_bytes[current_offset_for_fields + 3],
         ]);
-        current_offset += 4;
-        let rtp_flags_octet_val = core_packet_bytes[current_offset];
-        current_offset += 1;
+        current_offset_for_fields += 4;
+        let rtp_flags_octet_val = core_packet_bytes[current_offset_for_fields];
+        current_offset_for_fields += 1;
         let marker = (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK) != 0;
 
         let mut temp_ts_stride = None;
-        if ts_stride_present_in_dyn_chain {
-            // Use the flag determined before CRC validation
-            if core_packet_bytes.len() < current_offset + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES {
+        if ts_stride_present_flag_for_crc {
+            if core_packet_bytes.len()
+                < current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+            {
                 return Err(RohcParsingError::NotEnoughData {
-                    needed: current_offset + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
+                    needed: current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
                     got: core_packet_bytes.len(),
                     context: "IR Packet TS_STRIDE Extension".to_string(),
                 });
             }
             temp_ts_stride = Some(u32::from_be_bytes([
-                core_packet_bytes[current_offset],
-                core_packet_bytes[current_offset + 1],
-                core_packet_bytes[current_offset + 2],
-                core_packet_bytes[current_offset + 3],
+                core_packet_bytes[current_offset_for_fields],
+                core_packet_bytes[current_offset_for_fields + 1],
+                core_packet_bytes[current_offset_for_fields + 2],
+                core_packet_bytes[current_offset_for_fields + 3],
             ]));
-            // current_offset += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES; // No increment if last field
         }
         (sn, ts_val, marker, temp_ts_stride)
     } else {
@@ -1061,18 +1029,11 @@ mod tests {
         assert_eq!(built_bytes.len(), 30);
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        // The RTP_Flags octet (at offset 1+1+16+2+4 = 24 from start of ROHC packet for CID0)
-        // This means index 23 if built_bytes[0] is type, index 24 if first element is add-CID then type.
-        // For CID 0, built_bytes[0] is type.
+        // The RTP_Flags octet index in `built_bytes` for CID0:
         // Type(0) Profile(1) Static(2-17) SN(18-19) TS(20-23) Flags(24) Stride(25-28) CRC(29)
-        let rtp_flags_byte_index = 1 + // ProfileID for CRC payload start
-                                    P1_STATIC_CHAIN_LENGTH_BYTES + // Static chain
-                                    2 + // SN
-                                    4; // TS
-        // Note: built_bytes[0] is Type, built_bytes[1] is Profile
-        // So absolute index in built_bytes is 1 + rtp_flags_byte_index
+        let rtp_flags_octet_absolute_index = 24;
         assert_eq!(
-            built_bytes[1 + rtp_flags_byte_index] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            built_bytes[rtp_flags_octet_absolute_index] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             "TS Stride bit not set in IR"
         );
