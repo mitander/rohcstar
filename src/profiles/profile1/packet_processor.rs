@@ -216,11 +216,10 @@ pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut final_packet_bytes = Vec::with_capacity(32); // Max size with potential extensions
+    let mut final_packet_bytes = Vec::with_capacity(32);
     let mut crc_payload_for_calc =
         Vec::with_capacity(1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_DYNAMIC_CHAIN_LENGTH_BYTES + 5);
 
-    // 1. Add-CID Octet (Optional)
     if ir_data.cid > 0 && ir_data.cid <= 15 {
         final_packet_bytes
             .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid as u8 & ROHC_SMALL_CID_MASK));
@@ -234,12 +233,8 @@ pub fn build_profile1_ir_packet(
         });
     }
 
-    // 2. ROHC Packet Type Octet
-    // For simplicity in this stage, always build IR-DYN (D-bit=1).
-    // A more advanced implementation might choose IR-Static based on context.
     final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-    // 3. Profile Identifier
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -254,36 +249,23 @@ pub fn build_profile1_ir_packet(
     final_packet_bytes.push(profile_u8);
     crc_payload_for_calc.push(profile_u8);
 
-    // 4. Static Chain
-    let static_chain_payload: Vec<u8> = {
-        let mut chain = Vec::with_capacity(P1_STATIC_CHAIN_LENGTH_BYTES);
-        chain.extend_from_slice(&ir_data.static_ip_src.octets());
-        chain.extend_from_slice(&ir_data.static_ip_dst.octets());
-        chain.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
-        chain.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
-        chain.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
-        chain
-    };
-    crc_payload_for_calc.extend_from_slice(&static_chain_payload);
-    final_packet_bytes.extend_from_slice(&static_chain_payload);
+    let static_chain_start_index = crc_payload_for_calc.len();
+    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_src.octets());
+    crc_payload_for_calc.extend_from_slice(&ir_data.static_ip_dst.octets());
+    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
+    crc_payload_for_calc.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
+    crc_payload_for_calc.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+    final_packet_bytes.extend_from_slice(&crc_payload_for_calc[static_chain_start_index..]);
 
-    // 5. Dynamic Chain (assuming D-bit is 1 for IR-DYN)
-    let dynamic_chain_payload: Vec<u8> = {
-        let mut chain = Vec::with_capacity(P1_DYNAMIC_CHAIN_LENGTH_BYTES);
-        chain.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
-        chain.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
-        chain.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 }); // RTP Flags octet
-        chain
-    };
-    crc_payload_for_calc.extend_from_slice(&dynamic_chain_payload);
-    final_packet_bytes.extend_from_slice(&dynamic_chain_payload);
+    let dynamic_chain_start_in_crc_payload = crc_payload_for_calc.len();
+    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
+    crc_payload_for_calc.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+    crc_payload_for_calc.push(if ir_data.dyn_rtp_marker { 0x80 } else { 0x00 });
+    final_packet_bytes
+        .extend_from_slice(&crc_payload_for_calc[dynamic_chain_start_in_crc_payload..]);
 
-    // 6. Calculate CRC-8 over the constructed crc_payload_for_calc
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload_for_calc);
-
-    // 7. Append CRC-8
     final_packet_bytes.push(calculated_crc8);
-
     Ok(final_packet_bytes)
 }
 
@@ -315,7 +297,7 @@ pub fn parse_profile1_ir_packet(
         });
     }
     let packet_type_octet = core_packet_bytes[current_offset];
-    current_offset += 1; // After Type Octet
+    current_offset += 1;
 
     if (packet_type_octet & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != P1_ROHC_IR_PACKET_TYPE_BASE {
         return Err(RohcParsingError::InvalidPacketType {
@@ -326,13 +308,16 @@ pub fn parse_profile1_ir_packet(
     let d_bit_set = (packet_type_octet & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0;
 
     let crc_payload_start_index = current_offset;
-    let mut expected_payload_len = 1 + P1_STATIC_CHAIN_LENGTH_BYTES; // ProfileID + Static
-    if d_bit_set {
-        expected_payload_len += P1_DYNAMIC_CHAIN_LENGTH_BYTES;
-    }
-    // Note: If/when TS_STRIDE extension is added, its length (if present) must be added to expected_payload_len here.
+    let dynamic_chain_len = if d_bit_set {
+        P1_DYNAMIC_CHAIN_LENGTH_BYTES
+    } else {
+        0
+    };
+    let extension_len = 0;
+    let chains_total_len = P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len + extension_len;
+    let crc_payload_len_for_validation = 1 + chains_total_len;
 
-    let end_of_crc_payload_exclusive = crc_payload_start_index + expected_payload_len;
+    let end_of_crc_payload_exclusive = crc_payload_start_index + crc_payload_len_for_validation;
     let crc_octet_index = end_of_crc_payload_exclusive;
 
     if core_packet_bytes.len() <= crc_octet_index {
@@ -415,6 +400,8 @@ pub fn parse_profile1_ir_packet(
         ]);
         current_offset += 4;
         let rtp_flags_octet = core_packet_bytes[current_offset];
+        // current_offset increment for flags octet is now correctly after all chain parsing (including future extensions).
+        // For Commit 1, since no extensions are parsed after flags, we increment it here.
         let marker = (rtp_flags_octet & 0x80) == 0x80;
         (sn, ts_val, marker)
     } else {
@@ -590,7 +577,7 @@ pub fn parse_profile1_uo1_sn_packet(
         num_ts_lsb_bits: None,
         ip_id_lsb: None,
         num_ip_id_lsb_bits: None,
-        ts_scaled: None, // Initialize new field
+        ts_scaled: None,
         crc8: received_crc8,
     })
 }
@@ -683,7 +670,7 @@ pub fn parse_profile1_uo1_ts_packet(
         num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
         ip_id_lsb: None,
         num_ip_id_lsb_bits: None,
-        ts_scaled: None, // New field initialized
+        ts_scaled: None,
         crc8: received_crc8,
     })
 }
@@ -778,7 +765,7 @@ pub fn parse_profile1_uo1_id_packet(
         num_ts_lsb_bits: None,
         ip_id_lsb: Some(ip_id_lsb_val as u16),
         num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
-        ts_scaled: None, // New field initialized
+        ts_scaled: None,
         crc8: received_crc8,
     })
 }
@@ -807,7 +794,6 @@ pub fn build_profile1_uo1_rtp_packet(
                 description: "UO-1-RTP requires a TS_SCALED value.".to_string(),
             })?;
 
-    // UO-1-RTP packet type discriminator: 1010100M
     let type_octet = P1_UO_1_RTP_DISCRIMINATOR_BASE
         | (if packet_data.marker {
             P1_UO_1_RTP_MARKER_BIT_MASK
@@ -824,7 +810,6 @@ pub fn build_profile1_uo1_rtp_packet(
             final_packet.extend_from_slice(&core_packet_bytes);
             Ok(final_packet)
         } else if cid_val == 0 {
-            // CID 0 for UO-1-RTP means no Add-CID
             Ok(core_packet_bytes)
         } else {
             Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -836,7 +821,6 @@ pub fn build_profile1_uo1_rtp_packet(
             })
         }
     } else {
-        // No CID provided (implicitly CID 0)
         Ok(core_packet_bytes)
     }
 }
@@ -856,7 +840,6 @@ pub fn build_profile1_uo1_rtp_packet(
 pub fn parse_profile1_uo1_rtp_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
-    // Core UO-1-RTP is 3 bytes: Type (1), TS_SCALED (1), CRC-8 (1)
     let expected_len = 3;
     if core_packet_bytes.len() < expected_len {
         return Err(RohcParsingError::NotEnoughData {
@@ -868,11 +851,10 @@ pub fn parse_profile1_uo1_rtp_packet(
 
     let type_octet = core_packet_bytes[0];
 
-    // Verify it's UO-1-RTP (discriminator prefix 1010100, M variable)
     if (type_octet & 0b1111_1110) != P1_UO_1_RTP_DISCRIMINATOR_BASE {
         return Err(RohcParsingError::InvalidPacketType {
             discriminator: type_octet,
-            profile_id: Some(RohcProfile::RtpUdpIp.into()), // Profile hint
+            profile_id: Some(RohcProfile::RtpUdpIp.into()),
         });
     }
 
@@ -881,11 +863,11 @@ pub fn parse_profile1_uo1_rtp_packet(
     let received_crc8 = core_packet_bytes[2];
 
     Ok(Uo1Packet {
-        cid: None, // CID is handled by the engine layer
-        sn_lsb: 0, // SN is implicit (SN_ref + 1) for UO-1-RTP, not in packet
+        cid: None,
+        sn_lsb: 0,
         num_sn_lsb_bits: 0,
         marker: marker_bit_set,
-        ts_lsb: None, // UO-1-RTP uses TS_SCALED, not TS_LSB
+        ts_lsb: None,
         num_ts_lsb_bits: None,
         ip_id_lsb: None,
         num_ip_id_lsb_bits: None,
@@ -899,6 +881,9 @@ mod tests {
     use super::*;
     use crate::constants::DEFAULT_IPV4_TTL;
     use crate::packet_defs::RohcProfile;
+    use crate::profiles::profile1::constants::{
+        P1_UO_1_RTP_DISCRIMINATOR_BASE, P1_UO_1_RTP_MARKER_BIT_MASK,
+    };
 
     fn build_sample_rtp_packet_bytes(sn: u16, ssrc: u32, ts_val: u32) -> Vec<u8> {
         let mut buf = Vec::new();

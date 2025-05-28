@@ -14,11 +14,10 @@ use super::context::{
 use super::discriminator::Profile1PacketType;
 use super::packet_processor::{
     build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_id_packet,
-    build_profile1_uo1_sn_packet, build_profile1_uo1_ts_packet, parse_profile1_ir_packet,
-    parse_profile1_uo0_packet, parse_profile1_uo1_id_packet, parse_profile1_uo1_sn_packet,
-    parse_profile1_uo1_ts_packet,
+    build_profile1_uo1_rtp_packet, build_profile1_uo1_sn_packet, build_profile1_uo1_ts_packet,
+    parse_profile1_ir_packet, parse_profile1_uo0_packet, parse_profile1_uo1_id_packet,
+    parse_profile1_uo1_rtp_packet, parse_profile1_uo1_sn_packet, parse_profile1_uo1_ts_packet,
 };
-// build_profile1_uo1_rtp_packet and parse_profile1_uo1_rtp_packet will be imported later
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
 use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
@@ -86,7 +85,6 @@ impl Profile1Handler {
                 return true;
             }
         }
-
         let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT;
         if ts_k > 0 && ts_k < 32 {
             let max_safe_ts_delta: u32 = 1 << (ts_k.saturating_sub(1));
@@ -98,7 +96,6 @@ impl Profile1Handler {
                 return true;
             }
         }
-
         if uncompressed_headers.ip_identification != context.last_sent_ip_id_full {
             let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
             if ipid_k > 0 && ipid_k < 16 {
@@ -115,16 +112,6 @@ impl Profile1Handler {
     }
 
     /// Handles compressor logic for sending an IR packet.
-    ///
-    /// Updates the compressor context with the current packet's dynamic fields
-    /// and transitions the mode to `FirstOrder`.
-    ///
-    /// # Parameters
-    /// * `context` - Mutable reference to the `Profile1CompressorContext`.
-    /// * `uncompressed_headers` - The uncompressed headers for the current packet.
-    ///
-    /// # Returns
-    /// `Result<Vec<u8>, RohcError>` containing the built IR packet bytes.
     fn compress_as_ir(
         &self,
         context: &mut Profile1CompressorContext,
@@ -171,16 +158,6 @@ impl Profile1Handler {
     }
 
     /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets.
-    ///
-    /// Selects the most appropriate UO packet type based on changes in header fields
-    /// relative to the context. Updates TS stride detection and relevant context fields.
-    ///
-    /// # Parameters
-    /// * `context` - Mutable reference to the `Profile1CompressorContext`.
-    /// * `uncompressed_headers` - The uncompressed headers for the current packet.
-    ///
-    /// # Returns
-    /// `Result<Vec<u8>, RohcError>` containing the built UO packet bytes.
     fn compress_as_uo(
         &self,
         context: &mut Profile1CompressorContext,
@@ -201,41 +178,44 @@ impl Profile1Handler {
         let ip_id_changed = current_ip_id != context.last_sent_ip_id_full;
         let ip_id_conditions_for_uo1_id = ip_id_changed;
 
-        let maybe_ts_scaled = if context.ts_scaled_mode && sn_incremented_by_one && !ip_id_changed {
-            context.calculate_ts_scaled(current_ts)
-        } else {
-            None
-        };
-
-        let final_rohc_packet_bytes = if marker_unchanged
-            && sn_encodable_for_uo0
-            && !ts_changed_significantly
-            && !ip_id_changed
-        {
-            self.build_compress_uo0(context, current_sn)?
-        } else if let Some(_ts_scaled_val) = maybe_ts_scaled {
-            // This placeholder will be replaced by UO-1-RTP building logic.
-            if marker_unchanged && ts_changed_significantly {
+        // Packet selection logic, prioritizing UO-1-RTP if possible
+        let final_rohc_packet_bytes =
+            if context.ts_scaled_mode && sn_incremented_by_one && !ip_id_changed {
+                if let Some(ts_scaled_val) = context.calculate_ts_scaled(current_ts) {
+                    // Attempt to build UO-1-RTP
+                    self.build_compress_uo1_rtp(context, current_sn, ts_scaled_val, current_marker)?
+                } else {
+                    // TS_SCALED not possible (e.g., overflow, non-alignment), fall back
+                    // The most likely fallback if TS has changed (implied by active stride usually)
+                    // and other UO-0 conditions are not met, would be UO-1-TS.
+                    if marker_unchanged && ts_changed_significantly && !ip_id_changed {
+                        self.build_compress_uo1_ts(context, current_sn, current_ts)?
+                    } else {
+                        // Broader fallback to UO-1-SN if UO-1-TS isn't appropriate
+                        self.build_compress_uo1_sn(context, current_sn, current_marker)?
+                    }
+                }
+            } else if marker_unchanged
+                && sn_encodable_for_uo0
+                && !ts_changed_significantly
+                && !ip_id_changed
+            {
+                self.build_compress_uo0(context, current_sn)?
+            } else if marker_unchanged
+                && ts_changed_significantly
+                && sn_incremented_by_one
+                && !ip_id_changed
+            {
                 self.build_compress_uo1_ts(context, current_sn, current_ts)?
+            } else if marker_unchanged
+                && ip_id_conditions_for_uo1_id
+                && sn_incremented_by_one
+                && !ts_changed_significantly
+            {
+                self.build_compress_uo1_id(context, current_sn, current_ip_id)?
             } else {
-                // Covers marker change or TS not significantly changed but other conditions not met for UO-0
                 self.build_compress_uo1_sn(context, current_sn, current_marker)?
-            }
-        } else if marker_unchanged
-            && ts_changed_significantly
-            && sn_incremented_by_one
-            && !ip_id_changed
-        {
-            self.build_compress_uo1_ts(context, current_sn, current_ts)?
-        } else if marker_unchanged
-            && ip_id_conditions_for_uo1_id
-            && sn_incremented_by_one
-            && !ts_changed_significantly
-        {
-            self.build_compress_uo1_id(context, current_sn, current_ip_id)?
-        } else {
-            self.build_compress_uo1_sn(context, current_sn, current_marker)?
-        };
+            };
 
         context.last_sent_rtp_sn_full = current_sn;
         context.last_sent_rtp_ts_full = current_ts;
@@ -357,6 +337,41 @@ impl Profile1Handler {
             ..Default::default()
         };
         build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
+    }
+
+    /// Builds a ROHC Profile 1 UO-1-RTP packet.
+    fn build_compress_uo1_rtp(
+        &self,
+        context: &Profile1CompressorContext, // context can be & for read-only access during build
+        current_sn: u16,
+        ts_scaled_val: u8,
+        current_marker: bool,
+    ) -> Result<Vec<u8>, RohcError> {
+        let stride = context.ts_stride.ok_or_else(|| {
+            RohcError::Internal(
+                "TS stride missing in scaled mode during UO-1-RTP build.".to_string(),
+            )
+        })?;
+        let full_ts_for_crc = context
+            .ts_offset
+            .wrapping_add(ts_scaled_val as u32 * stride);
+
+        let crc_input_bytes = self.build_uo_crc_input(
+            context.rtp_ssrc,
+            current_sn,
+            full_ts_for_crc,
+            current_marker,
+        );
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+
+        let uo1_rtp_data = Uo1Packet {
+            cid: context.get_small_cid_for_packet(),
+            marker: current_marker,
+            ts_scaled: Some(ts_scaled_val),
+            crc8: calculated_crc8,
+            ..Default::default()
+        };
+        build_profile1_uo1_rtp_packet(&uo1_rtp_data).map_err(RohcError::Building)
     }
 
     /// Parses an IR packet and updates decompressor context.
@@ -560,6 +575,66 @@ impl Profile1Handler {
         ))
     }
 
+    /// Parses a UO-1-RTP packet and updates decompressor context.
+    fn _parse_and_reconstruct_uo1_rtp(
+        &self,
+        context: &mut Profile1DecompressorContext,
+        packet_bytes: &[u8],
+    ) -> Result<RtpUdpIpv4Headers, RohcError> {
+        let parsed_uo1_rtp = parse_profile1_uo1_rtp_packet(packet_bytes)?;
+
+        let reconstructed_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
+
+        let ts_scaled_received =
+            parsed_uo1_rtp
+                .ts_scaled
+                .ok_or_else(|| RohcParsingError::MandatoryFieldMissing {
+                    field_name: "ts_scaled".to_string(),
+                    structure_name: "UO-1-RTP (parsed)".to_string(),
+                })?;
+
+        let reconstructed_ts = context
+            .reconstruct_ts_from_scaled(ts_scaled_received)
+            .ok_or_else(|| {
+                RohcError::InvalidState(
+                    "Cannot reconstruct TS from TS_SCALED: TS_STRIDE not established in context."
+                        .to_string(),
+                )
+            })?;
+
+        if context.ts_stride.is_some() && !context.ts_scaled_mode {
+            context.ts_scaled_mode = true;
+        }
+        context.infer_ts_stride_from_decompressed_ts(reconstructed_ts);
+
+        let crc_input_bytes = self.build_uo_crc_input(
+            context.rtp_ssrc,
+            reconstructed_sn,
+            reconstructed_ts,
+            parsed_uo1_rtp.marker,
+        );
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+        if calculated_crc8 != parsed_uo1_rtp.crc8 {
+            return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
+                expected: parsed_uo1_rtp.crc8,
+                calculated: calculated_crc8,
+                crc_type: "ROHC-CRC8 (UO-1-RTP)".to_string(),
+            }));
+        }
+
+        context.last_reconstructed_rtp_sn_full = reconstructed_sn;
+        context.last_reconstructed_rtp_ts_full = reconstructed_ts;
+        context.last_reconstructed_rtp_marker = parsed_uo1_rtp.marker;
+
+        Ok(self.reconstruct_full_headers(
+            context,
+            reconstructed_sn,
+            reconstructed_ts,
+            parsed_uo1_rtp.marker,
+            context.last_reconstructed_ip_id_full,
+        ))
+    }
+
     /// Handles decompressor state transitions for FC mode after UO packet processing.
     fn handle_fc_uo_packet_outcome(
         &self,
@@ -668,6 +743,17 @@ impl Profile1Handler {
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
 
+    /// Decompresses UO-1-RTP in FC mode, handling state transitions.
+    fn decompress_as_uo1_rtp(
+        &self,
+        context: &mut Profile1DecompressorContext,
+        packet_bytes: &[u8],
+    ) -> Result<GenericUncompressedHeaders, RohcError> {
+        let outcome = self._parse_and_reconstruct_uo1_rtp(context, packet_bytes);
+        self.handle_fc_uo_packet_outcome(context, outcome)
+            .map(GenericUncompressedHeaders::RtpUdpIpv4)
+    }
+
     /// Checks if decompressor should transition from SO to NC.
     fn should_transition_so_to_nc(&self, context: &Profile1DecompressorContext) -> bool {
         if context.so_consecutive_failures >= P1_SO_MAX_CONSECUTIVE_FAILURES {
@@ -718,10 +804,11 @@ impl Profile1Handler {
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo1Rtp { .. } => {
-                    is_failure_of_dynamic_updater_parse = true;
-                    Err(RohcError::Internal(
-                        "UO-1-RTP parsing in SC not yet implemented".to_string(),
-                    ))
+                    let res = self._parse_and_reconstruct_uo1_rtp(context, packet_bytes);
+                    if res.is_err() {
+                        is_failure_of_dynamic_updater_parse = true;
+                    }
+                    res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo0 => {
                     is_failure_of_dynamic_updater_parse = false;
@@ -745,6 +832,12 @@ impl Profile1Handler {
             Ok(headers) => {
                 context.sc_to_nc_k_failures = 0;
                 context.sc_to_nc_n_window_count = 0;
+                if discriminated_type.is_dynamically_updating_type()
+                    && (discriminated_type.is_uo1() || context.ts_scaled_mode)
+                {
+                    context.mode = Profile1DecompressorMode::FullContext;
+                    context.fc_packets_successful_streak = 1;
+                }
                 Ok(headers)
             }
             Err(ref e) => {
@@ -787,9 +880,9 @@ impl Profile1Handler {
                 Profile1PacketType::Uo0 => self
                     ._parse_and_reconstruct_uo0(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
-                Profile1PacketType::Uo1Rtp { .. } => Err(RohcError::Internal(
-                    "UO-1-RTP parsing in SO not yet implemented".to_string(),
-                )),
+                Profile1PacketType::Uo1Rtp { .. } => self
+                    ._parse_and_reconstruct_uo1_rtp(context, packet_bytes)
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Unknown(val) => {
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                         discriminator: val,
@@ -826,16 +919,6 @@ impl Profile1Handler {
     }
 
     /// Reconstructs full `RtpUdpIpv4Headers` from context and decoded dynamic fields.
-    ///
-    /// # Parameters
-    /// * `context` - The decompressor context holding static chain information.
-    /// * `sn` - The reconstructed RTP Sequence Number.
-    /// * `ts` - The reconstructed RTP Timestamp.
-    /// * `marker` - The reconstructed RTP Marker bit.
-    /// * `ip_id` - The reconstructed IP Identification.
-    ///
-    /// # Returns
-    /// The fully reconstructed `RtpUdpIpv4Headers`.
     fn reconstruct_full_headers(
         &self,
         context: &Profile1DecompressorContext,
@@ -876,7 +959,6 @@ impl Profile1Handler {
     }
 
     /// Creates byte slice input for UO packet CRC calculation.
-    /// Format: SSRC(4), SN(2), TS(4), Marker(1 byte: 0x00 or 0x01).
     fn build_uo_crc_input(
         &self,
         context_ssrc: u32,
@@ -893,7 +975,6 @@ impl Profile1Handler {
     }
 
     /// Creates byte slice input for UO-1-ID packet CRC calculation.
-    /// Format: SSRC(4), SN(2), TS(4), Marker(1), IP-ID LSB(1 for 8-bit width).
     fn build_uo1_id_crc_input(
         &self,
         context_ssrc: u32,
@@ -1022,24 +1103,23 @@ impl ProfileHandler for Profile1Handler {
                         Profile1PacketType::Uo1Id => {
                             self.decompress_as_uo1_id(context, packet_bytes)
                         }
-                        Profile1PacketType::Uo1Rtp { .. } => Err(RohcError::Internal(
-                            "UO-1-RTP parsing in FC not yet implemented".to_string(),
-                        )),
+                        Profile1PacketType::Uo1Rtp { .. } => {
+                            self.decompress_as_uo1_rtp(context, packet_bytes)
+                        }
                         Profile1PacketType::Unknown(val) => {
                             Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                                 discriminator: val,
                                 profile_id: Some(self.profile_id().into()),
                             }))
                         }
-                        _ => unreachable!("IR types handled"),
+                        Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
+                            unreachable!("IR types handled")
+                        }
                     },
                     Profile1DecompressorMode::StaticContext => {
                         self.decompress_in_sc_state(context, packet_bytes, discriminated_type)
                     }
                     Profile1DecompressorMode::SecondOrder => {
-                        // SO mode processes UO-0 and UO-1 type packets (which includes UO-1-RTP).
-                        // Other types (like IR, which should be handled before this state,
-                        // or truly Unknown) will result in an error within decompress_in_so_state.
                         self.decompress_in_so_state(context, packet_bytes, discriminated_type)
                     }
                     Profile1DecompressorMode::NoContext => unreachable!(),
