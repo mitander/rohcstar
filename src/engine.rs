@@ -34,7 +34,8 @@ impl RohcEngine {
     ///
     /// # Parameters
     /// - `default_ir_refresh_interval`: Default IR refresh interval for new compressor contexts.
-    /// - `context_timeout`: Duration after which inactive contexts are considered stale.
+    /// - `context_timeout`: Duration after which an inactive context is considered stale and can be pruned.
+    /// - `clock`: An `Arc` to a `Clock` implementation, allowing for custom time sources (e.g., `SystemClock` or `MockClock` for testing).
     pub fn new(
         default_ir_refresh_interval: u32,
         context_timeout: Duration,

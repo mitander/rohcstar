@@ -21,10 +21,11 @@
 
 *   **Profile 0x0001 (RTP/UDP/IP) U-mode:**
     *   [✓] IR, UO-0, UO-1-SN, UO-1-TS packet compression/decompression.
-    *   [~] UO-1-ID packet compression/decompression (CRC logic under review).
+    *   [✓] UO-1-ID packet compression/decompression (CRC logic under review).
     *   [✓] Basic NC, SC, FC decompressor state transitions.
-    *   [~] SO decompressor state logic partially implemented.
-    *   [~] Context timeout handling in progress.
+    *   [✓] SO decompressor state logic partially implemented.
+    *   [✓] Context timeout handling in progress.
+    *   [✓] Basic TS_STRIDE support (compressor detection, UO-1-RTP, IR-DYN signaling).
 
 ## Core Features
 
@@ -42,7 +43,7 @@
 
 ```rust
 use rohcstar::{RohcEngine, GenericUncompressedHeaders, RohcProfile};
-use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers, Timestamp};
 use std::net::Ipv4Addr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -60,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         udp_dst_port: 20020,
         rtp_ssrc: 0x12345678,
         rtp_sequence_number: 100,
-        rtp_timestamp: 1000,
+        rtp_timestamp: Timestamp::new(1000),
         rtp_marker: false,
         // ... other fields can be defaulted or set explicitly
         ..Default::default()

@@ -111,7 +111,7 @@ impl Profile1Handler {
         false
     }
 
-    /// Handles compressor logic for sending an IR packet.
+    /// Handles compressor logic for sending an IR packet, including context updates and TS_STRIDE signaling.
     fn compress_as_ir(
         &self,
         context: &mut Profile1CompressorContext,
@@ -163,16 +163,7 @@ impl Profile1Handler {
         Ok(rohc_packet_bytes)
     }
 
-    // ... (rest of Profile1Handler methods are unchanged from your provided code)
-    // compress_as_uo, build_compress_*, _parse_and_reconstruct_*, handle_fc_uo_packet_outcome,
-    // decompress_as_*, should_transition_*, decompress_in_*, reconstruct_full_headers,
-    // build_uo_crc_input, build_uo1_id_crc_input all remain the same.
-    // The ProfileHandler trait implementation methods also remain the same.
-    // Only the tests section within this file needs to be adjusted if the `eprintln!` were there.
-    // The core logic change for IR-DYN TS_STRIDE is in packet_processor.rs and IrPacket struct.
-    // The `_parse_and_reconstruct_ir` method's interaction with context.initialize_from_ir_packet
-    // should now correctly handle the `ts_stride` field from the parsed `IrPacket`.
-    /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets.
+    /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets, selecting the appropriate UO type.
     fn compress_as_uo(
         &self,
         context: &mut Profile1CompressorContext,
@@ -390,7 +381,7 @@ impl Profile1Handler {
     }
 
     /// Parses an IR packet and updates decompressor context.
-    fn _parse_and_reconstruct_ir(
+    fn parse_and_reconstruct_ir(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -414,7 +405,7 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-0 packet and updates decompressor context.
-    fn _parse_and_reconstruct_uo0(
+    fn parse_and_reconstruct_uo0(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -459,7 +450,7 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-SN packet and updates decompressor context.
-    fn _parse_and_reconstruct_uo1_sn(
+    fn parse_and_reconstruct_uo1_sn(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -500,7 +491,7 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-TS packet and updates decompressor context.
-    fn _parse_and_reconstruct_uo1_ts(
+    fn parse_and_reconstruct_uo1_ts(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -545,7 +536,7 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-ID packet and updates decompressor context.
-    fn _parse_and_reconstruct_uo1_id(
+    fn parse_and_reconstruct_uo1_id(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -592,7 +583,7 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-RTP packet and updates decompressor context.
-    fn _parse_and_reconstruct_uo1_rtp(
+    fn parse_and_reconstruct_uo1_rtp(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
@@ -696,7 +687,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        match self._parse_and_reconstruct_ir(context, packet_bytes) {
+        match self.parse_and_reconstruct_ir(context, packet_bytes) {
             Ok(reconstructed_rtp_headers) => {
                 context.mode = Profile1DecompressorMode::FullContext;
                 context.consecutive_crc_failures_in_fc = 0;
@@ -721,7 +712,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        let outcome = self._parse_and_reconstruct_uo0(context, packet_bytes);
+        let outcome = self.parse_and_reconstruct_uo0(context, packet_bytes);
         self.handle_fc_uo_packet_outcome(context, outcome)
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
@@ -732,7 +723,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        let outcome = self._parse_and_reconstruct_uo1_sn(context, packet_bytes);
+        let outcome = self.parse_and_reconstruct_uo1_sn(context, packet_bytes);
         self.handle_fc_uo_packet_outcome(context, outcome)
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
@@ -743,7 +734,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        let outcome = self._parse_and_reconstruct_uo1_ts(context, packet_bytes);
+        let outcome = self.parse_and_reconstruct_uo1_ts(context, packet_bytes);
         self.handle_fc_uo_packet_outcome(context, outcome)
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
@@ -754,7 +745,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        let outcome = self._parse_and_reconstruct_uo1_id(context, packet_bytes);
+        let outcome = self.parse_and_reconstruct_uo1_id(context, packet_bytes);
         self.handle_fc_uo_packet_outcome(context, outcome)
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
@@ -765,7 +756,7 @@ impl Profile1Handler {
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
-        let outcome = self._parse_and_reconstruct_uo1_rtp(context, packet_bytes);
+        let outcome = self.parse_and_reconstruct_uo1_rtp(context, packet_bytes);
         self.handle_fc_uo_packet_outcome(context, outcome)
             .map(GenericUncompressedHeaders::RtpUdpIpv4)
     }
@@ -799,28 +790,28 @@ impl Profile1Handler {
         let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError> =
             match discriminated_type {
                 Profile1PacketType::Uo1Ts => {
-                    let res = self._parse_and_reconstruct_uo1_ts(context, packet_bytes);
+                    let res = self.parse_and_reconstruct_uo1_ts(context, packet_bytes);
                     if res.is_err() {
                         is_failure_of_dynamic_updater_parse = true;
                     }
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo1Id => {
-                    let res = self._parse_and_reconstruct_uo1_id(context, packet_bytes);
+                    let res = self.parse_and_reconstruct_uo1_id(context, packet_bytes);
                     if res.is_err() {
                         is_failure_of_dynamic_updater_parse = true;
                     }
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo1Sn { .. } => {
-                    let res = self._parse_and_reconstruct_uo1_sn(context, packet_bytes);
+                    let res = self.parse_and_reconstruct_uo1_sn(context, packet_bytes);
                     if res.is_err() {
                         is_failure_of_dynamic_updater_parse = true;
                     }
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo1Rtp { .. } => {
-                    let res = self._parse_and_reconstruct_uo1_rtp(context, packet_bytes);
+                    let res = self.parse_and_reconstruct_uo1_rtp(context, packet_bytes);
                     if res.is_err() {
                         is_failure_of_dynamic_updater_parse = true;
                     }
@@ -885,19 +876,19 @@ impl Profile1Handler {
         let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError> =
             match discriminated_type {
                 Profile1PacketType::Uo1Ts => self
-                    ._parse_and_reconstruct_uo1_ts(context, packet_bytes)
+                    .parse_and_reconstruct_uo1_ts(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Uo1Id => self
-                    ._parse_and_reconstruct_uo1_id(context, packet_bytes)
+                    .parse_and_reconstruct_uo1_id(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Uo1Sn { .. } => self
-                    ._parse_and_reconstruct_uo1_sn(context, packet_bytes)
+                    .parse_and_reconstruct_uo1_sn(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Uo0 => self
-                    ._parse_and_reconstruct_uo0(context, packet_bytes)
+                    .parse_and_reconstruct_uo0(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Uo1Rtp { .. } => self
-                    ._parse_and_reconstruct_uo1_rtp(context, packet_bytes)
+                    .parse_and_reconstruct_uo1_rtp(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
                 Profile1PacketType::Unknown(val) => {
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
