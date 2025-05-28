@@ -7,7 +7,7 @@
 mod common;
 use common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    get_decompressor_context,
+    get_compressor_context, get_decompressor_context, get_ip_id_established_by_ir,
 };
 
 use rohcstar::error::RohcError;
@@ -27,24 +27,21 @@ fn p1_uo1_sn_with_sn_wraparound() {
     let ssrc = 0xABCDEF01;
 
     let ir_sn = 65530;
-    let ir_ts = 1000; // This timestamp will be the context for subsequent UO-1-SNs
+    let ir_ts = 1000;
     let ir_marker = false;
     establish_ir_context(&mut engine, cid, ir_sn, ir_ts, ir_marker, ssrc);
+    let ip_id_from_ir = get_ip_id_established_by_ir(ir_sn, ssrc);
 
     let sn1 = 65532;
     let marker1 = true;
-    // For UO-1-SN, the uncompressed header's TS should align with the context TS for consistent CRC.
-    let headers1 = create_rtp_headers(sn1, ir_ts, marker1, ssrc); // Use ir_ts
+    // For UO-1-SN, TS for CRC is from context. IP-ID kept stable to avoid unrelated IR.
+    let headers1 = create_rtp_headers(sn1, ir_ts, marker1, ssrc).with_ip_id(ip_id_from_ir);
     let generic1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
     let compressed1 = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic1)
         .unwrap();
-    assert_eq!(
-        compressed1.len(),
-        3,
-        "SN 65532, M=true should be UO-1. Got: {:?}",
-        compressed1
-    );
+
+    assert_eq!(compressed1.len(), 3, "SN 65532, M=true should be UO-1-SN.");
     assert_eq!(
         compressed1[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
@@ -59,23 +56,20 @@ fn p1_uo1_sn_with_sn_wraparound() {
         .clone();
     assert_eq!(decomp1.rtp_sequence_number, sn1);
     assert_eq!(decomp1.rtp_marker, marker1);
-    assert_eq!(decomp1.rtp_timestamp, ir_ts); // TS from context
+    assert_eq!(decomp1.rtp_timestamp, ir_ts); // TS reconstructed from context
 
     let sn2 = 2; // SN wraps around
     let marker2 = false;
-    // Maintain consistent TS for UO-1-SN CRC context.
-    // Compressor's context last_sent_ts will be ir_ts from processing headers1.
-    // Decompressor's context last_reconstructed_ts is ir_ts.
-    let headers2 = create_rtp_headers(sn2, ir_ts, marker2, ssrc); // Use ir_ts
+    let headers2 = create_rtp_headers(sn2, ir_ts, marker2, ssrc).with_ip_id(ip_id_from_ir); // Keep IP-ID stable
     let generic2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone());
     let compressed2 = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic2)
         .unwrap();
+
     assert_eq!(
         compressed2.len(),
         3,
-        "SN 2 (wrap), M=false should be UO-1. Got: {:?}",
-        compressed2
+        "SN 2 (wrap), M=false should be UO-1-SN."
     );
     assert_eq!(
         compressed2[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
@@ -91,7 +85,7 @@ fn p1_uo1_sn_with_sn_wraparound() {
         .clone();
     assert_eq!(decomp2.rtp_sequence_number, sn2);
     assert_eq!(decomp2.rtp_marker, marker2);
-    assert_eq!(decomp2.rtp_timestamp, ir_ts); // TS from context
+    assert_eq!(decomp2.rtp_timestamp, ir_ts); // TS reconstructed from context
 }
 
 #[test]
@@ -104,7 +98,7 @@ fn p1_rapid_marker_toggling_forces_uo1() {
     let ssrc = 0x1234FEDC;
 
     let initial_sn = 100;
-    let initial_ts = 5000; // This TS will be the stable context for UO-1-SN packets in the loop
+    let initial_ts = 5000;
     let mut current_marker = false;
 
     establish_ir_context(
@@ -115,20 +109,15 @@ fn p1_rapid_marker_toggling_forces_uo1() {
         current_marker,
         ssrc,
     );
+    let ip_id_from_ir = get_ip_id_established_by_ir(initial_sn, ssrc);
 
     for i in 1..=5 {
         let current_sn = initial_sn + i;
-        current_marker = !current_marker; // Marker toggles, this is the primary driver for UO-1-SN
+        current_marker = !current_marker; // Marker toggles, primary driver for UO-1-SN
 
-        // For UO-1-SN packets, the timestamp used in uncompressed headers should be
-        // consistent with the established context if we expect CRC to match,
-        // as UO-1-SN itself doesn't update the decompressor's TS context from the packet.
-        let headers = create_rtp_headers(
-            current_sn,
-            initial_ts, // Use the established initial_ts for these UO-1-SNs
-            current_marker,
-            ssrc,
-        );
+        // TS for CRC is from context. IP-ID kept stable.
+        let headers = create_rtp_headers(current_sn, initial_ts, current_marker, ssrc)
+            .with_ip_id(ip_id_from_ir);
         let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
         let compressed = engine
             .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
@@ -137,9 +126,8 @@ fn p1_rapid_marker_toggling_forces_uo1() {
         assert_eq!(
             compressed.len(),
             3,
-            "Packet {} with toggled marker should be UO-1. Got: {:?}",
-            i,
-            compressed
+            "Packet {} with toggled marker should be UO-1-SN.",
+            i
         );
         assert_eq!(
             compressed[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
@@ -177,7 +165,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let ssrc = 0x778899AA;
 
     let initial_sn = 1000;
-    let initial_ts = 10000; // Context TS for UO-1-SN CRCs
+    let initial_ts = 10000;
     let initial_marker = false;
     establish_ir_context(
         &mut engine,
@@ -187,11 +175,14 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
         initial_marker,
         ssrc,
     );
+    let ip_id_from_ir = get_ip_id_established_by_ir(initial_sn, ssrc);
 
-    let sn_jump_pos = initial_sn + 100; // SN diff = 100
-    // Uncompressed TS is initial_ts + 100. Marker same.
-    // This will be UO-1-SN as SN_diff > 16 and TS change without SN_diff=1.
-    let headers_jump_pos = create_rtp_headers(sn_jump_pos, initial_ts + 100, initial_marker, ssrc);
+    // Positive SN jump
+    let sn_jump_pos = initial_sn + 100;
+    // UO-1-SN due to SN_diff > LSB range for UO-0 and TS change.
+    // Keep IP-ID change minimal to avoid IR due to IP-ID.
+    let headers_jump_pos = create_rtp_headers(sn_jump_pos, initial_ts + 100, initial_marker, ssrc)
+        .with_ip_id(ip_id_from_ir.wrapping_add(1));
     let generic_jump_pos = GenericUncompressedHeaders::RtpUdpIpv4(headers_jump_pos.clone());
     let compressed_jump_pos = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_jump_pos)
@@ -199,9 +190,9 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     assert_eq!(
         compressed_jump_pos.len(),
         3,
-        "SN jump +100 should be UO-1. Got: {:?}",
-        compressed_jump_pos
+        "SN jump +100 should be UO-1-SN."
     );
+
     let decomp_jump_pos_result = engine.decompress(&compressed_jump_pos);
     assert!(
         decomp_jump_pos_result.is_ok(),
@@ -216,37 +207,37 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     assert_eq!(decomp_jump_pos.rtp_sequence_number, sn_jump_pos);
     assert_eq!(decomp_jump_pos.rtp_timestamp, initial_ts); // TS from context
 
-    // Compressor context after previous packet: SN=1100, TS=10100 (from uncompressed headers_jump_pos)
-    // Next packet SN is 1000 (original initial_sn). SN diff is 1000 - 1100 = -100 (or large positive after wrap)
-    // Uncompressed TS is initial_ts + 200 = 10200.
-    // This will be UO-1-SN. Compressor uses its TS context (10100) for CRC.
-    let sn_jump_neg = initial_sn; // This is 1000. Last sent was 1100.
-    let headers_jump_neg = create_rtp_headers(sn_jump_neg, initial_ts + 200, initial_marker, ssrc);
+    // Negative SN jump (wraparound)
+    // Compressor context after previous packet: SN=1100, TS=10100, IP-ID updated
+    let comp_ctx_before_neg_jump = get_compressor_context(&engine, cid);
+    let ip_id_in_comp_ctx = comp_ctx_before_neg_jump.last_sent_ip_id_full;
+
+    let sn_jump_neg = initial_sn; // Target SN is 1000. Last sent was 1100.
+    let headers_jump_neg = create_rtp_headers(sn_jump_neg, initial_ts + 200, initial_marker, ssrc)
+        .with_ip_id(ip_id_in_comp_ctx.wrapping_add(1)); // Small change from current context IP-ID
     let generic_jump_neg = GenericUncompressedHeaders::RtpUdpIpv4(headers_jump_neg.clone());
     let compressed_jump_neg = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_jump_neg)
         .unwrap();
-    // Decompressor's context SN=1100, TS=10000.
-    // The W-LSB for SN with p=0 might struggle with such a large negative jump without more bits or IR.
-    // CRC is calculated by decompressor using its context TS = 10000.
-    // Compressor used its context TS = 10100 for CRC. This *will* lead to a CRC mismatch.
+    // Expected UO-1-SN. CRC might mismatch due to TS divergence for CRC calculation.
     assert_eq!(
         compressed_jump_neg.len(),
         3,
-        "SN jump -100 (wrap) should still be UO-1 based on SN diff. Got: {:?}",
-        compressed_jump_neg
+        "SN jump -100 (wrap) should be UO-1-SN."
     );
 
     let decompress_result_neg_jump = engine.decompress(&compressed_jump_neg);
     match decompress_result_neg_jump {
-        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => { /* Expected due to TS context divergence for CRC */
+        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => {
+            // Expected: Compressor used its TS context (10100) for CRC,
+            // decompressor used its context (10000).
         }
         Ok(h) => panic!(
-            "Expected CrcMismatch for large negative SN jump with diverging TS context for CRC, but got Ok({:?})",
+            "Expected CrcMismatch for SN jump with diverging TS context for CRC, but got Ok({:?})",
             h
         ),
         Err(e) => panic!(
-            "Expected CrcMismatch, but got other error: {:?}. Decomp CTX TS was 10000, Comp CTX TS for CRC was 10100.",
+            "Expected CrcMismatch, but got other error: {:?}. Decomp TS context was 10000.",
             e
         ),
     }
@@ -262,47 +253,42 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
     let ssrc = 0xBBCCDDFF;
 
     let initial_sn = 500;
-    let initial_ts = 6000; // Base TS for context
+    let initial_ts = 6000;
     let initial_marker = false;
 
-    // Headers for IR packet. Its ip_identification will be based on initial_sn.
-    // This becomes the compressor's last_sent_ip_id_full.
-    let ir_headers_for_context = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
     establish_ir_context(
         &mut engine,
         cid,
-        ir_headers_for_context.rtp_sequence_number,
-        ir_headers_for_context.rtp_timestamp,
-        ir_headers_for_context.rtp_marker,
+        initial_sn,
+        initial_ts,
+        initial_marker,
         ssrc,
     );
+    let ip_id_from_ir = get_ip_id_established_by_ir(initial_sn, ssrc);
 
-    let sn_uo0_max = initial_sn + 15; // 515
-    // To be UO-0, TS, Marker, and IP-ID must match context (from IR).
-    let mut headers_uo0 = create_rtp_headers(sn_uo0_max, initial_ts, initial_marker, ssrc);
-    headers_uo0.ip_identification = ir_headers_for_context.ip_identification; // Keep IP-ID same as IR context
+    // First UO packet: UO-0 (SN diff 15)
+    let sn_uo0_max = initial_sn + 15;
+    let headers_uo0 =
+        create_rtp_headers(sn_uo0_max, initial_ts, initial_marker, ssrc).with_ip_id(ip_id_from_ir); // Match IR context for UO-0
 
     let compressed_uo0 = engine
         .compress(
             cid,
             Some(RohcProfile::RtpUdpIp),
-            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0.clone()), // Pass clone for IP-ID tracking
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0.clone()),
         )
         .unwrap();
-    assert_eq!(
-        compressed_uo0.len(),
-        1,
-        "SN diff 15 should be UO-0. Got: {:?}",
-        compressed_uo0
-    );
+    assert_eq!(compressed_uo0.len(), 1, "SN diff 15 should be UO-0.");
     let _ = engine.decompress(&compressed_uo0).unwrap();
+    // Compressor context now: SN=sn_uo0_max, TS=initial_ts, IP-ID=ip_id_from_ir
 
-    // Compressor context now: SN=515, TS=initial_ts (6000), IP-ID=ir_headers_for_context.ip_identification
-    // Packet: SN=515+16=531. SN diff is 16. Uncompressed TS is initial_ts + 20 = 6020.
-    // IP-ID will be 531 % 256, which is different from ir_headers_for_context.ip_identification.
-    // This will be UO-1-SN as SN diff >= 16. TS change also means not UO-0. SN diff != 1 means not UO-1-TS.
-    // UO-1-ID condition: marker_unchanged (T), ip_id_changed (T), sn_incremented_by_one (F because diff 16), !ts_changed (F) -> No
-    let sn_force_uo1 = sn_uo0_max + 16; // This is initial_sn + 15 + 16
+    // Second UO packet: UO-1-SN (SN diff 16 from previous UO-0's SN)
+    let sn_force_uo1 = sn_uo0_max + 16; // SN = 500 + 15 + 16 = 531
+    // Uncompressed TS changes. IP-ID will naturally change due to SN change in create_rtp_headers.
+    // The jump in IP-ID from ip_id_from_ir to the new IP-ID must not be > max_safe_delta.
+    // IP-ID(IR) = 500 + (ssrc LSB)
+    // IP-ID(UO-1) = 531 + (ssrc LSB)
+    // Diff = 31, which is < 128. So UO-1-SN is expected, not IR.
     let headers_uo1 = create_rtp_headers(sn_force_uo1, initial_ts + 20, initial_marker, ssrc);
 
     let compressed_uo1 = engine
@@ -315,8 +301,8 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
     assert_eq!(
         compressed_uo1.len(),
         3,
-        "SN diff 16 (from {}) should be UO-1. Got: {:?}",
-        sn_uo0_max, // SN of the UO-0 packet
+        "SN diff 16 (from {}) should be UO-1-SN. Got: {:?}",
+        sn_uo0_max,
         compressed_uo1
     );
     assert_eq!(
@@ -331,5 +317,6 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
         .unwrap()
         .clone();
     assert_eq!(decomp_uo1.rtp_sequence_number, sn_force_uo1);
-    assert_eq!(decomp_uo1.rtp_timestamp, initial_ts); // TS from context (because the *compressed* UO-0 didn't change it)
+    // UO-1-SN uses context TS from the previous packet (UO-0), which was initial_ts.
+    assert_eq!(decomp_uo1.rtp_timestamp, initial_ts);
 }

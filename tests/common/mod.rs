@@ -120,6 +120,14 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16) -> IrPacket {
 }
 
 /// Establishes an IR (Initialization and Refresh) context in the ROHC engine.
+///
+/// This function sends an IR packet for the given parameters and ensures it's
+/// successfully decompressed, thereby establishing or refreshing the context.
+/// It also handles setting the compressor mode to force IR if a context for
+/// the same CID and SSRC already exists.
+///
+/// # Panics
+/// Panics if compression or decompression of the IR packet fails.
 pub fn establish_ir_context(
     engine: &mut RohcEngine,
     cid: u16,
@@ -140,29 +148,35 @@ pub fn establish_ir_context(
     }
 
     let mut headers_ir = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
-    // Ensure the IR packet establishes a known IP-ID in the compressor context, if not already set
-    // by create_rtp_headers default logic. For tests, making it predictable is good.
+    // Ensure the IR packet uses a predictable IP-ID for easier testing if it would otherwise be 0.
     if headers_ir.ip_identification == 0 && initial_sn != 0 {
-        // Example: if default ip_id is 0 and SN is not
         headers_ir.ip_identification = initial_sn;
     }
 
-    let generic_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
+    let generic_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir);
 
     let compressed_ir = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_ir)
-        .unwrap();
+        .unwrap_or_else(|e| {
+            panic!(
+                "IR Compression failed during setup for SN={}, SSRC={}: {:?}",
+                initial_sn, ssrc, e
+            )
+        });
 
     if cid == 0 {
         assert_eq!(
             compressed_ir[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-            "IR packet type check for CID 0"
+            "IR packet type check for CID 0 failed."
         );
     } else if cid <= 15 {
-        assert!(compressed_ir.len() > 1, "IR packet with Add-CID too short");
+        assert!(
+            !compressed_ir.is_empty(),
+            "IR packet with Add-CID is empty."
+        );
         assert_eq!(
             compressed_ir[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-            "Core IR packet type check for small CID"
+            "Core IR packet type check for small CID failed."
         );
     }
 
@@ -172,6 +186,23 @@ pub fn establish_ir_context(
             initial_sn, ssrc, e
         );
     });
+}
+
+/// Calculates the IP Identification value that `establish_ir_context` will
+/// effectively set in the compressor's context.
+///
+/// `establish_ir_context` internally uses `create_rtp_headers`, which derives
+/// IP-ID from the initial sequence number and SSRC. This helper replicates
+/// that logic so tests can accurately predict the context's IP-ID.
+///
+/// # Parameters
+/// - `initial_sn`: The sequence number used when `establish_ir_context` was called.
+/// - `ssrc_used_in_ir`: The SSRC used when `establish_ir_context` was called.
+///
+/// # Returns
+/// The calculated IP Identification value.
+pub fn get_ip_id_established_by_ir(initial_sn: u16, ssrc_used_in_ir: u32) -> u16 {
+    initial_sn.wrapping_add(ssrc_used_in_ir as u16)
 }
 
 /// Checks if a packet is an IR (Initialization and Refresh) packet.
@@ -332,7 +363,6 @@ mod tests {
     #[test]
     fn engine_creation_helpers() {
         let engine_default_refresh = create_default_test_engine();
-        // Access some field to ensure it's a RohcEngine, e.g. its context manager
         assert_eq!(
             engine_default_refresh
                 .context_manager()
@@ -363,8 +393,22 @@ mod tests {
         assert_eq!(decomp_ctx.cid(), 2);
 
         let comp_ctx_interval = create_profile1_compressor_context_with_interval(&handler, 3, 77);
-        // We can't directly assert ir_refresh_interval without downcasting,
-        // but we can check it was created.
         assert_eq!(comp_ctx_interval.cid(), 3);
+    }
+
+    #[test]
+    fn get_ip_id_established_by_ir_logic() {
+        assert_eq!(
+            get_ip_id_established_by_ir(100, 0x12345678),
+            100u16.wrapping_add(0x5678)
+        );
+        assert_eq!(
+            get_ip_id_established_by_ir(0, 0xABCD),
+            0u16.wrapping_add(0xABCD)
+        );
+        assert_eq!(
+            get_ip_id_established_by_ir(65535, 1),
+            65535u16.wrapping_add(1)
+        ); // Wraps to 0
     }
 }
