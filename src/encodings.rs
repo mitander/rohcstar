@@ -411,9 +411,6 @@ mod tests {
             upper_val_in_window
         );
     }
-    // Other wrapping tests (decode_lsb_p_positive_wrapping_around_max_u64, decode_lsb_p_negative_wrapping_around_max_u64)
-    // follow similar logic and should be okay given the core algorithm correctness.
-    // It's important that the logic handles wrapping correctly.
 
     #[test]
     fn decode_lsb_error_invalid_num_bits_combined() {

@@ -5,7 +5,11 @@
 //! marker bit changes, wraparound scenarios, and packet type selection logic.
 
 mod common;
-use common::{create_rtp_headers, establish_ir_context, get_decompressor_context};
+use std::sync::Arc;
+
+use common::{
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers, establish_ir_context, get_decompressor_context,
+};
 
 use rohcstar::engine::RohcEngine;
 use rohcstar::error::RohcError;
@@ -14,10 +18,11 @@ use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{
     P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, Profile1Handler,
 };
+use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_uo1_sn_with_sn_wraparound() {
-    let mut engine = RohcEngine::new(200);
+    let mut engine = RohcEngine::new(200, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -94,7 +99,7 @@ fn p1_uo1_sn_with_sn_wraparound() {
 
 #[test]
 fn p1_rapid_marker_toggling_forces_uo1() {
-    let mut engine = RohcEngine::new(200);
+    let mut engine = RohcEngine::new(200, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -167,7 +172,7 @@ fn p1_rapid_marker_toggling_forces_uo1() {
 
 #[test]
 fn p1_uo1_sn_max_sn_jump_encodable() {
-    let mut engine = RohcEngine::new(500);
+    let mut engine = RohcEngine::new(500, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -252,7 +257,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
 
 #[test]
 fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_diff() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

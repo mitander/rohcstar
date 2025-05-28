@@ -5,9 +5,11 @@
 //! various UO (Uncompressed/Optimized) packet types under different conditions.
 
 mod common;
+use std::sync::Arc;
+
 use common::{
-    create_rtp_headers_fixed_ssrc, establish_ir_context, get_compressor_context,
-    get_decompressor_context,
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers_fixed_ssrc, establish_ir_context,
+    get_compressor_context, get_decompressor_context,
 };
 
 use rohcstar::engine::RohcEngine;
@@ -21,12 +23,17 @@ use rohcstar::constants::{
 use rohcstar::profiles::profile1::constants::{
     P1_ROHC_IR_PACKET_TYPE_WITH_DYN, P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX,
 };
+use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_umode_ir_to_fo_sequence_cid0() {
     let cid: u16 = 0;
     let ir_refresh_interval: u32 = 5;
-    let mut engine = RohcEngine::new(ir_refresh_interval);
+    let mut engine = RohcEngine::new(
+        ir_refresh_interval,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    );
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -113,7 +120,11 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
 fn p1_umode_ir_to_fo_sequence_small_cid() {
     let small_cid: u16 = 5;
     let ir_refresh_interval: u32 = 3;
-    let mut engine = RohcEngine::new(ir_refresh_interval);
+    let mut engine = RohcEngine::new(
+        ir_refresh_interval,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    );
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -255,7 +266,11 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
 fn p1_umode_sn_jump_triggers_uo1() {
     let cid: u16 = 0;
     let ir_refresh_interval: u32 = 10;
-    let mut engine = RohcEngine::new(ir_refresh_interval);
+    let mut engine = RohcEngine::new(
+        ir_refresh_interval,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    );
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -332,7 +347,11 @@ fn p1_umode_sn_jump_triggers_uo1() {
 fn p1_umode_uo0_sn_decoding_with_simulated_packet_loss() {
     let cid: u16 = 0;
     let ir_refresh_interval: u32 = 20;
-    let mut engine = RohcEngine::new(ir_refresh_interval);
+    let mut engine = RohcEngine::new(
+        ir_refresh_interval,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
+        Arc::new(SystemClock),
+    );
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

@@ -5,7 +5,11 @@
 //! and edge cases around the limited encoding space of UO-0 packets.
 
 mod common;
-use common::{create_rtp_headers, establish_ir_context, get_decompressor_context};
+use std::sync::Arc;
+
+use common::{
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers, establish_ir_context, get_decompressor_context,
+};
 
 use rohcstar::engine::RohcEngine;
 use rohcstar::error::{RohcError, RohcParsingError};
@@ -15,10 +19,11 @@ use rohcstar::profiles::profile1::{
     P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, P1_UO_1_SN_PACKET_TYPE_PREFIX,
     P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
+use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_uo0_sn_wraparound_65535_to_0() {
-    let mut engine = RohcEngine::new(100); // High refresh interval
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -115,7 +120,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
 
 #[test]
 fn p1_uo0_sn_at_lsb_window_edge() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -211,7 +216,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
 
 #[test]
 fn p1_uo0_crc_failures_trigger_context_downgrade() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -300,7 +305,7 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
 
 #[test]
 fn p1_uo0_not_used_when_marker_changes() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -343,7 +348,7 @@ fn p1_uo0_not_used_when_marker_changes() {
 
 #[test]
 fn p1_uo1_ts_is_used_when_ts_changes_marker_sn_ok_for_uo1ts() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

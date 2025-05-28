@@ -5,7 +5,11 @@
 //! and the RTP Marker bit remains unchanged from the context.
 
 mod common;
-use common::{create_rtp_headers, establish_ir_context, get_decompressor_context};
+use std::sync::Arc;
+
+use common::{
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers, establish_ir_context, get_decompressor_context,
+};
 
 use rohcstar::constants::ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE;
 use rohcstar::engine::RohcEngine;
@@ -13,10 +17,11 @@ use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{
     P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
+use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -74,7 +79,7 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
 }
 #[test]
 fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
-    let mut engine = RohcEngine::new(100); // High refresh interval
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -131,7 +136,7 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
 }
 #[test]
 fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -295,7 +300,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
 
 #[test]
 fn p1_uo1_ts_marker_from_context_for_crc() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -349,7 +354,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
 
 #[test]
 fn p1_uo1_ts_with_add_cid() {
-    let mut engine = RohcEngine::new(100);
+    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

@@ -5,8 +5,12 @@
 //! context state management, CID handling, and robustness scenarios.
 
 mod common;
+use std::sync::Arc;
+use std::time::Instant;
+
 use common::{
-    create_ir_packet_data, create_rtp_headers, establish_ir_context, get_decompressor_context,
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers, establish_ir_context,
+    get_decompressor_context,
 };
 
 use rohcstar::ProfileHandler;
@@ -22,13 +26,14 @@ use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
     P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler,
 };
+use rohcstar::time::SystemClock;
 
 // --- 1. IR Packet Error Handling Tests ---
 
 #[test]
 fn p1_ir_packet_with_corrupted_crc_fails() {
     let handler = Profile1Handler::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100);
     let mut ir_packet_bytes = build_profile1_ir_packet(&ir_data).unwrap();
@@ -48,7 +53,7 @@ fn p1_ir_packet_with_corrupted_crc_fails() {
 #[test]
 fn p1_ir_packet_with_wrong_profile_id_fails() {
     let handler = Profile1Handler::new(); // Profile1Handler
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     // Build a packet as if for Profile 1, but then change the profile ID byte
     let mut ir_data = create_ir_packet_data(0, 0x12345678, 100);
@@ -79,7 +84,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
     // The `parse_profile1_ir_packet` specifically checks this.
     match result {
         Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(id))) => {
-            assert_eq!(id, RohcProfile::UdpIp.into());
+            assert_eq!(id, u8::from(RohcProfile::UdpIp));
         }
         _ => panic!("Expected InvalidProfileId error, got: {:?}", result),
     }
@@ -88,7 +93,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
 #[test]
 fn p1_ir_packet_too_short_fails() {
     let handler = Profile1Handler::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100);
     let ir_packet_bytes_full = build_profile1_ir_packet(&ir_data).unwrap();
@@ -123,7 +128,7 @@ fn p1_ir_packet_too_short_fails() {
 #[test]
 fn p1_compressor_context_static_fields_remain_constant() {
     let handler = Profile1Handler::new();
-    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5); // CID 0, refresh interval 5
+    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now()); // CID 0, refresh interval 5
 
     let ssrc1 = 0x11111111;
     let headers1 = create_rtp_headers(100, 1000, false, ssrc1);
@@ -174,7 +179,7 @@ fn p1_compressor_context_static_fields_remain_constant() {
 #[test]
 fn p1_decompressor_stays_in_no_context_without_ir() {
     let handler = Profile1Handler::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0); // CID 0
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now()); // CID 0
 
     // Attempt to decompress a UO-0 packet (which requires context)
     // For CID 0, UO-0 is 1 byte: 0 SSSS CCC. Example: SN=1, CRC=1 => 0001001 = 0x09
@@ -228,7 +233,7 @@ fn p1_ir_packet_large_cid_not_supported_by_builder() {
 
 #[test]
 fn p1_multiple_flows_different_cids() {
-    let mut engine = RohcEngine::new(5);
+    let mut engine = RohcEngine::new(5, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -305,7 +310,7 @@ fn p1_multiple_flows_different_cids() {
 #[test]
 fn p1_ssrc_change_forces_context_reinitialization_and_ir() {
     let handler = Profile1Handler::new();
-    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5);
+    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
 
     let ssrc1 = 0xAAAA0001;
     let headers1 = create_rtp_headers(200, 2000, false, ssrc1);
@@ -366,7 +371,7 @@ fn p1_ir_refresh_interval_edge_cases() {
     let ssrc = 0xCCCC0001; // Define ssrc outside for reuse
 
     // Case 1: ir_refresh_interval = 0 (disabled)
-    let mut comp_ctx_dyn_0 = handler.create_compressor_context(0, 0);
+    let mut comp_ctx_dyn_0 = handler.create_compressor_context(0, 0, Instant::now());
     let headers_ir0 = create_rtp_headers(1, 10, false, ssrc);
     let _ = handler
         .compress(
@@ -395,7 +400,7 @@ fn p1_ir_refresh_interval_edge_cases() {
     assert_eq!(comp_ctx_0.fo_packets_sent_since_ir, 9);
 
     // Case 2: ir_refresh_interval = 1 (every packet after first is IR)
-    let mut comp_ctx_dyn_1 = handler.create_compressor_context(0, 1);
+    let mut comp_ctx_dyn_1 = handler.create_compressor_context(0, 1, Instant::now());
     let headers_ir1_1 = create_rtp_headers(101, 1010, false, ssrc);
     let compressed_ir1_1 = handler
         .compress(
@@ -427,7 +432,8 @@ fn p1_ir_refresh_interval_edge_cases() {
 
     // Case 3: ir_refresh_interval = large (e.g., 100)
     let large_interval = 100u32;
-    let mut comp_ctx_dyn_large = handler.create_compressor_context(0, large_interval);
+    let mut comp_ctx_dyn_large =
+        handler.create_compressor_context(0, large_interval, Instant::now());
     let headers_ir_large = create_rtp_headers(201, 2010, false, ssrc);
     let _ = handler
         .compress(
@@ -500,7 +506,7 @@ fn p1_ir_refresh_interval_edge_cases() {
 fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
     // We need to construct a fake IR packet with D-bit=0.
     let handler = Profile1Handler::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0xFEEDF00D, 10);
     let mut ir_packet_bytes = Vec::new();
@@ -544,7 +550,7 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
 
 #[test]
 fn p1_decompressor_context_persistence_across_ir_packets() {
-    let mut engine = RohcEngine::new(10); // High refresh interval to avoid auto-refresh
+    let mut engine = RohcEngine::new(10, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval to avoid auto-refresh
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -607,7 +613,7 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
 fn p1_ir_packet_processing_performance() {
     use std::time::Instant;
 
-    let mut engine = RohcEngine::new(u32::MAX); // Disable auto-refresh for perf test
+    let mut engine = RohcEngine::new(u32::MAX, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // Disable auto-refresh for perf test
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

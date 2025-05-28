@@ -4,6 +4,8 @@
 //! for ROHC Profile 1. It orchestrates the compression and decompression of
 //! RTP/UDP/IPv4 packet headers according to the rules specified in RFC 3095.
 
+use std::time::Instant;
+
 use super::constants::*;
 use super::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
@@ -888,11 +890,20 @@ impl ProfileHandler for Profile1Handler {
         &self,
         cid: u16,
         ir_refresh_interval: u32,
+        creation_time: Instant,
     ) -> Box<dyn RohcCompressorContext> {
-        Box::new(Profile1CompressorContext::new(cid, ir_refresh_interval))
+        Box::new(Profile1CompressorContext::new(
+            cid,
+            ir_refresh_interval,
+            creation_time,
+        ))
     }
 
-    fn create_decompressor_context(&self, cid: u16) -> Box<dyn RohcDecompressorContext> {
+    fn create_decompressor_context(
+        &self,
+        cid: u16,
+        _creation_time: Instant,
+    ) -> Box<dyn RohcDecompressorContext> {
         Box::new(Profile1DecompressorContext::new(cid))
     }
 
@@ -1110,8 +1121,8 @@ mod tests {
     #[test]
     fn ir_compression_and_decompression_flow() {
         let handler = Profile1Handler::new();
-        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5);
-        let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+        let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
         let headers1 = create_test_rtp_headers(100, 1000, false);
         let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
         let compressed_ir = handler
@@ -1146,8 +1157,8 @@ mod tests {
     #[test]
     fn uo0_compression_and_decompression_flow_in_fc() {
         let handler = Profile1Handler::new();
-        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5);
-        let mut decomp_ctx_dyn = handler.create_decompressor_context(0);
+        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+        let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
         let headers_ir = create_test_rtp_headers(100, 1000, false);
         let generic_headers_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
         let compressed_ir = handler

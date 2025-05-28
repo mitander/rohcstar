@@ -14,7 +14,12 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
+use std::time::Duration;
+
 use rohcstar::profiles::profile1::{IrPacket, RtpUdpIpv4Headers};
+
+// Default timeout test engines
+pub const DEFAULT_ENGINE_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
 
 /// Creates RTP/UDP/IPv4 headers with fully customizable fields
 ///

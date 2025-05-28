@@ -5,6 +5,8 @@
 //! It uses the Drifter fuzzing framework to test various aspects of
 //! ROHC packet processing, including compression and decompression.
 
+use std::time::Instant;
+
 use crate::packet_defs::RohcProfile;
 use crate::profiles::profile1::{
     IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::build_profile1_ir_packet,
@@ -53,7 +55,8 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             // If sample_ir_data_for_harness.cid was >0, build_ir_profile1_packet would add it,
             // and we'd need to strip it here before passing to p1_handler.decompress.
             // For CID 0, sample_ir_bytes *are* the core_packet_bytes.
-            let mut decompressor_context_dyn = p1_handler.create_decompressor_context(cid);
+            let mut decompressor_context_dyn =
+                p1_handler.create_decompressor_context(cid, Instant::now());
 
             if p1_handler
                 .decompress(decompressor_context_dyn.as_mut(), &sample_ir_bytes)
@@ -67,7 +70,8 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
                 eprintln!(
                     "WARN: Harness failed to decompress sample IR. Fuzzing against default context."
                 );
-                let mut fresh_context_dyn = p1_handler.create_decompressor_context(cid);
+                let mut fresh_context_dyn =
+                    p1_handler.create_decompressor_context(cid, Instant::now());
                 let _ = p1_handler.decompress(fresh_context_dyn.as_mut(), data);
             }
         }
@@ -75,7 +79,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             // Failed to build the sample IR (harness setup problem)
             // Fallback to fuzzing against a fresh, default P1 context.
             eprintln!("WARN: Harness failed to build sample IR. Fuzzing against default context.");
-            let mut fresh_context_dyn = p1_handler.create_decompressor_context(cid);
+            let mut fresh_context_dyn = p1_handler.create_decompressor_context(cid, Instant::now());
             let _ = p1_handler.decompress(fresh_context_dyn.as_mut(), data);
         }
     }

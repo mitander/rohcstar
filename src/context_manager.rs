@@ -186,6 +186,22 @@ impl ContextManager {
     pub fn decompressor_context_count(&self) -> usize {
         self.decompressor_contexts.len()
     }
+
+    /// Returns an immutable iterator over compressor contexts (CID, &Box<dyn RohcCompressorContext>).
+    /// Used by the RohcEngine for operations like pruning stale contexts.
+    pub fn compressor_contexts_iter(
+        &self,
+    ) -> impl Iterator<Item = (&u16, &Box<dyn RohcCompressorContext>)> {
+        self.compressor_contexts.iter()
+    }
+
+    /// Returns an immutable iterator over decompressor contexts (CID, &Box<dyn RohcDecompressorContext>).
+    /// Used by the RohcEngine for operations like pruning stale contexts.
+    pub fn decompressor_contexts_iter(
+        &self,
+    ) -> impl Iterator<Item = (&u16, &Box<dyn RohcDecompressorContext>)> {
+        self.decompressor_contexts.iter()
+    }
 }
 
 #[cfg(test)]
@@ -194,16 +210,19 @@ mod tests {
     use crate::packet_defs::RohcProfile;
     use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
     use std::any::Any;
+    use std::time::Instant;
 
     #[derive(Debug)]
     struct MockCompressorCtx {
         cid: u16,
         data: String,
+        last_accessed: Instant,
     }
+
     impl RohcCompressorContext for MockCompressorCtx {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::Uncompressed
-        } // Dummy profile
+        }
         fn cid(&self) -> u16 {
             self.cid
         }
@@ -213,17 +232,25 @@ mod tests {
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
+        fn last_accessed(&self) -> Instant {
+            self.last_accessed
+        }
+        fn set_last_accessed(&mut self, now: Instant) {
+            self.last_accessed = now;
+        }
     }
 
     #[derive(Debug)]
     struct MockDecompressorCtx {
         cid: u16,
         updates: u32,
+        last_accessed: Instant,
     }
+
     impl RohcDecompressorContext for MockDecompressorCtx {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::RtpUdpIp
-        } // Dummy profile
+        }
         fn cid(&self) -> u16 {
             self.cid
         }
@@ -235,6 +262,12 @@ mod tests {
         }
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
+        }
+        fn last_accessed(&self) -> Instant {
+            self.last_accessed
+        }
+        fn set_last_accessed(&mut self, now: Instant) {
+            self.last_accessed = now;
         }
     }
 
@@ -248,27 +281,33 @@ mod tests {
     #[test]
     fn add_and_get_compressor_context() {
         let mut manager = ContextManager::new();
+        let initial_time = Instant::now();
         let ctx1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
             cid: 1,
             data: "flow1".to_string(),
+            last_accessed: initial_time,
         });
         let cid1 = ctx1.cid();
         manager.add_compressor_context(cid1, ctx1);
 
         assert_eq!(manager.compressor_context_count(), 1);
 
-        // Get existing context
-        let retrieved_ctx1 = manager.get_compressor_context_mut(cid1).unwrap();
-        assert_eq!(retrieved_ctx1.cid(), cid1);
+        let retrieved_ctx1_mut = manager.get_compressor_context_mut(cid1).unwrap();
+        assert_eq!(retrieved_ctx1_mut.cid(), cid1);
+        assert_eq!(retrieved_ctx1_mut.last_accessed(), initial_time);
 
-        // Downcast to check data
-        retrieved_ctx1
+        // Simulate access
+        retrieved_ctx1_mut.set_last_accessed(Instant::now());
+        let time_after_update = retrieved_ctx1_mut.last_accessed();
+        assert!(time_after_update > initial_time);
+
+        retrieved_ctx1_mut
             .as_any_mut()
             .downcast_mut::<MockCompressorCtx>()
             .unwrap()
             .data = "flow1_updated".to_string();
 
-        let retrieved_ctx1_again = manager.get_compressor_context_mut(cid1).unwrap();
+        let retrieved_ctx1_again = manager.get_compressor_context(cid1).unwrap();
         assert_eq!(
             retrieved_ctx1_again
                 .as_any()
@@ -277,8 +316,8 @@ mod tests {
                 .data,
             "flow1_updated"
         );
+        assert_eq!(retrieved_ctx1_again.last_accessed(), time_after_update); // Check time persists
 
-        // Get non-existent context
         let result_non_existent = manager.get_compressor_context_mut(99);
         assert!(matches!(
             result_non_existent,
@@ -289,22 +328,32 @@ mod tests {
     #[test]
     fn add_and_get_decompressor_context() {
         let mut manager = ContextManager::new();
-        let ctx1: Box<dyn RohcDecompressorContext> =
-            Box::new(MockDecompressorCtx { cid: 2, updates: 0 });
-        let cid1 = ctx1.cid(); // Get CID before move
+        let initial_time = Instant::now();
+        let ctx1: Box<dyn RohcDecompressorContext> = Box::new(MockDecompressorCtx {
+            cid: 2,
+            updates: 0,
+            last_accessed: initial_time,
+        });
+        let cid1 = ctx1.cid();
         manager.add_decompressor_context(cid1, ctx1);
 
         assert_eq!(manager.decompressor_context_count(), 1);
 
-        let retrieved_ctx1 = manager.get_decompressor_context_mut(cid1).unwrap();
-        assert_eq!(retrieved_ctx1.cid(), cid1);
-        retrieved_ctx1
+        let retrieved_ctx1_mut = manager.get_decompressor_context_mut(cid1).unwrap();
+        assert_eq!(retrieved_ctx1_mut.cid(), cid1);
+        assert_eq!(retrieved_ctx1_mut.last_accessed(), initial_time);
+
+        retrieved_ctx1_mut.set_last_accessed(Instant::now());
+        let time_after_update = retrieved_ctx1_mut.last_accessed();
+        assert!(time_after_update > initial_time);
+
+        retrieved_ctx1_mut
             .as_any_mut()
             .downcast_mut::<MockDecompressorCtx>()
             .unwrap()
             .updates += 1;
 
-        let retrieved_ctx1_again = manager.get_decompressor_context_mut(cid1).unwrap();
+        let retrieved_ctx1_again = manager.get_decompressor_context(cid1).unwrap();
         assert_eq!(
             retrieved_ctx1_again
                 .as_any()
@@ -313,6 +362,7 @@ mod tests {
                 .updates,
             1
         );
+        assert_eq!(retrieved_ctx1_again.last_accessed(), time_after_update);
 
         let result_non_existent = manager.get_decompressor_context_mut(100);
         assert!(matches!(
@@ -329,9 +379,17 @@ mod tests {
             Box::new(MockCompressorCtx {
                 cid: 1,
                 data: "".to_string(),
+                last_accessed: Instant::now(),
             }),
         );
-        manager.add_decompressor_context(2, Box::new(MockDecompressorCtx { cid: 2, updates: 0 }));
+        manager.add_decompressor_context(
+            2,
+            Box::new(MockDecompressorCtx {
+                cid: 2,
+                updates: 0,
+                last_accessed: Instant::now(),
+            }),
+        );
 
         assert_eq!(manager.compressor_context_count(), 1);
         assert_eq!(manager.decompressor_context_count(), 1);
@@ -340,7 +398,7 @@ mod tests {
         assert!(removed_comp_ctx.is_some());
         assert_eq!(removed_comp_ctx.unwrap().cid(), 1);
         assert_eq!(manager.compressor_context_count(), 0);
-        assert!(manager.remove_compressor_context(1).is_none()); // Already removed
+        assert!(manager.remove_compressor_context(1).is_none());
 
         let removed_decomp_ctx = manager.remove_decompressor_context(2);
         assert!(removed_decomp_ctx.is_some());
@@ -356,6 +414,7 @@ mod tests {
             Box::new(MockCompressorCtx {
                 cid: 1,
                 data: "".to_string(),
+                last_accessed: Instant::now(),
             }),
         );
         manager.add_compressor_context(
@@ -363,17 +422,32 @@ mod tests {
             Box::new(MockCompressorCtx {
                 cid: 2,
                 data: "".to_string(),
+                last_accessed: Instant::now(),
             }),
         );
-        manager.add_decompressor_context(3, Box::new(MockDecompressorCtx { cid: 3, updates: 0 }));
-        manager.add_decompressor_context(4, Box::new(MockDecompressorCtx { cid: 4, updates: 0 }));
+        manager.add_decompressor_context(
+            3,
+            Box::new(MockDecompressorCtx {
+                cid: 3,
+                updates: 0,
+                last_accessed: Instant::now(),
+            }),
+        );
+        manager.add_decompressor_context(
+            4,
+            Box::new(MockDecompressorCtx {
+                cid: 4,
+                updates: 0,
+                last_accessed: Instant::now(),
+            }),
+        );
 
         assert_eq!(manager.compressor_context_count(), 2);
         assert_eq!(manager.decompressor_context_count(), 2);
 
         manager.clear_compressor_contexts();
         assert_eq!(manager.compressor_context_count(), 0);
-        assert_eq!(manager.decompressor_context_count(), 2); // Decompressors should remain
+        assert_eq!(manager.decompressor_context_count(), 2);
 
         manager.clear_all_contexts();
         assert_eq!(manager.decompressor_context_count(), 0);
@@ -382,37 +456,42 @@ mod tests {
     #[test]
     fn overwrite_context() {
         let mut manager = ContextManager::new();
+        let time1 = Instant::now();
         let ctx_v1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
             cid: 1,
             data: "version1".to_string(),
+            last_accessed: time1,
         });
         manager.add_compressor_context(1, ctx_v1);
+        let retrieved_v1 = manager.get_compressor_context(1).unwrap();
         assert_eq!(
-            manager
-                .get_compressor_context_mut(1)
-                .unwrap()
+            retrieved_v1
                 .as_any()
                 .downcast_ref::<MockCompressorCtx>()
                 .unwrap()
                 .data,
             "version1"
         );
+        assert_eq!(retrieved_v1.last_accessed(), time1);
 
+        let time2 = Instant::now();
+        assert!(time2 > time1); // Ensure time has advanced
         let ctx_v2: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
-            cid: 1,
+            cid: 1, // Same CID
             data: "version2".to_string(),
+            last_accessed: time2,
         });
         manager.add_compressor_context(1, ctx_v2); // Overwrite
         assert_eq!(manager.compressor_context_count(), 1);
+        let retrieved_v2 = manager.get_compressor_context(1).unwrap();
         assert_eq!(
-            manager
-                .get_compressor_context_mut(1)
-                .unwrap()
+            retrieved_v2
                 .as_any()
                 .downcast_ref::<MockCompressorCtx>()
                 .unwrap()
                 .data,
             "version2"
         );
+        assert_eq!(retrieved_v2.last_accessed(), time2); // Check the new context's time
     }
 }
