@@ -5,13 +5,11 @@
 //! and edge cases around the limited encoding space of UO-0 packets.
 
 mod common;
-use std::sync::Arc;
-
 use common::{
-    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers, establish_ir_context, get_decompressor_context,
+    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
+    get_decompressor_context,
 };
 
-use rohcstar::engine::RohcEngine;
 use rohcstar::error::{RohcError, RohcParsingError};
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::Profile1DecompressorMode;
@@ -19,11 +17,10 @@ use rohcstar::profiles::profile1::{
     P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, P1_UO_1_SN_PACKET_TYPE_PREFIX,
     P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
-use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_uo0_sn_wraparound_65535_to_0() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -47,6 +44,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         ssrc,
     );
     // Note: establish_ir_context calls engine.compress, so compressor context is updated.
+    // The IP-ID in the compressor context will be current_packet_headers.ip_identification.
 
     // Packet: SN = 65535 (should be UO-0)
     // To be UO-0, TS, Marker, and IP-ID must match context.
@@ -120,7 +118,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
 
 #[test]
 fn p1_uo0_sn_at_lsb_window_edge() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -130,19 +128,26 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     let initial_sn_ir = 100;
     let initial_ts = 2000; // Establish a base timestamp
     let initial_marker = false;
+    // Store the headers used for IR to get its IP-ID
+    let ir_headers_for_context =
+        create_rtp_headers(initial_sn_ir, initial_ts, initial_marker, ssrc);
     establish_ir_context(
         &mut engine,
         cid,
-        initial_sn_ir,
-        initial_ts,
-        initial_marker,
+        ir_headers_for_context.rtp_sequence_number,
+        ir_headers_for_context.rtp_timestamp,
+        ir_headers_for_context.rtp_marker,
         ssrc,
     );
+    let ip_id_from_ir_context = ir_headers_for_context.ip_identification;
 
     let sn_at_edge = initial_sn_ir + 15; // 115
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_at_edge = create_rtp_headers(sn_at_edge, initial_ts, initial_marker, ssrc);
-    let generic_at_edge = GenericUncompressedHeaders::RtpUdpIpv4(headers_at_edge.clone());
+    // To be UO-0, TS must match context (initial_ts) and IP-ID must match context
+    let headers_at_edge_uncompressed =
+        create_rtp_headers(sn_at_edge, initial_ts, initial_marker, ssrc)
+            .with_ip_id(ip_id_from_ir_context);
+    let generic_at_edge =
+        GenericUncompressedHeaders::RtpUdpIpv4(headers_at_edge_uncompressed.clone());
     let compressed_at_edge = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_at_edge)
         .unwrap();
@@ -160,13 +165,19 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_at_edge.rtp_sequence_number, sn_at_edge);
     assert_eq!(decomp_at_edge.rtp_timestamp, initial_ts); // TS from context
+    // Decompressor's IP-ID will be its context default (0 after IR)
+    assert_eq!(
+        decomp_at_edge.ip_identification, 0,
+        "Decompressed IP-ID for UO-0 after IR"
+    );
 
+    // Compressor context SN is now 115, TS is initial_ts (2000), IP-ID is ip_id_from_ir_context
     let sn_next_to_edge = sn_at_edge + 1; // 116
-    // Compressor context SN is now 115, TS is initial_ts (2000)
-    // To be UO-0, TS must match context (initial_ts)
-    let headers_next_to_edge =
-        create_rtp_headers(sn_next_to_edge, initial_ts, initial_marker, ssrc);
-    let generic_next_to_edge = GenericUncompressedHeaders::RtpUdpIpv4(headers_next_to_edge.clone());
+    let headers_next_to_edge_uncompressed =
+        create_rtp_headers(sn_next_to_edge, initial_ts, initial_marker, ssrc)
+            .with_ip_id(ip_id_from_ir_context); // IP-ID same as current compressor context
+    let generic_next_to_edge =
+        GenericUncompressedHeaders::RtpUdpIpv4(headers_next_to_edge_uncompressed.clone());
     let compressed_next_to_edge = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_next_to_edge)
         .unwrap();
@@ -184,17 +195,32 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_next_to_edge.rtp_sequence_number, sn_next_to_edge);
     assert_eq!(decomp_next_to_edge.rtp_timestamp, initial_ts); // TS from context
+    assert_eq!(
+        decomp_next_to_edge.ip_identification, 0,
+        "Decompressed IP-ID for subsequent UO-0"
+    );
 
     // Re-establish context with SN 115. Use a new distinct TS for this IR context.
     let new_ir_base_ts = initial_ts + 100;
-    establish_ir_context(&mut engine, cid, 115, new_ir_base_ts, initial_marker, ssrc);
+    let new_ir_headers_for_context = create_rtp_headers(115, new_ir_base_ts, initial_marker, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        new_ir_headers_for_context.rtp_sequence_number,
+        new_ir_headers_for_context.rtp_timestamp,
+        new_ir_headers_for_context.rtp_marker,
+        ssrc,
+    );
+    let ip_id_from_new_ir_context = new_ir_headers_for_context.ip_identification;
 
     let sn_outside_window = 115 + 16; // 131
     // Uncompressed TS can be different here as this will be UO-1-SN due to SN diff.
-    let headers_outside_window =
-        create_rtp_headers(sn_outside_window, new_ir_base_ts + 30, initial_marker, ssrc);
+    // To avoid IR due to large IP-ID jump, keep IP-ID change small or none.
+    let headers_outside_window_uncompressed =
+        create_rtp_headers(sn_outside_window, new_ir_base_ts + 30, initial_marker, ssrc)
+            .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1)); // Small IP-ID change
     let generic_outside_window =
-        GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window.clone());
+        GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window_uncompressed.clone());
     let compressed_outside_window = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_outside_window)
         .unwrap();
@@ -212,11 +238,17 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_outside_window.rtp_sequence_number, sn_outside_window);
     assert_eq!(decomp_outside_window.rtp_timestamp, new_ir_base_ts); // UO-1-SN uses context TS
+    // Decompressor's IP-ID will be its context default (0 after IR)
+    // unless the UO-1-SN was actually a UO-1-ID. Here it should be UO-1-SN.
+    assert_eq!(
+        decomp_outside_window.ip_identification, 0,
+        "Decompressed IP-ID for UO-1-SN after new IR"
+    );
 }
 
 #[test]
 fn p1_uo0_crc_failures_trigger_context_downgrade() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -253,8 +285,6 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
             .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_good_uo0)
             .unwrap();
 
-        // Assert that a UO-0 packet was indeed generated *before* we corrupt it.
-        // This assertion was failing before, indicating UO-1-ID was generated.
         assert_eq!(
             compressed_uo0.len(),
             1,
@@ -305,17 +335,29 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
 
 #[test]
 fn p1_uo0_not_used_when_marker_changes() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
     let cid = 0u16;
     let ssrc = 0x1A2B3C;
 
-    establish_ir_context(&mut engine, cid, 300, 4000, false, ssrc);
+    let ir_headers = create_rtp_headers(300, 4000, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    // The IP-ID from IR context will be ir_headers.ip_identification
 
     // Uncompressed header TS is different, but marker change takes precedence for UO-1-SN.
-    let headers_marker_change = create_rtp_headers(301, 4010, true, ssrc);
+    // IP-ID also needs to be considered. If IP-ID changes significantly, it might go to IR.
+    // Let's keep IP-ID the same as context to isolate marker change effect.
+    let mut headers_marker_change = create_rtp_headers(301, 4010, true, ssrc);
+    headers_marker_change.ip_identification = ir_headers.ip_identification;
     let generic_marker_change =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_marker_change.clone());
 
@@ -348,7 +390,7 @@ fn p1_uo0_not_used_when_marker_changes() {
 
 #[test]
 fn p1_uo1_ts_is_used_when_ts_changes_marker_sn_ok_for_uo1ts() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();

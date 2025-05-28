@@ -5,23 +5,20 @@
 //! and the RTP Marker bit remains unchanged from the context.
 
 mod common;
-use std::sync::Arc;
-
 use common::{
-    DEFAULT_ENGINE_TEST_TIMEOUT, create_rtp_headers, establish_ir_context, get_decompressor_context,
+    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
+    get_decompressor_context,
 };
 
 use rohcstar::constants::ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE;
-use rohcstar::engine::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{
     P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
-use rohcstar::time::SystemClock;
 
 #[test]
 fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -29,11 +26,21 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     let ssrc = 0x12345678;
 
     // Establish context: SN=100, TS=1000, M=false
-    establish_ir_context(&mut engine, cid, 100, 1000, false, ssrc);
+    let ir_headers = create_rtp_headers(100, 1000, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    let ip_id_from_ir_context = ir_headers.ip_identification;
 
     // Packet with TS change (TS=2000), SN increments (SN=101), marker same (false)
     // This combination should select UO-1-TS.
-    let headers = create_rtp_headers(101, 2000, false, ssrc);
+    // IP-ID must be same as context for UO-1-TS.
+    let headers = create_rtp_headers(101, 2000, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
@@ -79,7 +86,7 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
 }
 #[test]
 fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -87,13 +94,23 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     let ssrc = 0xAABBCCDD;
 
     // Establish context: SN=200, TS=10000, M=false
-    establish_ir_context(&mut engine, cid, 200, 10000, false, ssrc);
+    let ir_headers = create_rtp_headers(200, 10000, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    let ip_id_from_ir_context = ir_headers.ip_identification;
 
     // Large TS jump, SN increments, marker same.
     // Original TS jump was 40000 (50000 - 10000). Max safe delta for 16bit LSB is 32768.
     // Reduce jump to be < 32768, e.g., +15000.
     let new_ts = 10000 + 15000; // new_ts = 25000. TS diff = 15000.
-    let headers = create_rtp_headers(201, new_ts, false, ssrc);
+    // IP-ID must be same as context for UO-1-TS.
+    let headers = create_rtp_headers(201, new_ts, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
@@ -103,7 +120,7 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     assert_eq!(
         compressed.len(),
         4,
-        "UO-1-TS for large TS jump. Expected 4, Got: {:?}", // This was line 95
+        "UO-1-TS for large TS jump. Expected 4, Got: {:?}",
         compressed
     );
     assert_eq!(
@@ -136,7 +153,7 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
 }
 #[test]
 fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -144,11 +161,21 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let ssrc = 0x11223344;
 
     // Establish context: SN=300, TS=3000, M=false
-    establish_ir_context(&mut engine, cid, 300, 3000, false, ssrc);
+    let ir_headers = create_rtp_headers(300, 3000, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    let ip_id_in_context = ir_headers.ip_identification;
 
     // Case 1: TS change, SN+1, Marker same -> UO-1-TS
     // Uncompressed: SN=301, TS=4000, M=false
-    let headers1 = create_rtp_headers(301, 4000, false, ssrc);
+    // IP-ID must be same as context.
+    let headers1 = create_rtp_headers(301, 4000, false, ssrc).with_ip_id(ip_id_in_context);
     let compressed1 = engine
         .compress(
             cid,
@@ -172,12 +199,13 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let decomp1 = decomp1_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp1.rtp_sequence_number, 301);
     assert_eq!(decomp1.rtp_timestamp, 4000);
-    // Compressor context after P1: SN=301, TS=4000, M=false
+    // Compressor context after P1: SN=301, TS=4000, M=false, IP-ID=ip_id_in_context
     // Decompressor context after P1: SN=301, TS=4000, M=false
 
-    // Case 2: Marker change, SN+1 (from 301), TS same (as 4000 from context after P1) -> UO-1-SN
+    // Case 2: Marker change, SN+1 (from 301), TS same (as 4000 from context after P1).
+    // IP-ID also same as context (ip_id_in_context) -> UO-1-SN
     // Uncompressed: SN=302, TS=4000, M=true
-    let headers2 = create_rtp_headers(302, 4000, true, ssrc);
+    let headers2 = create_rtp_headers(302, 4000, true, ssrc).with_ip_id(ip_id_in_context); // Keep IP-ID same to avoid IR
     let compressed2 = engine
         .compress(
             cid,
@@ -210,12 +238,13 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert_eq!(decomp2.rtp_sequence_number, 302);
     assert!(decomp2.rtp_marker);
     assert_eq!(decomp2.rtp_timestamp, 4000); // TS from context (established by P1 UO-1-TS)
-    // Compressor context after P2: SN=302, TS=4000, M=true
+    // Compressor context after P2: SN=302, TS=4000, M=true, IP-ID=ip_id_in_context
     // Decompressor context after P2: SN=302, TS=4000, M=true
 
-    // Case 3: Both TS and marker change, SN+1 (from 302) -> UO-1-SN (marker change takes precedence)
+    // Case 3: Marker change, SN+1 (from 302). TS same as context (4000).
+    // IP-ID same as context (ip_id_in_context) -> UO-1-SN (marker change takes precedence)
     // Uncompressed: SN=303, TS=4000 (to keep TS context for CRC aligned for this UO-1-SN), M=false
-    let headers3 = create_rtp_headers(303, 4000, false, ssrc);
+    let headers3 = create_rtp_headers(303, 4000, false, ssrc).with_ip_id(ip_id_in_context); // Keep IP-ID same
     let compressed3 = engine
         .compress(
             cid,
@@ -248,14 +277,16 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert_eq!(decomp3.rtp_sequence_number, 303);
     assert_eq!(decomp3.rtp_timestamp, 4000); // TS from context
     assert!(!decomp3.rtp_marker);
-    // Compressor context after P3: SN=303, TS=4000, M=false
+    // Compressor context after P3: SN=303, TS=4000, M=false, IP-ID=ip_id_in_context
     // Decompressor context after P3: SN=303, TS=4000, M=false
 
-    // Case 4: TS change (in uncompressed header), Marker same, SN not +1 (e.g. +2) -> UO-1-SN
+    // Case 4: TS change (in uncompressed header), Marker same, SN not +1 (e.g. +2).
+    // IP-ID can change by a small amount, still UO-1-SN
     // Uncompressed: SN=305, TS=6000 (TS changes from 4000), M=false
-    // Compressor context before P4: last_sn=303, last_ts=4000, last_marker=false
+    // Compressor context before P4: last_sn=303, last_ts=4000, last_marker=false, last_ip_id=ip_id_in_context
     // Decompressor context before P4: last_sn=303, last_ts=4000, last_marker=false
-    let headers4 = create_rtp_headers(305, 6000, false, ssrc);
+    let headers4 =
+        create_rtp_headers(305, 6000, false, ssrc).with_ip_id(ip_id_in_context.wrapping_add(1)); // Small IP-ID change
     let compressed4 = engine
         .compress(
             cid,
@@ -265,8 +296,10 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
         .unwrap();
     // Packet selection for P4:
     // M_unchanged=true. sn_diff=2 (encodable_for_uo0=true). ts_changed=true (6000!=4000). sn_incr_by_1=false.
+    // ip_id_changed = true (small change)
     // UO-0: false because ts_changed.
     // UO-1-TS: false because sn_incr_by_1=false.
+    // UO-1-ID: false because sn_incr_by_1=false and ts_changed=true
     // Fallback: UO-1-SN.
     assert_eq!(
         compressed4.len(),
@@ -300,7 +333,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
 
 #[test]
 fn p1_uo1_ts_marker_from_context_for_crc() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -308,12 +341,22 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
     let ssrc = 0xBADF00D;
 
     // Establish context with Marker = true, SN=50, TS=500
-    establish_ir_context(&mut engine, cid, 50, 500, true, ssrc);
+    let ir_headers = create_rtp_headers(50, 500, true, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    let ip_id_from_ir_context = ir_headers.ip_identification;
 
     // Packet with TS change, SN increments. Uncompressed marker is true (same as context).
     // UO-1-TS should be sent. UO-1-TS packet type field implies M=0,
     // but CRC calculation must use M=true from the context.
-    let headers = create_rtp_headers(51, 600, true, ssrc);
+    // IP-ID must be same as context.
+    let headers = create_rtp_headers(51, 600, true, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
@@ -354,7 +397,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
 
 #[test]
 fn p1_uo1_ts_with_add_cid() {
-    let mut engine = RohcEngine::new(100, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -362,10 +405,20 @@ fn p1_uo1_ts_with_add_cid() {
     let ssrc = 0xFEEDF00D;
 
     // Establish context: SN=70, TS=7000, M=false
-    establish_ir_context(&mut engine, cid, 70, 7000, false, ssrc);
+    let ir_headers = create_rtp_headers(70, 7000, false, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers.rtp_sequence_number,
+        ir_headers.rtp_timestamp,
+        ir_headers.rtp_marker,
+        ssrc,
+    );
+    let ip_id_from_ir_context = ir_headers.ip_identification;
 
     // Packet conditions for UO-1-TS: TS changes, SN+1, M same as context.
-    let headers = create_rtp_headers(71, 7500, false, ssrc);
+    // IP-ID must be same as context.
+    let headers = create_rtp_headers(71, 7500, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)

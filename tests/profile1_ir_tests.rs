@@ -7,10 +7,11 @@
 mod common;
 use std::sync::Arc;
 use std::time::Instant;
+use std::u32;
 
 use common::{
-    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers, establish_ir_context,
-    get_decompressor_context,
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers,
+    create_test_engine_with_system_clock, establish_ir_context, get_decompressor_context,
 };
 
 use rohcstar::ProfileHandler;
@@ -233,76 +234,138 @@ fn p1_ir_packet_large_cid_not_supported_by_builder() {
 
 #[test]
 fn p1_multiple_flows_different_cids() {
-    let mut engine = RohcEngine::new(5, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock));
+    use common::get_compressor_context;
+    use rohcstar::constants::ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE;
+
+    let mut engine = create_test_engine_with_system_clock(5);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
 
     let cid1: u16 = 1;
     let ssrc1: u32 = 0xAAAA1111;
-    let headers1_flow1 = create_rtp_headers(10, 100, false, ssrc1); // TS = 100
+    let headers1_flow1 = create_rtp_headers(10, 100, false, ssrc1);
     let generic1_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1_flow1.clone());
+
+    let compressed1_flow1 = engine
+        .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic1_flow1)
+        .unwrap();
+    // Verify Add-CID octet for CID 1
+    assert_eq!(
+        compressed1_flow1[0],
+        ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | cid1 as u8
+    );
+    // Verify core packet is IR-DYN
+    assert_eq!(
+        compressed1_flow1[1],
+        rohcstar::profiles::profile1::P1_ROHC_IR_PACKET_TYPE_WITH_DYN
+    );
+
+    let _ = engine.decompress(&compressed1_flow1).unwrap();
 
     let cid2: u16 = 2;
     let ssrc2: u32 = 0xBBBB2222;
     let headers1_flow2 = create_rtp_headers(50, 500, true, ssrc2);
     let generic1_flow2 = GenericUncompressedHeaders::RtpUdpIpv4(headers1_flow2.clone());
 
-    // Compress and decompress first packet for flow 1 (CID 1)
-    let compressed1_flow1 = engine
-        .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic1_flow1)
-        .unwrap();
-    assert_eq!(compressed1_flow1[0], 0xE0 | cid1 as u8); // Check Add-CID
-    let decompressed1_flow1 = engine
-        .decompress(&compressed1_flow1)
-        .unwrap()
-        .as_rtp_udp_ipv4()
-        .unwrap()
-        .clone();
-    assert_eq!(decompressed1_flow1.rtp_ssrc, ssrc1);
-    assert_eq!(decompressed1_flow1.rtp_sequence_number, 10);
-
-    // Compress and decompress first packet for flow 2 (CID 2)
     let compressed1_flow2 = engine
         .compress(cid2, Some(RohcProfile::RtpUdpIp), &generic1_flow2)
         .unwrap();
-    assert_eq!(compressed1_flow2[0], 0xE0 | cid2 as u8); // Check Add-CID
-    let decompressed1_flow2 = engine
-        .decompress(&compressed1_flow2)
-        .unwrap()
-        .as_rtp_udp_ipv4()
-        .unwrap()
-        .clone();
-    assert_eq!(decompressed1_flow2.rtp_ssrc, ssrc2);
-    assert_eq!(decompressed1_flow2.rtp_sequence_number, 50);
+    // Verify Add-CID octet for CID 2
+    assert_eq!(
+        compressed1_flow2[0],
+        ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | cid2 as u8
+    );
+    // Verify core packet is IR-DYN
+    assert_eq!(
+        compressed1_flow2[1],
+        rohcstar::profiles::profile1::P1_ROHC_IR_PACKET_TYPE_WITH_DYN
+    );
 
-    // Verify context manager has two distinct contexts
-    assert_eq!(engine.context_manager().compressor_context_count(), 2);
-    assert_eq!(engine.context_manager().decompressor_context_count(), 2);
+    let _ = engine.decompress(&compressed1_flow2).unwrap();
 
-    // Send another packet for flow 1 (should use CID 1 context)
-    let headers2_flow1 = create_rtp_headers(11, 100, false, ssrc1); // UO-0
+    // Verify context counts after establishing two distinct flows
+    assert_eq!(
+        engine.context_manager().compressor_context_count(),
+        2,
+        "Compressor context count should be 2"
+    );
+    assert_eq!(
+        engine.context_manager().decompressor_context_count(),
+        2,
+        "Decompressor context count should be 2"
+    );
+
+    // --- Send another packet for flow 1 (expected to be UO-0) ---
+
+    // Retrieve context for cid1 to ensure UO-0 conditions are met accurately
+    let comp_ctx_cid1 = get_compressor_context(&engine, cid1);
+    let last_ip_id_cid1 = comp_ctx_cid1.last_sent_ip_id_full;
+    let last_ts_cid1 = comp_ctx_cid1.last_sent_rtp_ts_full;
+    let last_marker_cid1 = comp_ctx_cid1.last_sent_rtp_marker;
+
+    let sn2_flow1 = headers1_flow1.rtp_sequence_number.wrapping_add(1); // SN = 11
+    // For UO-0, TS must match the context's last_sent_rtp_ts_full
+    let ts2_flow1 = last_ts_cid1;
+    let marker2_flow1 = last_marker_cid1; // Marker unchanged (false)
+
+    let mut headers2_flow1 = create_rtp_headers(sn2_flow1, ts2_flow1, marker2_flow1, ssrc1);
+    headers2_flow1.ip_identification = last_ip_id_cid1; // IP-ID unchanged
+
     let generic2_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers2_flow1.clone());
     let compressed2_flow1 = engine
         .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic2_flow1)
         .unwrap();
-    // UO-0 with Add-CID: Add-CID byte + UO-0 byte = 2 bytes
-    assert_eq!(compressed2_flow1.len(), 2);
-    assert_eq!(compressed2_flow1[0], 0xE0 | cid1 as u8);
 
-    let decompressed2_flow1 = engine
-        .decompress(&compressed2_flow1)
-        .unwrap()
+    // Assert UO-0 packet characteristics for small CID
+    assert_eq!(
+        compressed2_flow1.len(),
+        2,
+        "Expected UO-0 packet length (2 bytes for Add-CID)"
+    );
+    assert_eq!(
+        compressed2_flow1[0],
+        ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | cid1 as u8,
+        "Add-CID octet for CID 1 mismatch"
+    );
+    assert_eq!(
+        compressed2_flow1[1] & 0x80,
+        0x00,
+        "Core UO-0 byte MSB should be 0"
+    ); // Check MSB of UO-0
+
+    // Decompress and verify the UO-0 packet
+    let decompressed2_flow1_generic = engine.decompress(&compressed2_flow1).unwrap();
+    let decompressed2_flow1 = decompressed2_flow1_generic
         .as_rtp_udp_ipv4()
         .unwrap()
         .clone();
-    assert_eq!(decompressed2_flow1.rtp_ssrc, ssrc1);
-    assert_eq!(decompressed2_flow1.rtp_sequence_number, 11);
-    assert_eq!(decompressed2_flow1.rtp_marker, headers1_flow1.rtp_marker); // From context
+
+    assert_eq!(
+        decompressed2_flow1.rtp_ssrc, ssrc1,
+        "SSRC mismatch after UO-0 decompress"
+    );
+    assert_eq!(
+        decompressed2_flow1.rtp_sequence_number, sn2_flow1,
+        "SN mismatch after UO-0 decompress"
+    );
+    assert_eq!(
+        decompressed2_flow1.rtp_marker, marker2_flow1,
+        "Marker mismatch after UO-0 decompress"
+    );
     assert_eq!(
         decompressed2_flow1.rtp_timestamp,
-        headers1_flow1.rtp_timestamp
-    ); // From context
+        ts2_flow1, // This will be last_ts_cid1 (100)
+        "TS mismatch after UO-0 decompress"
+    );
+    // After an IR packet, the decompressor context initializes IP-ID to a default (0 for P1),
+    // as P1 IR packets do not carry the original IP-ID. UO-0 packets also don't carry IP-ID.
+    // So, the reconstructed IP-ID will be this default from the decompressor context.
+    let expected_reconstructed_ip_id_for_uo0 = 0u16;
+    assert_eq!(
+        decompressed2_flow1.ip_identification, expected_reconstructed_ip_id_for_uo0,
+        "IP-ID mismatch after UO-0 decompress"
+    );
 }
 
 // --- 4. SSRC Change Detection ---
@@ -327,7 +390,8 @@ fn p1_ssrc_change_forces_context_reinitialization_and_ir() {
     assert_eq!(comp_ctx1.mode, Profile1CompressorMode::FirstOrder);
 
     // Second packet: UO-0
-    let headers2 = create_rtp_headers(201, 2100, false, ssrc1);
+    let mut headers2 = create_rtp_headers(201, 2000, false, ssrc1); // TS same for UO-0
+    headers2.ip_identification = headers1.ip_identification; // IP-ID same for UO-0
     let generic2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2);
     let compressed2 = handler.compress(comp_ctx_dyn.as_mut(), &generic2).unwrap();
     assert_ne!(compressed2[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN); // Should be UO-0
@@ -373,25 +437,28 @@ fn p1_ir_refresh_interval_edge_cases() {
     // Case 1: ir_refresh_interval = 0 (disabled)
     let mut comp_ctx_dyn_0 = handler.create_compressor_context(0, 0, Instant::now());
     let headers_ir0 = create_rtp_headers(1, 10, false, ssrc);
+    let generic_ir0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir0.clone());
     let _ = handler
-        .compress(
-            comp_ctx_dyn_0.as_mut(),
-            &GenericUncompressedHeaders::RtpUdpIpv4(headers_ir0),
-        )
+        .compress(comp_ctx_dyn_0.as_mut(), &generic_ir0)
         .unwrap(); // IR
+
+    let mut last_ip_id = headers_ir0.ip_identification;
+
     for i in 2..=10 {
         // Send many UO packets
-        let headers_uo = create_rtp_headers(i, 10 + (i as u32 * 10), false, ssrc);
+        let mut headers_uo = create_rtp_headers(i, 10, false, ssrc); // TS same for UO-0
+        headers_uo.ip_identification = last_ip_id; // IP-ID same for UO-0
         let compressed = handler
             .compress(
                 comp_ctx_dyn_0.as_mut(),
-                &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo),
+                &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo.clone()),
             )
             .unwrap();
         assert_ne!(
             compressed[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
             "IR refresh should be disabled (interval 0)"
         );
+        last_ip_id = headers_uo.ip_identification;
     }
     let comp_ctx_0 = comp_ctx_dyn_0
         .as_any()
@@ -413,7 +480,7 @@ fn p1_ir_refresh_interval_edge_cases() {
         "P1 (interval 1) should be IR"
     );
 
-    let headers_ir1_2 = create_rtp_headers(102, 1020, false, ssrc);
+    let headers_ir1_2 = create_rtp_headers(102, 1020, false, ssrc); // TS changes, still results in IR
     let compressed_ir1_2 = handler
         .compress(
             comp_ctx_dyn_1.as_mut(),
@@ -434,22 +501,25 @@ fn p1_ir_refresh_interval_edge_cases() {
     let large_interval = 100u32;
     let mut comp_ctx_dyn_large =
         handler.create_compressor_context(0, large_interval, Instant::now());
-    let headers_ir_large = create_rtp_headers(201, 2010, false, ssrc);
+    let headers_ir_large_init = create_rtp_headers(201, 2010, false, ssrc);
     let _ = handler
         .compress(
             comp_ctx_dyn_large.as_mut(),
-            &GenericUncompressedHeaders::RtpUdpIpv4(headers_ir_large),
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers_ir_large_init.clone()),
         )
         .unwrap(); // IR (Packet 1)
+
+    last_ip_id = headers_ir_large_init.ip_identification;
 
     // Send large_interval - 1 FO packets (i.e., packets 2 through 100)
     for i in 1..=(large_interval - 1) {
         let current_sn = 201 + i as u16; // SNs 202 to 300
-        let headers_uo = create_rtp_headers(current_sn, 2010 + (i * 10), false, ssrc);
+        let mut headers_uo = create_rtp_headers(current_sn, 2010, false, ssrc); // TS same for UO-0
+        headers_uo.ip_identification = last_ip_id; // IP-ID same for UO-0
         let compressed = handler
             .compress(
                 comp_ctx_dyn_large.as_mut(),
-                &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo),
+                &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo.clone()),
             )
             .unwrap();
         assert_ne!(
@@ -459,6 +529,7 @@ fn p1_ir_refresh_interval_edge_cases() {
             i + 1,
             current_sn
         );
+        last_ip_id = headers_uo.ip_identification;
     }
     let comp_ctx_large_before_refresh = comp_ctx_dyn_large
         .as_any()
@@ -471,11 +542,11 @@ fn p1_ir_refresh_interval_edge_cases() {
 
     // The NEXT packet (Packet 101 overall) should trigger IR
     let headers_refresh_ir = create_rtp_headers(
-        201 + large_interval as u16,
-        2010 + (large_interval * 10),
+        201 + large_interval as u16,  // SN=301
+        2010 + (large_interval * 10), // TS changes
         false,
         ssrc,
-    ); // SN=301
+    );
     let compressed_refresh_ir = handler
         .compress(
             comp_ctx_dyn_large.as_mut(),
@@ -524,7 +595,13 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
     // NO Dynamic Chain
 
     // CRC (over Profile + Static Chain)
+    // CRC payload for IR-STATIC: Profile (1) + Static Chain (16) = 17 bytes
     let crc_payload = &ir_packet_bytes[1..]; // Profile + Static
+    assert_eq!(
+        crc_payload.len(),
+        1 + P1_STATIC_CHAIN_LENGTH_BYTES,
+        "IR-STATIC CRC payload length"
+    );
     let crc = rohcstar::crc::calculate_rohc_crc8(crc_payload);
     ir_packet_bytes.push(crc);
 
@@ -550,7 +627,7 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_fails_gracefully() {
 
 #[test]
 fn p1_decompressor_context_persistence_across_ir_packets() {
-    let mut engine = RohcEngine::new(10, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // High refresh interval to avoid auto-refresh
+    let mut engine = create_test_engine_with_system_clock(10);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
@@ -559,7 +636,15 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
     let ssrc2 = 0xABCDE002; // Different SSRC for the second IR
 
     // Packet 1: IR for SSRC1
-    establish_ir_context(&mut engine, cid, 10, 100, false, ssrc1);
+    let headers_ir1 = create_rtp_headers(10, 100, false, ssrc1);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        headers_ir1.rtp_sequence_number,
+        headers_ir1.rtp_timestamp,
+        headers_ir1.rtp_marker,
+        ssrc1,
+    );
 
     let decomp_ctx = get_decompressor_context(&engine, cid);
     assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
@@ -567,7 +652,8 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
     assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 10);
 
     // Simulate some UO packets for SSRC1
-    let headers_uo = create_rtp_headers(11, 110, false, ssrc1);
+    let mut headers_uo = create_rtp_headers(11, 100, false, ssrc1); // TS same for UO-0
+    headers_uo.ip_identification = headers_ir1.ip_identification; // IP-ID same for UO-0
     let generic_uo = GenericUncompressedHeaders::RtpUdpIpv4(headers_uo);
     let compressed_uo = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_uo)
@@ -613,7 +699,7 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
 fn p1_ir_packet_processing_performance() {
     use std::time::Instant;
 
-    let mut engine = RohcEngine::new(u32::MAX, DEFAULT_ENGINE_TEST_TIMEOUT, Arc::new(SystemClock)); // Disable auto-refresh for perf test
+    let mut engine = create_test_engine_with_system_clock(u32::MAX); // Disable auto-refresh for perf test
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
