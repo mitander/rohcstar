@@ -7,9 +7,11 @@
 
 use std::time::Instant;
 
+use crate::crc::CrcCalculators;
 use crate::packet_defs::RohcProfile;
 use crate::profiles::profile1::{
     IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::build_profile1_ir_packet,
+    protocol_types::Timestamp,
 };
 use crate::traits::ProfileHandler;
 
@@ -23,10 +25,11 @@ use crate::traits::ProfileHandler;
 /// - Falls back to NoContext if setup fails
 ///
 /// # Parameters
-/// - `data`: Fuzzer-generated input treated as ROHC packet
+/// * `data` - Fuzzer-generated input treated as ROHC packet
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let p1_handler = Profile1Handler::new();
     let cid = 0u16;
+    let crc_calculators = CrcCalculators::new();
 
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
     let sample_ir_data_for_harness = Profile1IrPacket {
@@ -42,22 +45,17 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         static_udp_dst_port: 200,
         static_rtp_ssrc: 12345,
         dyn_rtp_sn: 1,
-        dyn_rtp_timestamp: 1000,
+        dyn_rtp_timestamp: Timestamp::new(1000),
         dyn_rtp_marker: false,
-        crc8: 0, // Will be calculated by builder
+        crc8: 0,
     };
 
-    match build_profile1_ir_packet(&sample_ir_data_for_harness) {
+    match build_profile1_ir_packet(&sample_ir_data_for_harness, &crc_calculators) {
         Ok(sample_ir_bytes) => {
-            // Attempt to process the sample IR to bring context to FullContext.
-            // The decompress method expects the core packet bytes (after Add-CID is stripped).
-            // build_ir_profile1_packet for CID 0 doesn't add an Add-CID octet.
-            // If sample_ir_data_for_harness.cid was >0, build_ir_profile1_packet would add it,
-            // and we'd need to strip it here before passing to p1_handler.decompress.
-            // For CID 0, sample_ir_bytes *are* the core_packet_bytes.
             let mut decompressor_context_dyn =
                 p1_handler.create_decompressor_context(cid, Instant::now());
 
+            // Core IR bytes for CID 0 are the full packet (no Add-CID stripping needed)
             if p1_handler
                 .decompress(decompressor_context_dyn.as_mut(), &sample_ir_bytes)
                 .is_ok()
@@ -65,8 +63,6 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
                 // Successfully pre-conditioned context. Now fuzz with this context.
                 let _ = p1_handler.decompress(decompressor_context_dyn.as_mut(), data);
             } else {
-                // Failed to decompress the known-good IR.
-                // Fallback: fuzz against a fresh, default P1 context.
                 eprintln!(
                     "WARN: Harness failed to decompress sample IR. Fuzzing against default context."
                 );
@@ -76,8 +72,6 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             }
         }
         Err(_e) => {
-            // Failed to build the sample IR (harness setup problem)
-            // Fallback to fuzzing against a fresh, default P1 context.
             eprintln!("WARN: Harness failed to build sample IR. Fuzzing against default context.");
             let mut fresh_context_dyn = p1_handler.create_decompressor_context(cid, Instant::now());
             let _ = p1_handler.decompress(fresh_context_dyn.as_mut(), data);

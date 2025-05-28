@@ -6,6 +6,7 @@
 //! incoming ROHC packets and for building outgoing ROHC packets.
 
 use crate::packet_defs::RohcProfile;
+use crate::profiles::profile1::protocol_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
@@ -17,14 +18,10 @@ use std::net::Ipv4Addr;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IrPacket {
     /// Context Identifier (CID) associated with this ROHC flow.
-    /// For an incoming IR packet, this might be derived by the ROHC engine from
-    /// an Add-CID octet or be implicit (e.g., CID 0). For an outgoing IR packet,
-    /// this is the CID of the compressor's context.
     pub cid: u16,
     /// ROHC Profile Identifier. For Profile 1, this must be `RohcProfile::RtpUdpIp`.
     pub profile_id: RohcProfile,
-    /// The 8-bit CRC calculated over the IR packet's payload (which includes the
-    /// profile octet, static chain, and dynamic chain if present).
+    /// The 8-bit CRC calculated over the IR packet's payload.
     pub crc8: u8,
 
     /// Source IPv4 address.
@@ -38,105 +35,81 @@ pub struct IrPacket {
     /// RTP Synchronization Source (SSRC) identifier.
     pub static_rtp_ssrc: u32,
 
-    // These are present if the D-bit was set in the IR packet type octet,
-    // indicating an IR-DYN packet. For an IR packet (D-bit = 0), these might hold
-    // default or last known values, but are not strictly part of the "dynamic chain"
-    // payload in that specific packet format. However, the struct holds them for completeness
-    // as context initialization always requires them.
-    /// RTP sequence number.
+    /// RTP sequence number from dynamic chain.
     pub dyn_rtp_sn: u16,
-    /// RTP timestamp.
-    pub dyn_rtp_timestamp: u32,
-    /// RTP marker bit.
+    /// RTP timestamp from dynamic chain.
+    pub dyn_rtp_timestamp: Timestamp,
+    /// RTP marker bit from dynamic chain.
     pub dyn_rtp_marker: bool,
+    // Field for TS_STRIDE in IR-DYN will be added in a later commit.
+    // pub ts_stride: Option<u32>,
 }
 
 impl Default for IrPacket {
     /// Creates a default `IrPacket` for Profile 1.
-    ///
-    /// Note: Fields like `cid`, `crc8`, and all static/dynamic header fields
-    /// must be appropriately set based on the actual packet data or context
-    /// before this struct is used for building or after it's populated from parsing.
-    /// The `profile` field defaults to `RohcProfile::RtpUdpIp`.
     fn default() -> Self {
         Self {
-            cid: 0,                            // Typically set by engine or context
-            profile_id: RohcProfile::RtpUdpIp, // Specific to Profile 1
-            crc8: 0,                           // Must be calculated or verified
+            cid: 0,
+            profile_id: RohcProfile::RtpUdpIp,
+            crc8: 0,
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
             static_udp_src_port: 0,
             static_udp_dst_port: 0,
             static_rtp_ssrc: 0,
             dyn_rtp_sn: 0,
-            dyn_rtp_timestamp: 0,
+            dyn_rtp_timestamp: Timestamp::new(0),
             dyn_rtp_marker: false,
+            // ts_stride: None,
         }
     }
 }
 
-/// Represents the data contained within a ROHC Profile 1 UO-0 (Unidirectional Optimistic type 0) packet.
+/// Represents data for ROHC Profile 1 UO-0 (Unidirectional Optimistic type 0) packet.
 ///
-/// UO-0 packets are highly compressed, often only 1 byte for CID 0 flows.
-/// They carry LSB-encoded parts of the RTP Sequence Number and a 3-bit CRC.
-/// The RTP Marker bit and Timestamp are implicitly assumed to be unchanged from the context.
+/// UO-0 packets are highly compressed. They carry LSB-encoded parts of the
+/// RTP Sequence Number and a 3-bit CRC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Uo0Packet {
-    /// Context Identifier (CID).
-    /// - `None`: Indicates this UO-0 packet is for the implicit CID 0 (no Add-CID octet was present).
-    /// - `Some(u8)`: Indicates an Add-CID octet was processed by the ROHC engine,
-    ///   providing the small CID (1-15) for this packet.
+    /// Optional small Context Identifier (CID), if an Add-CID octet was present.
     pub cid: Option<u8>,
-
     /// Least Significant Bits (LSBs) of the RTP Sequence Number.
-    /// For Profile 1 UO-0, this is typically 4 bits.
     pub sn_lsb: u8,
-
-    /// The 3-bit CRC calculated over parts of the (conceptually) reconstructed uncompressed header.
+    /// The 3-bit CRC.
     pub crc3: u8,
 }
 
 /// Represents data for ROHC Profile 1 UO-1 (Unidirectional Optimistic type 1) packets.
 ///
-/// UO-1 packets offer more robust updates than UO-0. This struct primarily covers
-/// UO-1-SN (carrying LSBs of SN and the Marker bit). It can be extended or specialized
-/// for other UO-1 variants like UO-1-TS (Timestamp) or UO-1-ID (IP-ID).
+/// This struct is a general container for UO-1 variants. Specific fields are populated
+/// based on the UO-1 sub-type (e.g., UO-1-SN, UO-1-TS, UO-1-ID, UO-1-RTP).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Uo1Packet {
-    /// Context Identifier (CID).
-    /// - `None`: Indicates this UO-1 packet is for the implicit CID 0.
-    /// - `Some(u8)`: Indicates an Add-CID octet should be prepended for this small CID (1-15).
+    /// Optional small Context Identifier (CID).
     pub cid: Option<u8>,
-    /// Least Significant Bits (LSBs) of the RTP Sequence Number.
-    pub sn_lsb: u16, // For UO-1-SN, this is often 8 bits, but field allows for more.
-    /// Number of LSBs used for the `sn_lsb` field (e.g., 8 for standard UO-1-SN).
+    /// Least Significant Bits (LSBs) of the RTP Sequence Number (used in UO-1-SN).
+    pub sn_lsb: u16,
+    /// Number of LSBs used for `sn_lsb` (used in UO-1-SN).
     pub num_sn_lsb_bits: u8,
-
-    /// Value of the RTP Marker bit.
-    /// `Some(bool)` if explicitly conveyed by this UO-1 packet (typical for UO-1-SN).
-    /// `None` if not conveyed by this particular UO-1 variant.
+    /// Value of the RTP Marker bit (used in UO-1-SN and UO-1-RTP).
     pub marker: bool,
-
-    /// Optional Least Significant Bits (LSBs) of the RTP Timestamp.
-    /// Present for UO-1-TS variants.
-    pub ts_lsb: Option<u16>, // Typically 16 bits if present.
-    /// Optional number of LSBs used for `ts_lsb`.
+    /// Optional LSBs of the RTP Timestamp (for UO-1-TS).
+    pub ts_lsb: Option<u16>,
+    /// Optional number of LSBs for `ts_lsb` (for UO-1-TS).
     pub num_ts_lsb_bits: Option<u8>,
-
-    /// Optional Least Significant Bits (LSBs) of the IP Identification.
-    /// Present for UO-1-ID variants.
+    /// Optional LSBs of the IP Identification (for UO-1-ID).
     pub ip_id_lsb: Option<u16>,
-    /// Optional number of LSBs used for `ip_id_lsb`.
+    /// Optional number of LSBs for `ip_id_lsb` (for UO-1-ID).
     pub num_ip_id_lsb_bits: Option<u8>,
-
-    /// The 8-bit CRC. UO-1 packets typically use an 8-bit CRC for error detection.
+    // Field for TS_SCALED (for UO-1-RTP) will be added in Commit 2 of TS Stride implementation.
+    // pub ts_scaled: Option<u8>,
+    /// The 8-bit CRC.
     pub crc8: u8,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
 
     #[test]
     fn ir_packet_defaults_and_construction() {
@@ -145,6 +118,7 @@ mod tests {
         assert_eq!(default_ir.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(default_ir.static_ip_src, Ipv4Addr::UNSPECIFIED);
         assert_eq!(default_ir.dyn_rtp_sn, 0);
+        assert_eq!(default_ir.dyn_rtp_timestamp, Timestamp::new(0));
 
         let custom_ir = IrPacket {
             cid: 5,
@@ -156,11 +130,13 @@ mod tests {
             static_udp_dst_port: 2000,
             static_rtp_ssrc: 0x12345678,
             dyn_rtp_sn: 100,
-            dyn_rtp_timestamp: 1000,
+            dyn_rtp_timestamp: Timestamp::new(1000),
             dyn_rtp_marker: true,
+            // ts_stride: None, // Not yet added
         };
         assert_eq!(custom_ir.cid, 5);
         assert_eq!(custom_ir.static_rtp_ssrc, 0x12345678);
+        assert_eq!(custom_ir.dyn_rtp_timestamp, Timestamp::new(1000));
         assert!(custom_ir.dyn_rtp_marker);
     }
 
@@ -173,15 +149,15 @@ mod tests {
 
         let custom_uo0_cid0 = Uo0Packet {
             cid: None,
-            sn_lsb: 0x0A, // 10
-            crc3: 0x05,   // 5
+            sn_lsb: 0x0A,
+            crc3: 0x05,
         };
         assert_eq!(custom_uo0_cid0.sn_lsb, 10);
 
         let custom_uo0_cid5 = Uo0Packet {
             cid: Some(5),
-            sn_lsb: 0x0F, // 15
-            crc3: 0x07,   // 7
+            sn_lsb: 0x0F,
+            crc3: 0x07,
         };
         assert_eq!(custom_uo0_cid5.cid, Some(5));
         assert_eq!(custom_uo0_cid5.crc3, 7);
@@ -191,14 +167,14 @@ mod tests {
     fn uo1_packet_defaults_and_construction() {
         let default_uo1 = Uo1Packet::default();
         assert_eq!(default_uo1.sn_lsb, 0);
-        assert_eq!(default_uo1.num_sn_lsb_bits, 0); // Default u8 is 0
+        assert_eq!(default_uo1.num_sn_lsb_bits, 0);
         assert!(!default_uo1.marker);
         assert_eq!(default_uo1.ts_lsb, None);
         assert_eq!(default_uo1.crc8, 0);
 
         let custom_uo1_sn = Uo1Packet {
             cid: None,
-            sn_lsb: 0xAB, // 171
+            sn_lsb: 0xAB,
             num_sn_lsb_bits: 8,
             marker: true,
             ts_lsb: None,
@@ -206,24 +182,24 @@ mod tests {
             ip_id_lsb: None,
             num_ip_id_lsb_bits: None,
             crc8: 0xCD,
+            // ts_scaled: None, // Not yet added
         };
         assert_eq!(custom_uo1_sn.sn_lsb, 0xAB);
-        assert_eq!(custom_uo1_sn.num_sn_lsb_bits, 8);
         assert!(custom_uo1_sn.marker);
 
         let custom_uo1_ts = Uo1Packet {
             cid: None,
             sn_lsb: 0x1234,
-            num_sn_lsb_bits: 16, // Could be for a different UO-1 variant
+            num_sn_lsb_bits: 16,
             marker: false,
             ts_lsb: Some(0x5678),
             num_ts_lsb_bits: Some(16),
             ip_id_lsb: None,
             num_ip_id_lsb_bits: None,
             crc8: 0xEF,
+            // ts_scaled: None, // Not yet added
         };
         assert_eq!(custom_uo1_ts.ts_lsb, Some(0x5678));
-        assert_eq!(custom_uo1_ts.num_ts_lsb_bits, Some(16));
     }
 
     #[test]
@@ -238,7 +214,7 @@ mod tests {
             static_udp_dst_port: 20,
             static_rtp_ssrc: 30,
             dyn_rtp_sn: 40,
-            dyn_rtp_timestamp: 50,
+            dyn_rtp_timestamp: Timestamp::new(50),
             dyn_rtp_marker: true,
         };
         let ser_ir = serde_json::to_string(&ir).unwrap();

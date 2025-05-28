@@ -4,7 +4,6 @@
 //! ROHC compression and decompression operations. It manages different ROHC
 //! profile handlers and their associated contexts, including context timeout logic.
 
-use crate::time::{Clock, SystemClock};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -16,6 +15,7 @@ use crate::constants::{
 use crate::context_manager::ContextManager;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
+use crate::time::{Clock, SystemClock};
 use crate::traits::ProfileHandler;
 
 /// The main ROHC processing engine.
@@ -340,6 +340,7 @@ impl Default for RohcEngine {
 mod tests {
     use super::*;
     use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
+    use crate::profiles::profile1::protocol_types::Timestamp;
     use crate::profiles::profile1::{
         P1_DYNAMIC_CHAIN_LENGTH_BYTES, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
         P1_STATIC_CHAIN_LENGTH_BYTES, P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX,
@@ -360,7 +361,7 @@ mod tests {
             udp_dst_port: 20020,
             rtp_ssrc: 0xAABBCCDD,
             rtp_sequence_number: sn,
-            rtp_timestamp: ts,
+            rtp_timestamp: Timestamp::new(ts),
             rtp_marker: marker,
             ..Default::default()
         }

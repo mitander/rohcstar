@@ -124,6 +124,19 @@ pub const P1_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 7;
 /// it's often represented as a full byte (e.g., 0x01 or 0x00).
 pub const P1_UO_CRC_INPUT_LENGTH_BYTES: usize = 11;
 
+// --- Profile 1 TS Stride Constants ---
+/// Minimum number of packets with consistent TS increment before establishing stride.
+/// (RFC 3095, Section 4.5.4, parameter k_stride).
+pub const P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD: u32 = 3;
+/// Maximum value for TS_SCALED field (fits in 8 bits).
+/// (RFC 3095, Section 5.7.5, UO-1-RTP packet format).
+pub const P1_TS_SCALED_MAX_VALUE: u32 = 255;
+/// Discriminator base for UO-1-RTP packets (TSI=100, M variable).
+/// Format: `1010100M`.
+pub const P1_UO_1_RTP_DISCRIMINATOR_BASE: u8 = 0b1010_1000; // 0xA8
+/// Mask to extract the Marker (M) bit from a UO-1-RTP packet's type octet.
+pub const P1_UO_1_RTP_MARKER_BIT_MASK: u8 = 0b0000_0001; // 0x01
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +197,13 @@ mod tests {
         assert_eq!(P1_SO_INITIAL_DYNAMIC_CONFIDENCE, 10);
         assert_eq!(P1_SO_MAX_CONSECUTIVE_FAILURES, 5);
         assert_eq!(P1_SO_TO_NC_CONFIDENCE_THRESHOLD, 3);
+    }
+
+    #[test]
+    fn ts_stride_constants_are_correct() {
+        assert_eq!(P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, 3);
+        assert_eq!(P1_TS_SCALED_MAX_VALUE, 255);
+        assert_eq!(P1_UO_1_RTP_DISCRIMINATOR_BASE, 0xA8);
+        assert_eq!(P1_UO_1_RTP_MARKER_BIT_MASK, 0x01);
     }
 }

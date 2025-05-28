@@ -19,9 +19,9 @@ use super::packet_processor::{
     parse_profile1_uo1_ts_packet,
 };
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-use super::protocol_types::RtpUdpIpv4Headers;
+use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
 use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
-use crate::crc;
+use crate::crc::CrcCalculators;
 use crate::encodings::{decode_lsb, encode_lsb};
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
@@ -29,25 +29,30 @@ use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorConte
 
 /// Implements the ROHC Profile 1 (RTP/UDP/IP) compression and decompression logic.
 #[derive(Debug, Default)]
-pub struct Profile1Handler;
+pub struct Profile1Handler {
+    /// Reusable CRC calculator instances to optimize performance.
+    crc_calculators: CrcCalculators,
+}
 
 impl Profile1Handler {
     /// Creates a new instance of the `Profile1Handler`.
     pub fn new() -> Self {
-        Profile1Handler
+        Profile1Handler {
+            crc_calculators: CrcCalculators::new(),
+        }
     }
 
     /// Determines if an IR packet must be sent by the compressor.
     ///
-    /// An IR packet is forced if: (RFC 3095, Sec 5.5, 5.6, 4.5.1)
+    /// An IR packet is forced if:
     /// - Compressor is in `InitializationAndRefresh` mode.
-    /// - IR refresh interval met.
-    /// - SSRC change detected.
+    /// - IR refresh interval is met.
+    /// - SSRC change is detected.
     /// - Significant SN, TS, or IP-ID jump occurs that might exceed UO LSB encoding capabilities.
     ///
     /// # Parameters
-    /// - `context`: Reference to the current `Profile1CompressorContext`.
-    /// - `uncompressed_headers`: Reference to the current uncompressed headers.
+    /// * `context` - Reference to the current `Profile1CompressorContext`.
+    /// * `uncompressed_headers` - Reference to the current uncompressed headers.
     ///
     /// # Returns
     /// `true` if an IR packet should be sent, `false` otherwise.
@@ -57,27 +62,20 @@ impl Profile1Handler {
         uncompressed_headers: &RtpUdpIpv4Headers,
     ) -> bool {
         if context.mode == Profile1CompressorMode::InitializationAndRefresh {
-            // Compressor explicitly set to IR mode (e.g., first packet for CID, or manual reset)
             return true;
         }
 
         if context.ir_refresh_interval > 0
             && context.fo_packets_sent_since_ir >= context.ir_refresh_interval.saturating_sub(1)
         {
-            // IR refresh interval met (RFC 3095, Sec 5.5 - robustness mechanism)
             return true;
         }
 
         if context.rtp_ssrc != 0 && context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
-            // SSRC change mandates a new context initialization (RFC 3095, Sec 5.6)
             return true;
         }
 
-        // Check for LSB insufficiency due to large jumps (RFC 3095, Sec 4.5.1 - W-LSB ambiguity).
-        // If a field changes by more than roughly half its LSB encoding range for UO-1 packets,
-        // send IR to prevent potential decompressor misinterpretation.
-
-        let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT;
+        let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Assumes UO-1 is the general case for LSB limits
         if sn_k > 0 && sn_k < 16 {
             let max_safe_sn_delta: u16 = 1 << (sn_k.saturating_sub(1));
             let current_sn = uncompressed_headers.rtp_sequence_number;
@@ -90,10 +88,12 @@ impl Profile1Handler {
 
         let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT;
         if ts_k > 0 && ts_k < 32 {
+            // Max bits for u32 timestamp
             let max_safe_ts_delta: u32 = 1 << (ts_k.saturating_sub(1));
-            let current_ts = uncompressed_headers.rtp_timestamp;
-            let diff_ts_abs = current_ts.wrapping_sub(context.last_sent_rtp_ts_full);
-            let diff_ts_abs_alt = context.last_sent_rtp_ts_full.wrapping_sub(current_ts);
+            let current_ts_val = uncompressed_headers.rtp_timestamp.value();
+            let last_ts_val = context.last_sent_rtp_ts_full.value();
+            let diff_ts_abs = current_ts_val.wrapping_sub(last_ts_val);
+            let diff_ts_abs_alt = last_ts_val.wrapping_sub(current_ts_val);
             if core::cmp::min(diff_ts_abs, diff_ts_abs_alt) > max_safe_ts_delta {
                 return true;
             }
@@ -102,6 +102,7 @@ impl Profile1Handler {
         if uncompressed_headers.ip_identification != context.last_sent_ip_id_full {
             let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
             if ipid_k > 0 && ipid_k < 16 {
+                // Max bits for u16 IP-ID
                 let max_safe_ipid_delta: u16 = 1 << (ipid_k.saturating_sub(1));
                 let current_ip_id = uncompressed_headers.ip_identification;
                 let diff_ipid_abs = current_ip_id.wrapping_sub(context.last_sent_ip_id_full);
@@ -116,112 +117,170 @@ impl Profile1Handler {
 
     /// Handles compressor logic for sending an IR packet.
     ///
+    /// Updates the compressor context with the current packet's dynamic fields
+    /// and transitions the mode to `FirstOrder`.
+    ///
     /// # Parameters
-    /// - `context`: Mutable reference to the `Profile1CompressorContext`.
-    /// - `uncompressed_headers`: The uncompressed headers.
+    /// * `context` - Mutable reference to the `Profile1CompressorContext`.
+    /// * `uncompressed_headers` - The uncompressed headers for the current packet.
     ///
     /// # Returns
-    /// `Result<Vec<u8>, RohcError>` containing the built IR packet.
+    /// `Result<Vec<u8>, RohcError>` containing the built IR packet bytes.
     fn compress_as_ir(
         &self,
         context: &mut Profile1CompressorContext,
         uncompressed_headers: &RtpUdpIpv4Headers,
     ) -> Result<Vec<u8>, RohcError> {
+        // If SSRC changed or context is new, reinitialize static parts from current headers
         if context.mode == Profile1CompressorMode::InitializationAndRefresh
-            || context.rtp_ssrc == 0
+            || context.rtp_ssrc == 0 // Indicates context not yet fully initialized
             || context.rtp_ssrc != uncompressed_headers.rtp_ssrc
         {
             context.initialize_context_from_uncompressed_headers(uncompressed_headers);
         }
+        // For other IR triggers (refresh, LSB issues), use existing static context, update dynamic.
 
         let ir_data = IrPacket {
             cid: context.cid,
             profile_id: self.profile_id(),
-            crc8: 0,
-            static_ip_src: uncompressed_headers.ip_src,
-            static_ip_dst: uncompressed_headers.ip_dst,
-            static_udp_src_port: uncompressed_headers.udp_src_port,
-            static_udp_dst_port: uncompressed_headers.udp_dst_port,
-            static_rtp_ssrc: uncompressed_headers.rtp_ssrc,
+            crc8: 0,                          // Will be calculated by builder
+            static_ip_src: context.ip_source, // Use established static context
+            static_ip_dst: context.ip_destination,
+            static_udp_src_port: context.udp_source_port,
+            static_udp_dst_port: context.udp_destination_port,
+            static_rtp_ssrc: context.rtp_ssrc,
             dyn_rtp_sn: uncompressed_headers.rtp_sequence_number,
             dyn_rtp_timestamp: uncompressed_headers.rtp_timestamp,
             dyn_rtp_marker: uncompressed_headers.rtp_marker,
+            // ts_stride field will be added in Commit 5 for IR-DYN extension.
         };
 
-        let rohc_packet_bytes = build_profile1_ir_packet(&ir_data).map_err(RohcError::Building)?;
+        let rohc_packet_bytes = build_profile1_ir_packet(&ir_data, &self.crc_calculators)
+            .map_err(RohcError::Building)?;
 
+        // Update context with dynamic fields of the sent IR packet
         context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
         context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
         context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
         context.last_sent_ip_id_full = uncompressed_headers.ip_identification;
+
         context.mode = Profile1CompressorMode::FirstOrder;
         context.fo_packets_sent_since_ir = 0;
         context.consecutive_fo_packets_sent = 0;
 
+        // TS Stride detection state should be reset by initialize_context or after sending IR,
+        // as IR implies a full context refresh which might change stride behavior.
+        // This is handled by initialize_context_from_uncompressed_headers if SSRC changes,
+        // or should be done explicitly here if IR is for other reasons.
+        // For now, initialize_context covers the main reset case.
+        // If an IR is sent just for refresh, existing stride detection state *could* persist if desired,
+        // but resetting is safer.
+        context.ts_stride = None;
+        context.ts_offset = Timestamp::new(0);
+        context.ts_stride_packets = 0;
+        context.ts_scaled_mode = false;
+
         Ok(rohc_packet_bytes)
     }
 
-    /// Handles compressor logic for sending UO packets.
-    /// Decides UO type based on field changes relative to context.
+    /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets.
+    ///
+    /// Selects the most appropriate UO packet type (UO-0, UO-1-SN, UO-1-TS, UO-1-ID,
+    /// or future UO-1-RTP) based on changes in header fields relative to the context.
+    /// Updates TS stride detection and relevant context fields after packet selection.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the `Profile1CompressorContext`.
-    /// - `uncompressed_headers`: The current uncompressed headers.
+    /// * `context` - Mutable reference to the `Profile1CompressorContext`.
+    /// * `uncompressed_headers` - The uncompressed headers for the current packet.
     ///
     /// # Returns
-    /// `Result<Vec<u8>, RohcError>` containing the built UO packet.
+    /// `Result<Vec<u8>, RohcError>` containing the built UO packet bytes.
     fn compress_as_uo(
         &self,
         context: &mut Profile1CompressorContext,
         uncompressed_headers: &RtpUdpIpv4Headers,
     ) -> Result<Vec<u8>, RohcError> {
         let current_sn = uncompressed_headers.rtp_sequence_number;
-        let current_ts = uncompressed_headers.rtp_timestamp;
+        let current_ts = uncompressed_headers.rtp_timestamp; // Is Timestamp type
         let current_marker = uncompressed_headers.rtp_marker;
         let current_ip_id = uncompressed_headers.ip_identification;
 
+        // Update TS stride detection state based on the current packet's timestamp.
+        // This must be done *before* `last_sent_rtp_ts_full` is updated with `current_ts`.
+        context.update_ts_stride_detection(current_ts);
+
         let marker_unchanged = current_marker == context.last_sent_rtp_marker;
         let sn_diff = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
-        let sn_encodable_for_uo0 = sn_diff > 0 && sn_diff < 16;
+        let sn_encodable_for_uo0 = sn_diff > 0 && sn_diff < 16; // For UO-0 (4-bit LSB for SN)
         let ts_changed_significantly = current_ts != context.last_sent_rtp_ts_full;
         let sn_incremented_by_one = current_sn == context.last_sent_rtp_sn_full.wrapping_add(1);
         let ip_id_changed = current_ip_id != context.last_sent_ip_id_full;
-        let ip_id_conditions_for_uo1_id = ip_id_changed && (context.current_lsb_ip_id_width > 0);
+        // UO-1-ID is chosen if IP-ID changes and it's not a large jump (already handled by should_force_ir).
+        // Here, simple change detection suffices for selection among UO types.
+        let ip_id_conditions_for_uo1_id = ip_id_changed; // Width check is implicit in LSB encoding
 
-        // Determine which UO packet type is most appropriate based on field changes.
-        // (RFC 3095, Sec 5.7 provides the detailed rules for packet type selection)
+        // Attempt to calculate TS_SCALED if conditions are met
+        // (UO-1-RTP needs SN+1, IP-ID unchanged, Marker can change)
+        let maybe_ts_scaled = if context.ts_scaled_mode && sn_incremented_by_one && !ip_id_changed {
+            context.calculate_ts_scaled(current_ts)
+        } else {
+            None
+        };
+
         let final_rohc_packet_bytes = if marker_unchanged
             && sn_encodable_for_uo0
             && !ts_changed_significantly
             && !ip_id_changed
         {
-            // UO-0: Minimal changes, SN fits UO-0 LSBs (RFC 3095, 5.7.4)
+            // UO-0: Minimal changes (SN fits, TS same, Marker same, IP-ID same)
             self.build_compress_uo0(context, current_sn)?
+        } else if let Some(_ts_scaled_val) = maybe_ts_scaled {
+            // UO-1-RTP: (Logic for building UO-1-RTP will be added in Commit 4)
+            // For Commit 1, this branch is not fully utilized yet. Fall through.
+            // Placeholder: Fallback to UO-1-TS or UO-1-SN if TS_SCALED is intended but not built.
+            // This fallback logic will be refined when UO-1-RTP builder is added.
+            // If it falls through here, it means UO-1-RTP was possible but not chosen yet.
+            // The existing UO-1-TS / UO-1-ID / UO-1-SN selection will take precedence.
+            // This is fine for now as TS_STRIDE isn't fully integrated.
+            // Once UO-1-RTP is available, it will be the preferred option here.
+            // For now, simulate fallback for type consistency in return.
+            if marker_unchanged
+                && ts_changed_significantly
+                && sn_incremented_by_one
+                && !ip_id_changed
+            {
+                self.build_compress_uo1_ts(context, current_sn, current_ts)?
+            } else {
+                self.build_compress_uo1_sn(context, current_sn, current_marker)?
+            }
         } else if marker_unchanged
             && ts_changed_significantly
             && sn_incremented_by_one
             && !ip_id_changed
         {
-            // UO-1-TS: Marker, IP-ID same; SN is +1; TS changed (RFC 3095, 5.7.5)
+            // UO-1-TS: Marker same, IP-ID same; SN is +1; TS changed significantly.
             self.build_compress_uo1_ts(context, current_sn, current_ts)?
         } else if marker_unchanged
-            && ip_id_conditions_for_uo1_id
+            && ip_id_conditions_for_uo1_id // IP-ID changed
             && sn_incremented_by_one
             && !ts_changed_significantly
+        // TS must be same for UO-1-ID
         {
-            // UO-1-ID: Marker, TS same; SN is +1; IP-ID changed (RFC 3095, 5.7.5)
+            // UO-1-ID: Marker same, TS same; SN is +1; IP-ID changed.
             self.build_compress_uo1_id(context, current_sn, current_ip_id)?
         } else {
-            // UO-1-SN: Fallback for marker changes or larger/irregular SN jumps (RFC 3095, 5.7.5)
+            // UO-1-SN: Fallback for other cases like marker changes, larger SN jumps,
+            // or combined changes not fitting specific UO-1 variants.
             self.build_compress_uo1_sn(context, current_sn, current_marker)?
         };
 
+        // Update context with dynamic fields of the sent packet
         context.last_sent_rtp_sn_full = current_sn;
         context.last_sent_rtp_ts_full = current_ts;
         context.last_sent_rtp_marker = current_marker;
         context.last_sent_ip_id_full = current_ip_id;
 
-        // Handle compressor mode transition FO -> SO (RFC 3095, Sec 5.3.2.1)
+        // Handle compressor mode transition FO -> SO
         if context.mode == Profile1CompressorMode::FirstOrder {
             context.consecutive_fo_packets_sent =
                 context.consecutive_fo_packets_sent.saturating_add(1);
@@ -245,16 +304,16 @@ impl Profile1Handler {
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
             current_sn,
-            context.last_sent_rtp_ts_full,
-            context.last_sent_rtp_marker,
+            context.last_sent_rtp_ts_full, // TS for CRC is from context (unchanged for UO-0)
+            context.last_sent_rtp_marker,  // Marker for CRC is from context (unchanged for UO-0)
         );
-        let crc3_val = crc::calculate_rohc_crc3(&crc_input_bytes);
+        let crc3_val = self.crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
         let uo0_data = Uo0Packet {
             cid: context.get_small_cid_for_packet(),
             sn_lsb: sn_lsb_val,
             crc3: crc3_val,
         };
-        context.current_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
+        context.current_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT; // Update LSB width context
         build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
     }
 
@@ -263,25 +322,25 @@ impl Profile1Handler {
         &self,
         context: &mut Profile1CompressorContext,
         current_sn: u16,
-        current_ts: u32,
+        current_ts: Timestamp, // Expects Timestamp directly
     ) -> Result<Vec<u8>, RohcError> {
-        let ts_lsb_val = encode_lsb(current_ts as u64, P1_UO1_TS_LSB_WIDTH_DEFAULT)? as u16;
+        let ts_lsb_val = encode_lsb(current_ts.value() as u64, P1_UO1_TS_LSB_WIDTH_DEFAULT)? as u16;
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
-            current_sn,
-            current_ts,
-            context.last_sent_rtp_marker,
+            current_sn,                   // SN for CRC uses current SN
+            current_ts,                   // TS for CRC uses current TS
+            context.last_sent_rtp_marker, // Marker for CRC uses context (unchanged for UO-1-TS)
         );
-        let calculated_crc8 = crc::calculate_rohc_crc8(&crc_input_bytes);
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
         let uo1_ts_packet_data = Uo1Packet {
             cid: context.get_small_cid_for_packet(),
-            marker: false, // UO-1-TS implies M=0 in type, actual marker from context for CRC
+            marker: false, // UO-1-TS type octet implies M=0, marker bit for CRC is from context
             ts_lsb: Some(ts_lsb_val),
             num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
             crc8: calculated_crc8,
-            ..Default::default()
+            ..Default::default() // Other fields like sn_lsb are not for UO-1-TS
         };
-        context.current_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
+        context.current_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT; // Update LSB width context
         build_profile1_uo1_ts_packet(&uo1_ts_packet_data).map_err(RohcError::Building)
     }
 
@@ -295,20 +354,20 @@ impl Profile1Handler {
         let sn_lsb_val = encode_lsb(current_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT)? as u16;
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
-            current_sn,
-            context.last_sent_rtp_ts_full, // TS from context for CRC
-            current_marker,                // Marker from current packet
+            current_sn,                    // SN for CRC uses current SN
+            context.last_sent_rtp_ts_full, // TS for CRC uses context (unchanged for UO-1-SN)
+            current_marker,                // Marker for CRC uses current marker
         );
-        let calculated_crc8 = crc::calculate_rohc_crc8(&crc_input_bytes);
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
         let uo1_sn_data = Uo1Packet {
             cid: context.get_small_cid_for_packet(),
             sn_lsb: sn_lsb_val,
             num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
             marker: current_marker,
             crc8: calculated_crc8,
-            ..Default::default()
+            ..Default::default() // Other fields not for UO-1-SN
         };
-        context.current_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
+        context.current_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Update LSB width context
         build_profile1_uo1_sn_packet(&uo1_sn_data).map_err(RohcError::Building)
     }
 
@@ -323,45 +382,49 @@ impl Profile1Handler {
             encode_lsb(current_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT)? as u8;
         let crc_input_bytes = self.build_uo1_id_crc_input(
             context.rtp_ssrc,
-            current_sn,
-            context.last_sent_rtp_ts_full,
-            context.last_sent_rtp_marker,
-            ip_id_lsb_for_packet_field,
+            current_sn, // SN for CRC uses current SN (which is SN_ref + 1)
+            context.last_sent_rtp_ts_full, // TS for CRC uses context (unchanged for UO-1-ID)
+            context.last_sent_rtp_marker, // Marker for CRC uses context (unchanged for UO-1-ID)
+            ip_id_lsb_for_packet_field, // Use the LSB of IP-ID to be sent for CRC
         );
-        let calculated_crc8 = crc::calculate_rohc_crc8(&crc_input_bytes);
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
         let uo1_id_packet_data = Uo1Packet {
             cid: context.get_small_cid_for_packet(),
             ip_id_lsb: Some(ip_id_lsb_for_packet_field as u16),
             num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
             crc8: calculated_crc8,
-            ..Default::default()
+            ..Default::default() // Other fields not for UO-1-ID
         };
+        // context.current_lsb_ip_id_width is already P1_UO1_IPID_LSB_WIDTH_DEFAULT by default.
         build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
     }
 
-    /// Parses an IR packet and updates decompressor context.
+    /// Parses an IR packet, updates decompressor context. Used internally.
     fn _parse_and_reconstruct_ir(
         &self,
         context: &mut Profile1DecompressorContext,
         packet_bytes: &[u8],
     ) -> Result<RtpUdpIpv4Headers, RohcError> {
-        let parsed_ir = parse_profile1_ir_packet(packet_bytes, context.cid())?;
+        let parsed_ir =
+            parse_profile1_ir_packet(packet_bytes, context.cid(), &self.crc_calculators)?;
         if parsed_ir.profile_id != self.profile_id() {
             return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
                 parsed_ir.profile_id.into(),
             )));
         }
         context.initialize_from_ir_packet(&parsed_ir);
+        // For IR, IP-ID context is reset/defaulted as it's not in P1 IR dynamic chain.
+        // The `last_reconstructed_ip_id_full` in context is used here.
         Ok(self.reconstruct_full_headers(
             context,
             parsed_ir.dyn_rtp_sn,
-            parsed_ir.dyn_rtp_timestamp,
+            parsed_ir.dyn_rtp_timestamp, // Is Timestamp from IrPacket
             parsed_ir.dyn_rtp_marker,
-            context.last_reconstructed_ip_id_full, // IP-ID not in IR dynamic chain for P1
+            context.last_reconstructed_ip_id_full,
         ))
     }
 
-    /// Parses a UO-0 packet and updates decompressor context.
+    /// Parses a UO-0 packet, updates decompressor context. Used internally.
     fn _parse_and_reconstruct_uo0(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -376,33 +439,39 @@ impl Profile1Handler {
         let decoded_sn = decode_lsb(
             parsed_uo0.sn_lsb as u64,
             context.last_reconstructed_rtp_sn_full as u64,
-            context.expected_lsb_sn_width,
+            context.expected_lsb_sn_width, // Should be P1_UO0_SN_LSB_WIDTH_DEFAULT after IR/FC
             context.p_sn,
         )? as u16;
+
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
             decoded_sn,
-            context.last_reconstructed_rtp_ts_full,
+            context.last_reconstructed_rtp_ts_full, // Pass Timestamp
             context.last_reconstructed_rtp_marker,
         );
-        if crc::calculate_rohc_crc3(&crc_input_bytes) != parsed_uo0.crc3 {
+        let calculated_crc3 = self.crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
+        if calculated_crc3 != parsed_uo0.crc3 {
             return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                 expected: parsed_uo0.crc3,
-                calculated: crc::calculate_rohc_crc3(&crc_input_bytes),
+                calculated: calculated_crc3,
                 crc_type: "ROHC-CRC3".to_string(),
             }));
         }
         context.last_reconstructed_rtp_sn_full = decoded_sn;
+        // For UO-0, TS and Marker are unchanged from context.
+        // Infer stride based on unchanged TS (effectively diff = 0 if called).
+        context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
+
         Ok(self.reconstruct_full_headers(
             context,
             decoded_sn,
-            context.last_reconstructed_rtp_ts_full,
+            context.last_reconstructed_rtp_ts_full, // Pass Timestamp
             context.last_reconstructed_rtp_marker,
-            context.last_reconstructed_ip_id_full,
+            context.last_reconstructed_ip_id_full, // IP-ID from context for UO-0
         ))
     }
 
-    /// Parses a UO-1-SN packet and updates decompressor context.
+    /// Parses a UO-1-SN packet, updates decompressor context. Used internally.
     fn _parse_and_reconstruct_uo1_sn(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -412,34 +481,39 @@ impl Profile1Handler {
         let decoded_sn = decode_lsb(
             parsed_uo1.sn_lsb as u64,
             context.last_reconstructed_rtp_sn_full as u64,
-            parsed_uo1.num_sn_lsb_bits,
+            parsed_uo1.num_sn_lsb_bits, // UO-1-SN uses 8-bit LSB width by default
             context.p_sn,
         )? as u16;
+
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
             decoded_sn,
-            context.last_reconstructed_rtp_ts_full, // TS from context for UO-1-SN
-            parsed_uo1.marker,                      // Marker from packet
+            context.last_reconstructed_rtp_ts_full, // TS for CRC is from context
+            parsed_uo1.marker,                      // Marker for CRC is from packet
         );
-        if crc::calculate_rohc_crc8(&crc_input_bytes) != parsed_uo1.crc8 {
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+        if calculated_crc8 != parsed_uo1.crc8 {
             return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                 expected: parsed_uo1.crc8,
-                calculated: crc::calculate_rohc_crc8(&crc_input_bytes),
+                calculated: calculated_crc8,
                 crc_type: "ROHC-CRC8".to_string(),
             }));
         }
         context.last_reconstructed_rtp_sn_full = decoded_sn;
         context.last_reconstructed_rtp_marker = parsed_uo1.marker;
+        // For UO-1-SN, TS is unchanged from context.
+        context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
+
         Ok(self.reconstruct_full_headers(
             context,
             decoded_sn,
-            context.last_reconstructed_rtp_ts_full,
+            context.last_reconstructed_rtp_ts_full, // Pass Timestamp
             parsed_uo1.marker,
-            context.last_reconstructed_ip_id_full,
+            context.last_reconstructed_ip_id_full, // IP-ID from context for UO-1-SN
         ))
     }
 
-    /// Parses a UO-1-TS packet and updates decompressor context.
+    /// Parses a UO-1-TS packet, updates decompressor context. Used internally.
     fn _parse_and_reconstruct_uo1_ts(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -447,39 +521,45 @@ impl Profile1Handler {
     ) -> Result<RtpUdpIpv4Headers, RohcError> {
         let parsed_uo1_ts = parse_profile1_uo1_ts_packet(packet_bytes)?;
         let reconstructed_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1); // SN is implicit +1
-        let decoded_ts = decode_lsb(
-            parsed_uo1_ts.ts_lsb.unwrap_or(0) as u64,
-            context.last_reconstructed_rtp_ts_full as u64,
+        let decoded_ts_val = decode_lsb(
+            parsed_uo1_ts.ts_lsb.unwrap_or(0) as u64, // UO-1-TS carries TS LSBs
+            context.last_reconstructed_rtp_ts_full.value() as u64, // Use .value()
             parsed_uo1_ts
                 .num_ts_lsb_bits
                 .unwrap_or(P1_UO1_TS_LSB_WIDTH_DEFAULT),
             context.p_ts,
         )? as u32;
+        let decoded_ts = Timestamp::new(decoded_ts_val); // Convert to Timestamp
+
         let crc_input_bytes = self.build_uo_crc_input(
             context.rtp_ssrc,
             reconstructed_sn,
-            decoded_ts,
-            context.last_reconstructed_rtp_marker, // Marker from context
+            decoded_ts,                            // TS for CRC is the newly decoded TS
+            context.last_reconstructed_rtp_marker, // Marker for CRC is from context
         );
-        if crc::calculate_rohc_crc8(&crc_input_bytes) != parsed_uo1_ts.crc8 {
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+        if calculated_crc8 != parsed_uo1_ts.crc8 {
             return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                 expected: parsed_uo1_ts.crc8,
-                calculated: crc::calculate_rohc_crc8(&crc_input_bytes),
+                calculated: calculated_crc8,
                 crc_type: "ROHC-CRC8".to_string(),
             }));
         }
         context.last_reconstructed_rtp_sn_full = reconstructed_sn;
-        context.last_reconstructed_rtp_ts_full = decoded_ts;
+        context.last_reconstructed_rtp_ts_full = decoded_ts; // Update context TS
+        // Marker is unchanged from context.
+        context.infer_ts_stride_from_decompressed_ts(decoded_ts);
+
         Ok(self.reconstruct_full_headers(
             context,
             reconstructed_sn,
-            decoded_ts,
+            decoded_ts, // Pass Timestamp
             context.last_reconstructed_rtp_marker,
-            context.last_reconstructed_ip_id_full,
+            context.last_reconstructed_ip_id_full, // IP-ID from context for UO-1-TS
         ))
     }
 
-    /// Parses a UO-1-ID packet and updates decompressor context.
+    /// Parses a UO-1-ID packet, updates decompressor context. Used internally.
     fn _parse_and_reconstruct_uo1_id(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -497,34 +577,38 @@ impl Profile1Handler {
             num_ip_id_lsb_bits,
             context.p_ip_id,
         )? as u16;
+
         let crc_input_bytes = self.build_uo1_id_crc_input(
             context.rtp_ssrc,
             reconstructed_sn,
-            context.last_reconstructed_rtp_ts_full, // TS from context
-            context.last_reconstructed_rtp_marker,  // Marker from context
-            received_ip_id_lsb_val as u8,           // Use received LSB for CRC
+            context.last_reconstructed_rtp_ts_full, // TS for CRC is from context
+            context.last_reconstructed_rtp_marker,  // Marker for CRC is from context
+            received_ip_id_lsb_val as u8,           // Use received LSB for CRC calculation
         );
-        if crc::calculate_rohc_crc8(&crc_input_bytes) != parsed_uo1_id.crc8 {
+        let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+        if calculated_crc8 != parsed_uo1_id.crc8 {
             return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                 expected: parsed_uo1_id.crc8,
-                calculated: crc::calculate_rohc_crc8(&crc_input_bytes),
+                calculated: calculated_crc8,
                 crc_type: "ROHC-CRC8".to_string(),
             }));
         }
         context.last_reconstructed_rtp_sn_full = reconstructed_sn;
-        context.last_reconstructed_ip_id_full = decoded_ip_id;
+        context.last_reconstructed_ip_id_full = decoded_ip_id; // Update context IP-ID
+        // For UO-1-ID, TS is unchanged from context.
+        context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
+
         Ok(self.reconstruct_full_headers(
             context,
             reconstructed_sn,
-            context.last_reconstructed_rtp_ts_full,
+            context.last_reconstructed_rtp_ts_full, // Pass Timestamp
             context.last_reconstructed_rtp_marker,
-            decoded_ip_id,
+            decoded_ip_id, // Use newly decoded IP-ID
         ))
     }
 
-    /// Handles FC state updates after UO packet processing.
+    /// Handles decompressor state transitions for FC mode after UO packet processing.
     /// Centralizes FC->SO and FC->SC transition logic.
-    /// (RFC 3095, Sec 5.3.2.2.2, 5.3.2.2.3)
     fn handle_fc_uo_packet_outcome(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -536,16 +620,14 @@ impl Profile1Handler {
                 context.consecutive_crc_failures_in_fc = 0;
                 context.fc_packets_successful_streak =
                     context.fc_packets_successful_streak.saturating_add(1);
-                // Check for FC -> SO transition (RFC 3095, Sec 5.3.2.2.2)
                 if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK
                 {
                     context.mode = Profile1DecompressorMode::SecondOrder;
-                    // Initialize SO confidence values (RFC 3095, Sec 5.3.2.3)
                     context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
                     context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
                     context.so_packets_received_in_so = 0;
                     context.so_consecutive_failures = 0;
-                    context.fc_packets_successful_streak = 0; // Reset after transition
+                    context.fc_packets_successful_streak = 0;
                 }
                 Ok(reconstructed_headers)
             }
@@ -553,12 +635,11 @@ impl Profile1Handler {
                 context.consecutive_crc_failures_in_fc =
                     context.consecutive_crc_failures_in_fc.saturating_add(1);
                 context.fc_packets_successful_streak = 0;
-                // Check for FC -> SC transition (RFC 3095, Sec 5.3.2.2.3)
                 if context.consecutive_crc_failures_in_fc
                     >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
                 {
                     context.mode = Profile1DecompressorMode::StaticContext;
-                    context.sc_to_nc_k_failures = 0; // Reset SC counters upon entering SC
+                    context.sc_to_nc_k_failures = 0;
                     context.sc_to_nc_n_window_count = 0;
                 }
                 Err(e)
@@ -567,7 +648,6 @@ impl Profile1Handler {
     }
 
     /// Decompresses an IR packet, updates context, and transitions to FullContext.
-    /// (RFC 3095, Sec 5.3.2.2)
     fn decompress_as_ir(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -576,7 +656,6 @@ impl Profile1Handler {
         match self._parse_and_reconstruct_ir(context, packet_bytes) {
             Ok(reconstructed_rtp_headers) => {
                 context.mode = Profile1DecompressorMode::FullContext;
-                // Reset all relevant state transition counters as IR provides a fresh baseline
                 context.consecutive_crc_failures_in_fc = 0;
                 context.fc_packets_successful_streak = 0;
                 context.so_static_confidence = 0;
@@ -638,7 +717,6 @@ impl Profile1Handler {
     }
 
     /// Checks if decompressor should transition from SO to NC.
-    /// (RFC 3095, Sec 5.3.2.3.1)
     fn should_transition_so_to_nc(&self, context: &Profile1DecompressorContext) -> bool {
         if context.so_consecutive_failures >= P1_SO_MAX_CONSECUTIVE_FAILURES {
             return true;
@@ -650,13 +728,11 @@ impl Profile1Handler {
     }
 
     /// Checks if decompressor should transition from SC to NC.
-    /// (RFC 3095, Sec 5.3.2.2.3)
     fn should_transition_sc_to_nc(&self, context: &Profile1DecompressorContext) -> bool {
         context.sc_to_nc_k_failures >= P1_DECOMPRESSOR_SC_TO_NC_K2
     }
 
     /// Handles decompression in Static Context (SC) state.
-    /// (RFC 3095, Sec 5.3.2.2.3)
     fn decompress_in_sc_state(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -665,8 +741,7 @@ impl Profile1Handler {
     ) -> Result<GenericUncompressedHeaders, RohcError> {
         debug_assert_eq!(context.mode, Profile1DecompressorMode::StaticContext);
         let mut is_failure_of_dynamic_updater_parse = false;
-        // In SC mode, decompressor expects IR or UO-1 to potentially resynchronize dynamic context.
-        // UO-0 cannot be processed as it relies on fully synchronized dynamic state.
+
         let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError> =
             match discriminated_type {
                 Profile1PacketType::Uo1Ts => {
@@ -690,16 +765,14 @@ impl Profile1Handler {
                     }
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
+                // UO-1-RTP case will be added here later
                 Profile1PacketType::Uo0 => {
-                    // UO-0 received in SC is an error; no dynamic update possible.
-                    // This does not count as a K2 failure for SC->NC.
-                    is_failure_of_dynamic_updater_parse = false;
+                    is_failure_of_dynamic_updater_parse = false; // UO-0 is not an updater in SC
                     Err(RohcError::InvalidState(
                     "UO-0 packet received in StaticContext mode; cannot establish dynamic context.".to_string()
                 ))
                 }
                 Profile1PacketType::Unknown(val) => {
-                    // An unknown packet type is treated as a failure of a potential updater.
                     is_failure_of_dynamic_updater_parse = true;
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                         discriminator: val,
@@ -707,30 +780,23 @@ impl Profile1Handler {
                     }))
                 }
                 Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-                    // IRs should have been handled by the main `decompress` dispatcher.
-                    return Err(RohcError::Internal(
-                        "IR packet unexpectedly routed to decompress_in_sc_state.".to_string(),
-                    ));
+                    unreachable!("IR packet routed to decompress_in_sc_state.");
                 }
             };
 
         match parse_reconstruct_result {
             Ok(headers) => {
-                // Successfully processed a UO-1 in SC. Reset SC->NC counters.
-                // Per RFC, MAY transition to FC. For MVP, conservatively stay SC, await IR for FC.
                 context.sc_to_nc_k_failures = 0;
                 context.sc_to_nc_n_window_count = 0;
+                // Optionally transition to FC here, or require another IR.
+                // Staying in SC is a conservative approach after a UO-1 update.
                 Ok(headers)
             }
             Err(ref e) => {
-                // Any packet processing attempt in SC increments the N2 window counter.
                 context.sc_to_nc_n_window_count = context.sc_to_nc_n_window_count.saturating_add(1);
-                // Increment K2 failure count only if it was a parse/CRC error of a
-                // packet type that *could* have updated dynamic context.
                 if is_failure_of_dynamic_updater_parse && !matches!(e, RohcError::InvalidState(_)) {
                     context.sc_to_nc_k_failures = context.sc_to_nc_k_failures.saturating_add(1);
                 }
-                // Check for SC->NC transition or N2 window reset
                 if self.should_transition_sc_to_nc(context) {
                     context.mode = Profile1DecompressorMode::NoContext;
                     context.reset_for_nc_transition();
@@ -744,7 +810,6 @@ impl Profile1Handler {
     }
 
     /// Handles decompression in Second Order (SO) state.
-    /// (RFC 3095, Sec 5.3.2.3)
     fn decompress_in_so_state(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -752,7 +817,7 @@ impl Profile1Handler {
         discriminated_type: Profile1PacketType,
     ) -> Result<GenericUncompressedHeaders, RohcError> {
         debug_assert_eq!(context.mode, Profile1DecompressorMode::SecondOrder);
-        // In SO mode, decompressor processes UO-0/UO-1 and updates confidence.
+
         let parse_reconstruct_result: Result<GenericUncompressedHeaders, RohcError> =
             match discriminated_type {
                 Profile1PacketType::Uo1Ts => self
@@ -767,6 +832,7 @@ impl Profile1Handler {
                 Profile1PacketType::Uo0 => self
                     ._parse_and_reconstruct_uo0(context, packet_bytes)
                     .map(GenericUncompressedHeaders::RtpUdpIpv4),
+                // UO-1-RTP will be added here later
                 Profile1PacketType::Unknown(val) => {
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                         discriminator: val,
@@ -774,17 +840,12 @@ impl Profile1Handler {
                     }))
                 }
                 Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-                    // IRs should have been handled by the main `decompress` dispatcher.
-                    return Err(RohcError::Internal(
-                        "IR packet unexpectedly routed to decompress_in_so_state.".to_string(),
-                    ));
+                    unreachable!("IR packet routed to decompress_in_so_state.");
                 }
             };
 
         match parse_reconstruct_result {
             Ok(headers) => {
-                // Successful UO in SO: boost dynamic confidence, reset consecutive failures.
-                debug_assert_eq!(context.mode, Profile1DecompressorMode::SecondOrder);
                 context.so_dynamic_confidence = context
                     .so_dynamic_confidence
                     .saturating_add(P1_SO_SUCCESS_CONFIDENCE_BOOST);
@@ -794,13 +855,10 @@ impl Profile1Handler {
                 Ok(headers)
             }
             Err(e) => {
-                // Failed UO in SO: penalize dynamic confidence, increment consecutive failures.
-                debug_assert_eq!(context.mode, Profile1DecompressorMode::SecondOrder);
                 context.so_dynamic_confidence = context
                     .so_dynamic_confidence
                     .saturating_sub(P1_SO_FAILURE_CONFIDENCE_PENALTY);
                 context.so_consecutive_failures = context.so_consecutive_failures.saturating_add(1);
-                // Check for SO -> NC transition (RFC 3095, Sec 5.3.2.3.1)
                 if self.should_transition_so_to_nc(context) {
                     context.mode = Profile1DecompressorMode::NoContext;
                     context.reset_for_nc_transition();
@@ -810,12 +868,26 @@ impl Profile1Handler {
         }
     }
 
-    /// Reconstructs full headers from context and decoded dynamic fields.
+    /// Reconstructs full `RtpUdpIpv4Headers` from context and decoded dynamic fields.
+    ///
+    /// This helper function assembles the full uncompressed header structure using
+    /// static fields from the decompressor context and the dynamic fields that were
+    /// just decoded or inferred from the incoming ROHC packet.
+    ///
+    /// # Parameters
+    /// * `context` - The decompressor context holding static chain information.
+    /// * `sn` - The reconstructed RTP Sequence Number.
+    /// * `ts` - The reconstructed RTP Timestamp.
+    /// * `marker` - The reconstructed RTP Marker bit.
+    /// * `ip_id` - The reconstructed IP Identification.
+    ///
+    /// # Returns
+    /// The fully reconstructed `RtpUdpIpv4Headers`.
     fn reconstruct_full_headers(
         &self,
         context: &Profile1DecompressorContext,
         sn: u16,
-        ts: u32,
+        ts: Timestamp, // Takes Timestamp
         marker: bool,
         ip_id: u16,
     ) -> RtpUdpIpv4Headers {
@@ -826,17 +898,17 @@ impl Profile1Handler {
             udp_dst_port: context.udp_destination_port,
             rtp_ssrc: context.rtp_ssrc,
             rtp_sequence_number: sn,
-            rtp_timestamp: ts,
+            rtp_timestamp: ts, // Assigns Timestamp
             rtp_marker: marker,
             ip_ihl: IPV4_STANDARD_IHL,
-            ip_dscp: 0,
-            ip_ecn: 0,
+            ip_dscp: 0,         // Assuming defaults, not typically compressed by P1
+            ip_ecn: 0,          // Assuming defaults
             ip_total_length: 0, // To be filled by upper layers if needed
             ip_identification: ip_id,
-            ip_dont_fragment: true, // Common for RTP
+            ip_dont_fragment: true, // Common default for RTP
             ip_more_fragments: false,
             ip_fragment_offset: 0,
-            ip_ttl: DEFAULT_IPV4_TTL,
+            ip_ttl: DEFAULT_IPV4_TTL, // Common default
             ip_protocol: IP_PROTOCOL_UDP,
             ip_checksum: 0,  // To be calculated by sender if needed
             udp_length: 0,   // To be filled by upper layers
@@ -845,36 +917,61 @@ impl Profile1Handler {
             rtp_padding: false,
             rtp_extension: false,
             rtp_csrc_count: 0,
-            rtp_payload_type: 0, // Not explicitly carried in most ROHC packets
+            rtp_payload_type: 0, // Not explicitly carried in most ROHC P1 packets
             rtp_csrc_list: Vec::new(),
         }
     }
 
     /// Creates byte slice input for UO packet CRC calculation.
     /// Format: SSRC(4), SN(2), TS(4), Marker(1 byte: 0x00 or 0x01).
-    fn build_uo_crc_input(&self, context_ssrc: u32, sn: u16, ts: u32, marker: bool) -> Vec<u8> {
+    ///
+    /// # Parameters
+    /// * `context_ssrc` - The SSRC from the context.
+    /// * `sn` - The sequence number for CRC calculation.
+    /// * `ts` - The timestamp for CRC calculation.
+    /// * `marker` - The marker bit value for CRC calculation.
+    ///
+    /// # Returns
+    /// `Vec<u8>` containing the bytes for CRC input.
+    fn build_uo_crc_input(
+        &self,
+        context_ssrc: u32,
+        sn: u16,
+        ts: Timestamp,
+        marker: bool,
+    ) -> Vec<u8> {
         let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES);
         crc_input.extend_from_slice(&context_ssrc.to_be_bytes());
         crc_input.extend_from_slice(&sn.to_be_bytes());
-        crc_input.extend_from_slice(&ts.to_be_bytes());
+        crc_input.extend_from_slice(&ts.to_be_bytes()); // Timestamp's to_be_bytes
         crc_input.push(if marker { 0x01 } else { 0x00 });
         crc_input
     }
 
     /// Creates byte slice input for UO-1-ID packet CRC calculation.
     /// Format: SSRC(4), SN(2), TS(4), Marker(1), IP-ID LSB(1 for 8-bit width).
+    ///
+    /// # Parameters
+    /// * `context_ssrc` - The SSRC from the context.
+    /// * `sn` - The sequence number (typically SN_ref + 1).
+    /// * `ts` - The timestamp (from context).
+    /// * `marker` - The marker bit (from context).
+    /// * `ip_id_lsb` - The LSB of the IP-ID being transmitted.
+    ///
+    /// # Returns
+    /// `Vec<u8>` for CRC input.
     fn build_uo1_id_crc_input(
         &self,
         context_ssrc: u32,
         sn: u16,
-        ts: u32,
+        ts: Timestamp, // Takes Timestamp
         marker: bool,
         ip_id_lsb: u8,
     ) -> Vec<u8> {
-        let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES + 1);
+        let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES + 1); // +1 for IP-ID LSB
         crc_input.extend_from_slice(&context_ssrc.to_be_bytes());
         crc_input.extend_from_slice(&sn.to_be_bytes());
-        crc_input.extend_from_slice(&ts.to_be_bytes());
+        crc_input.extend_from_slice(&ts.to_be_bytes()); // Timestamp's to_be_bytes
         crc_input.push(if marker { 0x01 } else { 0x00 });
         crc_input.push(ip_id_lsb);
         crc_input
@@ -902,9 +999,11 @@ impl ProfileHandler for Profile1Handler {
     fn create_decompressor_context(
         &self,
         cid: u16,
-        _creation_time: Instant,
+        creation_time: Instant,
     ) -> Box<dyn RohcDecompressorContext> {
-        Box::new(Profile1DecompressorContext::new(cid))
+        let mut ctx = Profile1DecompressorContext::new(cid);
+        ctx.last_accessed = creation_time; // Ensure last_accessed is set from creation_time
+        Box::new(ctx)
     }
 
     fn compress(
@@ -924,28 +1023,27 @@ impl ProfileHandler for Profile1Handler {
             _ => return Err(RohcError::UnsupportedProfile(u8::from(context.profile_id))),
         };
 
-        // If SSRC changes, force context re-initialization which sets mode to IR
-        if context.rtp_ssrc != 0 && context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
+        // If SSRC changes, or if context is fresh, initialize/re-initialize.
+        // initialize_context_from_uncompressed_headers forces IR mode.
+        if context.rtp_ssrc == 0 || context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
             context.initialize_context_from_uncompressed_headers(uncompressed_headers);
         }
 
-        // Determine if an IR packet is needed based on mode, SSRC, refresh, or LSB issues
-        if self.should_force_ir(context, uncompressed_headers) {
+        let result = if self.should_force_ir(context, uncompressed_headers) {
             self.compress_as_ir(context, uncompressed_headers)
         } else {
             self.compress_as_uo(context, uncompressed_headers)
+        };
+
+        // Update last_accessed time only on successful operation.
+        if result.is_ok() {
+            // In a real system, this Instant::now() would come from an abstracted clock.
+            // For now, assuming direct Instant::now() is acceptable per existing code.
+            context.set_last_accessed(Instant::now());
         }
+        result
     }
 
-    /// Decompresses a ROHC Profile 1 packet.
-    /// (Main dispatch logic based on RFC 3095, Sec 5.3.2.2)
-    ///
-    /// # Parameters
-    /// - `context_dyn`: Mutable reference to a `RohcDecompressorContext`.
-    /// - `packet_bytes`: Slice containing the core ROHC Profile 1 packet data.
-    ///
-    /// # Returns
-    /// `Result<GenericUncompressedHeaders, RohcError>`.
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
@@ -969,153 +1067,94 @@ impl ProfileHandler for Profile1Handler {
         let first_byte = packet_bytes[0];
         let discriminated_type = Profile1PacketType::from_first_byte(first_byte);
 
-        // State: NoContext (NC) - RFC 3095, 5.3.2.2.1
-        // Only IR packets are accepted in NoContext mode.
-        if context.mode == Profile1DecompressorMode::NoContext {
-            return if discriminated_type.is_ir() {
-                self.decompress_as_ir(context, packet_bytes)
-            } else {
-                Err(RohcError::InvalidState(
-                    "Non-IR packet received but decompressor is in NoContext mode.".to_string(),
-                ))
-            };
-        }
-
-        // If an IR packet is received in SC, FC, or SO mode, it refreshes the context to FC.
-        // (RFC 3095, 5.3.2.2.2 for FC/SC, 5.3.2.3 for SO)
-        if discriminated_type.is_ir() {
-            return self.decompress_as_ir(context, packet_bytes);
-        }
-
-        // Dispatch to mode-specific handlers for non-IR packets
-        match context.mode {
-            Profile1DecompressorMode::FullContext => {
-                // RFC 3095, 5.3.2.2.2
-                match discriminated_type {
-                    Profile1PacketType::Uo0 => self.decompress_as_uo0(context, packet_bytes),
-                    Profile1PacketType::Uo1Sn { .. } => {
-                        self.decompress_as_uo1_sn(context, packet_bytes)
-                    }
-                    Profile1PacketType::Uo1Ts => self.decompress_as_uo1_ts(context, packet_bytes),
-                    Profile1PacketType::Uo1Id => self.decompress_as_uo1_id(context, packet_bytes),
-                    Profile1PacketType::Unknown(val) => {
-                        Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
-                            discriminator: val,
-                            profile_id: Some(self.profile_id().into()),
-                        }))
-                    }
-                    // IRStatic and IrDynamic are already handled by the `is_ir()` check above.
-                    // This arm should ideally be unreachable for IR types.
-                    _ => unreachable!(
-                        "IR types should have been handled before FC mode dispatch for non-IR packets"
-                    ),
-                }
-            }
-            Profile1DecompressorMode::StaticContext => {
-                // RFC 3095, 5.3.2.2.3
-                self.decompress_in_sc_state(context, packet_bytes, discriminated_type)
-            }
-            Profile1DecompressorMode::SecondOrder => {
-                // RFC 3095, 5.3.2.3
-                // SO mode primarily processes UO-0 and UO-1 packets.
-                if discriminated_type.is_uo0() || discriminated_type.is_uo1() {
-                    self.decompress_in_so_state(context, packet_bytes, discriminated_type)
-                } else {
-                    // An unknown packet type in SO state is unexpected. Route to SO handler which will treat as error.
-                    self.decompress_in_so_state(context, packet_bytes, discriminated_type)
-                }
-            }
+        let result = match context.mode {
             Profile1DecompressorMode::NoContext => {
-                // This case should have been handled by the initial check.
-                unreachable!(
-                    "NoContext state should have been handled at the beginning of the function"
-                )
+                if discriminated_type.is_ir() {
+                    self.decompress_as_ir(context, packet_bytes)
+                } else {
+                    Err(RohcError::InvalidState(
+                        "Non-IR packet received but decompressor is in NoContext mode.".to_string(),
+                    ))
+                }
             }
+            _ => {
+                // Covers FullContext, StaticContext, SecondOrder
+                if discriminated_type.is_ir() {
+                    // IR packets refresh context regardless of current FC/SC/SO state.
+                    return self.decompress_as_ir(context, packet_bytes);
+                }
+                // Dispatch to mode-specific handlers for non-IR packets
+                match context.mode {
+                    Profile1DecompressorMode::FullContext => {
+                        match discriminated_type {
+                            Profile1PacketType::Uo0 => {
+                                self.decompress_as_uo0(context, packet_bytes)
+                            }
+                            Profile1PacketType::Uo1Sn { .. } => {
+                                self.decompress_as_uo1_sn(context, packet_bytes)
+                            }
+                            Profile1PacketType::Uo1Ts => {
+                                self.decompress_as_uo1_ts(context, packet_bytes)
+                            }
+                            Profile1PacketType::Uo1Id => {
+                                self.decompress_as_uo1_id(context, packet_bytes)
+                            }
+                            // UO-1-RTP case for TS Stride will be added in Commit 4/5.
+                            Profile1PacketType::Unknown(val) => {
+                                Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
+                                    discriminator: val,
+                                    profile_id: Some(self.profile_id().into()),
+                                }))
+                            }
+                            _ => unreachable!(
+                                "IR types should have been handled before FC mode non-IR dispatch"
+                            ),
+                        }
+                    }
+                    Profile1DecompressorMode::StaticContext => {
+                        self.decompress_in_sc_state(context, packet_bytes, discriminated_type)
+                    }
+                    Profile1DecompressorMode::SecondOrder => {
+                        // SO mode processes UO-0 and UO-1 type packets.
+                        if discriminated_type.is_uo0() || discriminated_type.is_uo1() {
+                            self.decompress_in_so_state(context, packet_bytes, discriminated_type)
+                        } else {
+                            // Other packet types in SO are unexpected, treat as error by routing to SO handler
+                            self.decompress_in_so_state(context, packet_bytes, discriminated_type)
+                        }
+                    }
+                    Profile1DecompressorMode::NoContext => {
+                        unreachable!("NoContext handled earlier")
+                    }
+                }
+            }
+        };
+
+        if result.is_ok() {
+            context.set_last_accessed(Instant::now()); // Update on success
         }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crc;
-    use crate::encodings::encode_lsb;
-    use crate::profiles::profile1::packet_processor::build_profile1_uo0_packet;
-    use crate::profiles::profile1::packet_types::Uo0Packet;
 
-    fn create_test_rtp_headers(sn: u16, ts: u32, marker: bool) -> RtpUdpIpv4Headers {
+    // Test helper to create RTP headers with specific SN, TS, and Marker
+    fn create_test_rtp_headers(sn: u16, ts: Timestamp, marker: bool) -> RtpUdpIpv4Headers {
         RtpUdpIpv4Headers {
             ip_src: "192.168.0.1".parse().unwrap(),
             ip_dst: "192.168.0.2".parse().unwrap(),
             udp_src_port: 10000,
             udp_dst_port: 20000,
-            rtp_ssrc: 0x12345678,
+            rtp_ssrc: 0x12345678, // Fixed SSRC for simplicity in these handler tests
             rtp_sequence_number: sn,
             rtp_timestamp: ts,
             rtp_marker: marker,
-            ip_identification: sn % 256,
+            ip_identification: sn.wrapping_add(0xAA), // Make IP-ID vary but predictably
             ..Default::default()
         }
-    }
-
-    #[allow(dead_code)] // Allowed for test helper not used in all test configs
-    fn setup_context_in_so_mode(cid: u16) -> Profile1DecompressorContext {
-        let mut ctx = Profile1DecompressorContext::new(cid);
-        ctx.mode = Profile1DecompressorMode::SecondOrder;
-        ctx.rtp_ssrc = 0x12345678;
-        ctx.last_reconstructed_rtp_sn_full = 100;
-        ctx.last_reconstructed_rtp_ts_full = 1000;
-        ctx.last_reconstructed_rtp_marker = false;
-        ctx.last_reconstructed_ip_id_full = 100;
-        ctx.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
-        ctx.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
-        ctx.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
-        ctx.so_packets_received_in_so = 0;
-        ctx.so_consecutive_failures = 0;
-        ctx
-    }
-
-    #[allow(dead_code)] // Allowed for test helper not used in all test configs
-    fn setup_context_in_sc_mode_via_fc_failures(cid: u16) -> Profile1DecompressorContext {
-        let handler = Profile1Handler::new();
-        let mut ctx = Profile1DecompressorContext::new(cid);
-        ctx.mode = Profile1DecompressorMode::FullContext;
-        ctx.rtp_ssrc = 0x12345678;
-        ctx.last_reconstructed_rtp_sn_full = 50;
-        ctx.last_reconstructed_rtp_ts_full = 500;
-        ctx.last_reconstructed_rtp_marker = false;
-        ctx.last_reconstructed_ip_id_full = 50;
-        ctx.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
-        ctx.consecutive_crc_failures_in_fc = 0;
-        ctx.fc_packets_successful_streak = 0;
-        ctx.sc_to_nc_k_failures = 0;
-        ctx.sc_to_nc_n_window_count = 0;
-        let sn_for_fc_fail = ctx.last_reconstructed_rtp_sn_full.wrapping_add(1);
-        let good_crc_val = crc::calculate_rohc_crc3(&handler.build_uo_crc_input(
-            ctx.rtp_ssrc,
-            sn_for_fc_fail,
-            ctx.last_reconstructed_rtp_ts_full,
-            ctx.last_reconstructed_rtp_marker,
-        ));
-        let bad_crc = (good_crc_val + 1) & 0x07;
-        let uo0_bad_crc_data = Uo0Packet {
-            cid: None,
-            sn_lsb: encode_lsb(sn_for_fc_fail as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8,
-            crc3: bad_crc,
-        };
-        let uo0_bad_crc_bytes = build_profile1_uo0_packet(&uo0_bad_crc_data).unwrap();
-        for i in 0..P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
-            let res = handler.decompress_as_uo0(&mut ctx, &uo0_bad_crc_bytes);
-            assert!(res.is_err(), "FC UO-0 setup iter {} should fail", i);
-        }
-        assert_eq!(
-            ctx.mode,
-            Profile1DecompressorMode::StaticContext,
-            "Context should be SC"
-        );
-        assert_eq!(ctx.sc_to_nc_k_failures, 0, "SC k_failures init");
-        assert_eq!(ctx.sc_to_nc_n_window_count, 0, "SC n_window_count init");
-        ctx
     }
 
     #[test]
@@ -1123,30 +1162,37 @@ mod tests {
         let handler = Profile1Handler::new();
         let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
         let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
-        let headers1 = create_test_rtp_headers(100, 1000, false);
+
+        let headers1 = create_test_rtp_headers(100, Timestamp::new(1000), false);
         let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
+
         let compressed_ir = handler
             .compress(comp_ctx_dyn.as_mut(), &generic_headers1)
             .unwrap();
         assert!(!compressed_ir.is_empty());
-        assert_eq!(compressed_ir[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+        assert_eq!(compressed_ir[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN); // Expect IR-DYN
+
         let decompressed_generic1 = handler
-            .decompress(decomp_ctx_dyn.as_mut(), &compressed_ir)
+            .decompress(decomp_ctx_dyn.as_mut(), &compressed_ir) // Pass core packet bytes
             .unwrap();
         let decomp_headers1 = match decompressed_generic1 {
             GenericUncompressedHeaders::RtpUdpIpv4(h) => h,
-            _ => panic!("Wrong enum variant"),
+            _ => panic!("Wrong enum variant for decompressed IR"),
         };
+
         assert_eq!(decomp_headers1.rtp_ssrc, headers1.rtp_ssrc);
         assert_eq!(
             decomp_headers1.rtp_sequence_number,
             headers1.rtp_sequence_number
         );
+        assert_eq!(decomp_headers1.rtp_timestamp, headers1.rtp_timestamp);
+
         let comp_ctx = comp_ctx_dyn
             .as_any()
             .downcast_ref::<Profile1CompressorContext>()
             .unwrap();
         assert_eq!(comp_ctx.mode, Profile1CompressorMode::FirstOrder);
+
         let decomp_ctx = decomp_ctx_dyn
             .as_any()
             .downcast_ref::<Profile1DecompressorContext>()
@@ -1159,29 +1205,41 @@ mod tests {
         let handler = Profile1Handler::new();
         let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
         let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
-        let headers_ir = create_test_rtp_headers(100, 1000, false);
+
+        // Establish IR context
+        let headers_ir = create_test_rtp_headers(100, Timestamp::new(1000), false);
         let generic_headers_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
         let compressed_ir = handler
             .compress(comp_ctx_dyn.as_mut(), &generic_headers_ir)
             .unwrap();
         handler
             .decompress(decomp_ctx_dyn.as_mut(), &compressed_ir)
-            .unwrap(); // Establish FC
-        let mut headers_uo0 = create_test_rtp_headers(101, 1000, false);
-        headers_uo0.ip_identification = headers_ir.ip_identification; // For UO-0, IP-ID must be same
+            .unwrap();
+
+        // Prepare UO-0: SN+ (encodable), TS same, Marker same, IP-ID same
+        let comp_ctx_snapshot = comp_ctx_dyn
+            .as_any()
+            .downcast_ref::<Profile1CompressorContext>()
+            .unwrap();
+        let mut headers_uo0 = create_test_rtp_headers(101, Timestamp::new(1000), false);
+        headers_uo0.ip_identification = comp_ctx_snapshot.last_sent_ip_id_full; // Crucial for UO-0
         let generic_headers_uo0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0.clone());
+
         let compressed_uo0 = handler
             .compress(comp_ctx_dyn.as_mut(), &generic_headers_uo0)
             .unwrap();
+        assert_eq!(compressed_uo0.len(), 1); // UO-0 for CID 0
+
         let decompressed_generic_uo0 = handler
             .decompress(decomp_ctx_dyn.as_mut(), &compressed_uo0)
             .unwrap();
         match decompressed_generic_uo0 {
             GenericUncompressedHeaders::RtpUdpIpv4(h) => {
                 assert_eq!(h.rtp_sequence_number, 101);
-                assert_eq!(h.rtp_timestamp, 1000); // From context
+                assert_eq!(h.rtp_timestamp, Timestamp::new(1000)); // From context
+                assert!(!h.rtp_marker); // From context
             }
-            _ => panic!("Wrong enum variant"),
+            _ => panic!("Wrong enum variant for decompressed UO-0"),
         }
     }
 
@@ -1189,50 +1247,49 @@ mod tests {
     fn fc_to_so_transition_on_successful_uo_streak() {
         let handler = Profile1Handler::new();
         let mut ctx = Profile1DecompressorContext::new(0);
-        ctx.mode = Profile1DecompressorMode::FullContext; // Start in FC
+        ctx.mode = Profile1DecompressorMode::FullContext;
         ctx.rtp_ssrc = 0x12345678;
-        ctx.last_reconstructed_rtp_ts_full = 1000;
+        ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
         ctx.last_reconstructed_rtp_marker = false;
         ctx.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         let mut current_sn = 100u16;
         ctx.last_reconstructed_rtp_sn_full = current_sn;
+        // Simulate IP-ID for context reconstruction, though not directly used by UO-0 CRC
+        ctx.ip_source = "1.1.1.1".parse().unwrap();
+        ctx.ip_destination = "2.2.2.2".parse().unwrap();
+        ctx.udp_source_port = 1000;
+        ctx.udp_destination_port = 2000;
+
         let mut ctx_dyn: Box<dyn RohcDecompressorContext> = Box::new(ctx);
 
         for i in 0..P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
             current_sn = current_sn.wrapping_add(1);
             let sn_lsb = encode_lsb(current_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
+
+            let decomp_ctx_snapshot = ctx_dyn
+                .as_any()
+                .downcast_ref::<Profile1DecompressorContext>()
+                .unwrap();
             let crc_input = handler.build_uo_crc_input(
-                ctx_dyn
-                    .as_any()
-                    .downcast_ref::<Profile1DecompressorContext>()
-                    .unwrap()
-                    .rtp_ssrc,
+                decomp_ctx_snapshot.rtp_ssrc,
                 current_sn,
-                ctx_dyn
-                    .as_any()
-                    .downcast_ref::<Profile1DecompressorContext>()
-                    .unwrap()
-                    .last_reconstructed_rtp_ts_full,
-                ctx_dyn
-                    .as_any()
-                    .downcast_ref::<Profile1DecompressorContext>()
-                    .unwrap()
-                    .last_reconstructed_rtp_marker,
+                decomp_ctx_snapshot.last_reconstructed_rtp_ts_full,
+                decomp_ctx_snapshot.last_reconstructed_rtp_marker,
             );
-            let crc3 = crc::calculate_rohc_crc3(&crc_input);
+            let crc3 = handler.crc_calculators.calculate_rohc_crc3(&crc_input);
             let uo0_data = Uo0Packet {
-                cid: None,
+                cid: None, // CID 0
                 sn_lsb,
                 crc3,
             };
             let uo0_bytes = build_profile1_uo0_packet(&uo0_data).unwrap();
 
-            // Use main decompress for stateful testing
             let result = handler.decompress(ctx_dyn.as_mut(), &uo0_bytes);
             assert!(
                 result.is_ok(),
-                "UO-0 decompression in FC failed at iter {}",
-                i
+                "UO-0 decompression in FC failed at iter {}: {:?}",
+                i,
+                result.err()
             );
 
             let current_ctx = ctx_dyn
@@ -1257,6 +1314,6 @@ mod tests {
             final_ctx.so_dynamic_confidence,
             P1_SO_INITIAL_DYNAMIC_CONFIDENCE
         );
-        assert_eq!(final_ctx.fc_packets_successful_streak, 0);
+        assert_eq!(final_ctx.fc_packets_successful_streak, 0); // Reset after transition
     }
 }

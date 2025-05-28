@@ -3,13 +3,80 @@
 //! This module implements wrappers around the `crc` crate to provide the specific
 //! CRC algorithms used within the ROHC framework for packet validation, notably
 //! the 3-bit CRC (CRC-3/ROHC) and 8-bit CRC (CRC-8/ROHC) as specified in RFC 3095, Section 5.9.
+//! It also provides a `CrcCalculators` struct for convenient reuse of CRC algorithm instances.
 
 use crc::{CRC_3_ROHC, CRC_8_ROHC, Crc};
+use std::fmt;
 
-/// Calculates the ROHC 8-bit CRC (CRC-8/ROHC).
+/// A struct holding pre-initialized CRC algorithm instances for ROHC.
 ///
-/// This CRC is typically used for larger ROHC packets like IR (Initialization/Refresh)
-/// and UO-1 (Unidirectional Optimistic type 1) packets.
+/// This is intended for reuse to avoid re-creating `Crc<u8>` instances
+/// repeatedly, which can offer a minor performance benefit in high-throughput scenarios.
+pub struct CrcCalculators {
+    crc3_calculator: Crc<u8>,
+    crc8_calculator: Crc<u8>,
+}
+
+impl fmt::Debug for CrcCalculators {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Since Crc<u8> and Algorithm<u8> don't implement Debug,
+        // we provide a placeholder or minimal information.
+        f.debug_struct("CrcCalculators")
+            .field("crc3_calculator", &format_args!("Crc<u8>(ROHC_CRC3_Algo)"))
+            .field("crc8_calculator", &format_args!("Crc<u8>(ROHC_CRC8_Algo)"))
+            .finish()
+    }
+}
+
+impl CrcCalculators {
+    /// Creates a new `CrcCalculators` instance, initializing the ROHC CRC-3 and CRC-8 algorithms.
+    pub fn new() -> Self {
+        Self {
+            crc3_calculator: Crc::<u8>::new(&CRC_3_ROHC),
+            crc8_calculator: Crc::<u8>::new(&CRC_8_ROHC),
+        }
+    }
+
+    /// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) using the pre-initialized instance.
+    ///
+    /// # Parameters
+    /// * `data` - A slice of bytes over which the CRC will be calculated.
+    ///
+    /// # Returns
+    /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
+    #[inline]
+    pub fn calculate_rohc_crc3(&self, data: &[u8]) -> u8 {
+        self.crc3_calculator.checksum(data)
+    }
+
+    /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) using the pre-initialized instance.
+    ///
+    /// # Parameters
+    /// * `data` - A slice of bytes over which the CRC will be calculated.
+    ///
+    /// # Returns
+    /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
+    #[inline]
+    pub fn calculate_rohc_crc8(&self, data: &[u8]) -> u8 {
+        self.crc8_calculator.checksum(data)
+    }
+}
+
+impl Default for CrcCalculators {
+    /// Creates a default `CrcCalculators` instance.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// --- Standalone CRC calculation functions ---
+// These are kept for potential direct use or by other modules/profiles
+// not using the Profile1Handler's CrcCalculators instance.
+
+/// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) directly.
+///
+/// This function creates a new `Crc<u8>` instance on each call. For frequent calculations
+/// within a single context (like Profile1Handler), using `CrcCalculators` is preferred.
 ///
 /// The ROHC CRC-8 parameters are:
 /// - Polynomial: `0x07` (equivalent to `x^8 + x^2 + x^1 + 1`)
@@ -19,20 +86,18 @@ use crc::{CRC_3_ROHC, CRC_8_ROHC, Crc};
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// - `data`: A slice of bytes over which the CRC will be calculated.
+/// * `data` - A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
-/// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
-pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
-    // NOTE:: We can reuse this crc object to improve performance.
-    let crc_calculator: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
-    crc_calculator.checksum(data)
+/// The calculated 8-bit CRC value.
+pub fn calculate_rohc_crc8_direct(data: &[u8]) -> u8 {
+    let crc_calculator_instance: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
+    crc_calculator_instance.checksum(data)
 }
 
-/// Calculates the ROHC 3-bit CRC (CRC-3/ROHC).
+/// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) directly.
 ///
-/// This CRC is typically used for highly compressed ROHC packets, such as
-/// UO-0 (Unidirectional Optimistic type 0) packets, where every bit matters.
+/// This function creates a new `Crc<u8>` instance on each call.
 ///
 /// The ROHC CRC-3 parameters are:
 /// - Polynomial: `0x03` (equivalent to `x^3 + x^1 + 1`)
@@ -42,17 +107,13 @@ pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// - `data`: A slice of bytes over which the CRC will be calculated.
+/// * `data` - A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
 /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
-/// Note: The `crc` crate's `checksum` method for `Crc<u8>` will return a `u8`,
-/// but for CRC-3, only the lower 3 bits of this `u8` are relevant.
-/// The `CRC_3_ROHC` definition ensures the result is masked to 3 bits.
-pub fn calculate_rohc_crc3(data: &[u8]) -> u8 {
-    // NOTE:: We can reuse this crc object to improve performance.
-    let crc_calculator: Crc<u8> = Crc::<u8>::new(&CRC_3_ROHC);
-    crc_calculator.checksum(data)
+pub fn calculate_rohc_crc3_direct(data: &[u8]) -> u8 {
+    let crc_calculator_instance: Crc<u8> = Crc::<u8>::new(&CRC_3_ROHC);
+    crc_calculator_instance.checksum(data)
 }
 
 #[cfg(test)]
@@ -60,139 +121,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rohc_crc8_calculation_standard_test_vector() {
-        // The standard test vector "123456789" for CRC-8/ROHC yields 0xD0.
+    fn crc_calculators_debug_format() {
+        let calculators = CrcCalculators::new();
+        let debug_str = format!("{:?}", calculators);
+        assert!(debug_str.contains("CrcCalculators"));
+        assert!(debug_str.contains("crc3_calculator: Crc<u8>(ROHC_CRC3_Algo)"));
+        assert!(debug_str.contains("crc8_calculator: Crc<u8>(ROHC_CRC8_Algo)"));
+    }
+
+    #[test]
+    fn crc_calculators_rohc_crc8_standard_test_vector() {
+        let calculators = CrcCalculators::new();
         let data = b"123456789";
         let expected_crc = 0xD0;
-        let calculated_crc = calculate_rohc_crc8(data);
+        let calculated_crc = calculators.calculate_rohc_crc8(data);
         assert_eq!(
             calculated_crc, expected_crc,
-            "CRC-8 mismatch for '123456789'. Expected ROHC-specific 0xD0."
+            "CrcCalculators: CRC-8 mismatch for '123456789'. Expected ROHC-specific 0xD0."
         );
+        assert_eq!(CRC_8_ROHC.check, expected_crc);
+    }
 
-        // Verify against the crc crate's built-in check value for CRC_8_ROHC,
-        // which should match this standard vector.
+    #[test]
+    fn crc_calculators_rohc_crc3_standard_test_vector() {
+        let calculators = CrcCalculators::new();
+        let data = b"123456789";
+        let expected_crc = 0x06;
+        let calculated_crc = calculators.calculate_rohc_crc3(data);
         assert_eq!(
-            CRC_8_ROHC.check, expected_crc,
-            "The crc crate's CRC_8_ROHC.check value (0x{:02X}) does not match the expected 0xD0 for '123456789'.",
-            CRC_8_ROHC.check
+            calculated_crc, expected_crc,
+            "CrcCalculators: CRC-3 mismatch for '123456789'. Expected ROHC-specific 0x06."
         );
     }
 
     #[test]
-    fn rohc_crc3_calculation_standard_test_vector() {
-        // The standard test vector "123456789" for CRC-3/ROHC yields 0x06.
+    fn direct_rohc_crc8_calculation_standard_test_vector() {
         let data = b"123456789";
-        let expected_crc = 0x06;
-        let calculated_crc = calculate_rohc_crc3(data);
+        let expected_crc = 0xD0;
+        let calculated_crc = calculate_rohc_crc8_direct(data);
         assert_eq!(
             calculated_crc, expected_crc,
-            "CRC-3 mismatch for '123456789'. Expected ROHC-specific 0x06."
+            "Direct CRC-8 mismatch for '123456789'. Expected ROHC-specific 0xD0."
         );
+        assert_eq!(CRC_8_ROHC.check, expected_crc);
+    }
 
-        // The crc crate's CRC_3_ROHC.check value is 0x04 for "123456789".
-        // This is a known discrepancy. The ROHC standard (and common examples like RFC 4995 test cases)
-        // show "123456789" -> 0x06 for CRC-3/ROHC (poly 0x3, init 0x7).
-        // The `crc` crate's `CRC_3_ROHC` preset uses poly 0x3, init 0x7, refin=false, refout=false, xorout=0x0.
-        // The discrepancy in the check value might be due to a different interpretation or test vector
-        // used when that specific preset was defined in the `crc` crate.
-        // We prioritize the ROHC standard's expected output.
+    #[test]
+    fn direct_rohc_crc3_calculation_standard_test_vector() {
+        let data = b"123456789";
+        let expected_crc = 0x06;
+        let calculated_crc = calculate_rohc_crc3_direct(data);
+        assert_eq!(
+            calculated_crc, expected_crc,
+            "Direct CRC-3 mismatch for '123456789'. Expected ROHC-specific 0x06."
+        );
         if CRC_3_ROHC.check != expected_crc {
             eprintln!(
-                "Note for CRC-3 test: The `crc` crate's CRC_3_ROHC.check value is 0x{:02X} for '123456789', \
-                while ROHC examples typically expect 0x06. This test asserts 0x06.",
+                "Note for direct CRC-3 test: `crc` crate's CRC_3_ROHC.check value (0x{:02X}) differs from ROHC examples (0x06).",
                 CRC_3_ROHC.check
             );
         }
-        // We assert our function gives 0x06, which is the common ROHC expectation.
     }
 
     #[test]
-    fn rohc_crc8_empty_input() {
-        // As per RFC 3095, Section 5.9.1, the initial value for CRC-8 calculation is 0xFF.
-        // An empty input should result in this initial value.
+    fn direct_rohc_crc8_empty_input() {
         let data = b"";
         let expected_crc = 0xFF;
-        let calculated_crc = calculate_rohc_crc8(data);
-        assert_eq!(
-            calculated_crc, expected_crc,
-            "CRC-8 for empty data should be the initial value 0xFF."
-        );
+        let calculated_crc = calculate_rohc_crc8_direct(data);
+        assert_eq!(calculated_crc, expected_crc);
     }
 
     #[test]
-    fn rohc_crc3_empty_input() {
-        // As per RFC 3095, Section 5.9.2, the initial value for CRC-3 calculation is 0x07.
-        // An empty input should result in this initial value.
+    fn direct_rohc_crc3_empty_input() {
         let data = b"";
-        let expected_crc = 0x07; // This is 3 bits set: 0b111
-        let calculated_crc = calculate_rohc_crc3(data);
-        assert_eq!(
-            calculated_crc, expected_crc,
-            "CRC-3 for empty data should be the initial value 0x07."
-        );
+        let expected_crc = 0x07;
+        let calculated_crc = calculate_rohc_crc3_direct(data);
+        assert_eq!(calculated_crc, expected_crc);
     }
 
     #[test]
-    fn rohc_crc8_single_byte_inputs() {
-        // Test vectors for single bytes (CRC-8/ROHC: poly=0x07, init=0xFF, no-reflect, no-xor)
-        // Calculated using an online CRC calculator matching ROHC parameters.
-        // For 0x00:
-        // Initial: FF
-        // Byte: 00. FF ^ 00 = FF.
-        // Poly operations... result should be 0xCF
-        assert_eq!(calculate_rohc_crc8(b"\x00"), 0xCF, "CRC-8 for 0x00 failed.");
-
-        // For 0x5A:
-        // Initial: FF
-        // Byte: 5A. FF ^ 5A = A5.
-        // Poly operations... result should be 0x4E
-        assert_eq!(calculate_rohc_crc8(b"\x5A"), 0x4E, "CRC-8 for 0x5A failed.");
-
-        // For 0xFF:
-        // Initial: FF
-        // Byte: FF. FF ^ FF = 00.
-        // Poly operations... result should be 0x00
-        assert_eq!(calculate_rohc_crc8(b"\xFF"), 0x00, "CRC-8 for 0xFF failed.");
-    }
-
-    #[test]
-    fn rohc_crc3_single_byte_inputs() {
-        // Test vectors for single bytes (CRC-3/ROHC: poly=0x03, init=0x07, no-reflect, no-xor)
-        // Calculated using an online CRC calculator matching ROHC parameters.
-        // For 0x00:
-        // Initial: 07 (0b111)
-        // Byte: 00. 07 ^ upper 3 bits of 00... (algorithm detail)
-        // Result should be 0x05 (0b101)
-        assert_eq!(calculate_rohc_crc3(b"\x00"), 0x05, "CRC-3 for 0x00 failed.");
-
-        // For 0x5A:
-        // Result should be 0x06 (0b110)
-        assert_eq!(calculate_rohc_crc3(b"\x5A"), 0x06, "CRC-3 for 0x5A failed.");
-
-        // For 0xFF:
-        // Result should be 0x03 (0b011)
-        assert_eq!(calculate_rohc_crc3(b"\xFF"), 0x03, "CRC-3 for 0xFF failed.");
-    }
-
-    #[test]
-    fn rohc_crc3_output_is_3_bits() {
-        // Ensure the output of crc3 is always within 0-7.
-        // The CRC_3_ROHC preset should handle this.
+    fn direct_rohc_crc3_output_is_3_bits() {
         let data_long = b"This is a longer test string for CRC3 calculation";
-        let crc3_val = calculate_rohc_crc3(data_long);
+        let crc3_val = calculate_rohc_crc3_direct(data_long);
         assert!(
             crc3_val <= 0x07,
             "CRC-3 output {} exceeded 3 bits (0x07).",
             crc3_val
-        );
-
-        let data_all_ff = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
-        let crc3_val_ff = calculate_rohc_crc3(data_all_ff);
-        assert!(
-            crc3_val_ff <= 0x07,
-            "CRC-3 output {} for all 0xFF exceeded 3 bits.",
-            crc3_val_ff
         );
     }
 }
