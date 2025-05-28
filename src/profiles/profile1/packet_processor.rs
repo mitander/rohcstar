@@ -783,6 +783,117 @@ pub fn parse_profile1_uo1_id_packet(
     })
 }
 
+/// Builds a ROHC Profile 1 UO-1-RTP packet.
+///
+/// This creates the core UO-1-RTP packet: Type (1) + TS_SCALED (1) + CRC-8 (1).
+/// The marker bit is encoded in the type octet. SN increments by 1 implicitly
+/// when this packet type is chosen by the compressor.
+/// Prepends an Add-CID octet if `packet_data.cid` specifies a small CID (1-15).
+///
+/// # Parameters
+/// * `packet_data` - A reference to `Uo1Packet` containing TS_SCALED, marker, CRC-8, and optional CID.
+///   The `ts_scaled` field in `packet_data` must be `Some`.
+///
+/// # Returns
+/// A `Result` containing the built UO-1-RTP packet as `Vec<u8>`, or a `RohcBuildingError`.
+pub fn build_profile1_uo1_rtp_packet(
+    packet_data: &Uo1Packet,
+) -> Result<Vec<u8>, RohcBuildingError> {
+    let ts_scaled_val =
+        packet_data
+            .ts_scaled
+            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "ts_scaled".to_string(),
+                description: "UO-1-RTP requires a TS_SCALED value.".to_string(),
+            })?;
+
+    // UO-1-RTP packet type discriminator: 1010100M
+    let type_octet = P1_UO_1_RTP_DISCRIMINATOR_BASE
+        | (if packet_data.marker {
+            P1_UO_1_RTP_MARKER_BIT_MASK
+        } else {
+            0
+        });
+
+    let core_packet_bytes = vec![type_octet, ts_scaled_val, packet_data.crc8];
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
+            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet.extend_from_slice(&core_packet_bytes);
+            Ok(final_packet)
+        } else if cid_val == 0 {
+            // CID 0 for UO-1-RTP means no Add-CID
+            Ok(core_packet_bytes)
+        } else {
+            Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field_name: "cid".to_string(),
+                description: format!(
+                    "Invalid CID {} for UO-1-RTP Add-CID encoding; expected 0 or 1-15.",
+                    cid_val
+                ),
+            })
+        }
+    } else {
+        // No CID provided (implicitly CID 0)
+        Ok(core_packet_bytes)
+    }
+}
+
+/// Parses a ROHC Profile 1 UO-1-RTP packet.
+///
+/// Assumes `core_packet_bytes` is the core UO-1-RTP packet (typically 3 bytes:
+/// Type, TS_SCALED, CRC-8), after any Add-CID processing by the ROHC engine.
+/// The CID is determined by the engine and is not part of `core_packet_bytes` here.
+///
+/// # Parameters
+/// * `core_packet_bytes` - Byte slice of the core UO-1-RTP packet.
+///
+/// # Returns
+/// A `Result` containing the parsed `Uo1Packet` (with `ts_scaled` and `marker` fields populated)
+/// or a `RohcParsingError`.
+pub fn parse_profile1_uo1_rtp_packet(
+    core_packet_bytes: &[u8],
+) -> Result<Uo1Packet, RohcParsingError> {
+    // Core UO-1-RTP is 3 bytes: Type (1), TS_SCALED (1), CRC-8 (1)
+    let expected_len = 3;
+    if core_packet_bytes.len() < expected_len {
+        return Err(RohcParsingError::NotEnoughData {
+            needed: expected_len,
+            got: core_packet_bytes.len(),
+            context: "UO-1-RTP Packet Core".to_string(),
+        });
+    }
+
+    let type_octet = core_packet_bytes[0];
+
+    // Verify it's UO-1-RTP (discriminator prefix 1010100, M variable)
+    if (type_octet & 0b1111_1110) != P1_UO_1_RTP_DISCRIMINATOR_BASE {
+        return Err(RohcParsingError::InvalidPacketType {
+            discriminator: type_octet,
+            profile_id: Some(RohcProfile::RtpUdpIp.into()), // Profile hint
+        });
+    }
+
+    let marker_bit_set = (type_octet & P1_UO_1_RTP_MARKER_BIT_MASK) != 0;
+    let ts_scaled_val = core_packet_bytes[1];
+    let received_crc8 = core_packet_bytes[2];
+
+    Ok(Uo1Packet {
+        cid: None, // CID is handled by the engine layer
+        sn_lsb: 0, // SN is implicit (SN_ref + 1) for UO-1-RTP, not in packet
+        num_sn_lsb_bits: 0,
+        marker: marker_bit_set,
+        ts_lsb: None, // UO-1-RTP uses TS_SCALED, not TS_LSB
+        num_ts_lsb_bits: None,
+        ip_id_lsb: None,
+        num_ip_id_lsb_bits: None,
+        ts_scaled: Some(ts_scaled_val),
+        crc8: received_crc8,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,5 +1015,114 @@ mod tests {
 
         let result = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators);
         assert!(matches!(result, Err(RohcParsingError::CrcMismatch { .. })));
+    }
+
+    #[test]
+    fn build_and_parse_uo1_rtp_packet_cid0_marker_false() {
+        let uo1_rtp_data = Uo1Packet {
+            cid: None, // Implicit CID 0
+            marker: false,
+            ts_scaled: Some(123),
+            crc8: 0xAB,
+            ..Default::default()
+        };
+
+        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        assert_eq!(built_bytes.len(), 3);
+        assert_eq!(built_bytes[0], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
+        assert_eq!(built_bytes[1], 123); // TS_SCALED
+        assert_eq!(built_bytes[2], 0xAB); // CRC
+
+        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes).unwrap();
+        assert_eq!(parsed.ts_scaled, Some(123));
+        assert!(!parsed.marker);
+        assert_eq!(parsed.crc8, 0xAB);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_rtp_packet_cid0_marker_true() {
+        let uo1_rtp_data = Uo1Packet {
+            cid: None,
+            marker: true,
+            ts_scaled: Some(10),
+            crc8: 0xCD,
+            ..Default::default()
+        };
+
+        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        assert_eq!(built_bytes.len(), 3);
+        assert_eq!(
+            built_bytes[0],
+            P1_UO_1_RTP_DISCRIMINATOR_BASE | P1_UO_1_RTP_MARKER_BIT_MASK
+        ); // M=1
+        assert_eq!(built_bytes[1], 10);
+        assert_eq!(built_bytes[2], 0xCD);
+
+        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes).unwrap();
+        assert_eq!(parsed.ts_scaled, Some(10));
+        assert!(parsed.marker);
+        assert_eq!(parsed.crc8, 0xCD);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_rtp_packet_small_cid() {
+        let uo1_rtp_data = Uo1Packet {
+            cid: Some(5),
+            marker: false,
+            ts_scaled: Some(255),
+            crc8: 0xFE,
+            ..Default::default()
+        };
+
+        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        assert_eq!(built_bytes.len(), 4); // Add-CID + core packet
+        assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
+        assert_eq!(built_bytes[1], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
+        assert_eq!(built_bytes[2], 255);
+        assert_eq!(built_bytes[3], 0xFE);
+
+        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes[1..]).unwrap(); // Parse core part
+        assert_eq!(parsed.ts_scaled, Some(255));
+        assert!(!parsed.marker);
+        assert_eq!(parsed.crc8, 0xFE);
+    }
+
+    #[test]
+    fn build_uo1_rtp_packet_missing_ts_scaled() {
+        let uo1_rtp_data = Uo1Packet {
+            cid: None,
+            marker: false,
+            ts_scaled: None, // Missing
+            crc8: 0xAB,
+            ..Default::default()
+        };
+        let result = build_profile1_uo1_rtp_packet(&uo1_rtp_data);
+        assert!(
+            matches!(result, Err(RohcBuildingError::InvalidFieldValueForBuild { field_name, .. }) if field_name == "ts_scaled")
+        );
+    }
+
+    #[test]
+    fn parse_uo1_rtp_packet_too_short() {
+        let short_packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 123]; // Missing CRC
+        let result = parse_profile1_uo1_rtp_packet(&short_packet);
+        assert!(matches!(
+            result,
+            Err(RohcParsingError::NotEnoughData {
+                needed: 3,
+                got: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_uo1_rtp_wrong_discriminator() {
+        let wrong_packet = vec![P1_UO_1_SN_PACKET_TYPE_PREFIX, 123, 0xAB]; // UO-1-SN type
+        let result = parse_profile1_uo1_rtp_packet(&wrong_packet);
+        assert!(matches!(
+            result,
+            Err(RohcParsingError::InvalidPacketType { .. })
+        ));
     }
 }
