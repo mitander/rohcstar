@@ -95,7 +95,7 @@ impl ContextManager {
     /// Retrieves a immutable reference to a compressor context by its CID.
     ///
     /// # Parameters
-    /// - `cid`: The Context ID of the decompressor context to retrieve.
+    /// - `cid`: The Context ID of the compressor context to retrieve.
     ///
     /// # Returns
     /// - `Ok(&dyn RohcCompressorContext)` if the context is found.

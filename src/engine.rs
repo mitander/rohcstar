@@ -178,7 +178,9 @@ impl RohcEngine {
                     ))
                 })?;
                 let result = handler.decompress(context_box.as_mut(), core_packet_slice);
+
                 if result.is_ok() {
+                    // Success: update last access
                     context_box.set_last_accessed(self.clock.now());
                 }
                 result

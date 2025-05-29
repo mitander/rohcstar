@@ -55,7 +55,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// # Parameters
     /// - `cid`: The Context Identifier for the new flow.
     /// - `ir_refresh_interval`: Suggested interval for IR refreshes.
-    /// - `creation_time`: The `Instant` to set as the initial `last_accessed` time.
+    /// - `creation_time`: The timestamp for the context's creation, used to initialize its `last_accessed` time.
     ///
     /// # Returns
     /// A `Box` containing a new `RohcCompressorContext`.
@@ -70,7 +70,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     ///
     /// # Parameters
     /// - `cid`: The Context Identifier for the new flow.
-    /// - `creation_time`: The `Instant` to set as the initial `last_accessed` time.
+    /// - `creation_time`: The timestamp for the context's creation, used to initialize its `last_accessed` time.
     ///
     /// # Returns
     /// A `Box` containing a new `RohcDecompressorContext`.

@@ -12,51 +12,44 @@ use thiserror::Error;
 /// incoming ROHC packet or an uncompressed packet being prepared for compression.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum RohcParsingError {
-    /// Insufficient data was provided to parse a complete field or structure.
+    /// Insufficient data to parse a complete field or structure.
     #[error("Incomplete packet data: needed {needed} bytes, got {got} for {context}")]
     NotEnoughData {
         needed: usize,
         got: usize,
-        context: String, // e.g., "IPv4 header", "ROHC IR packet static chain"
+        context: String,
     },
 
-    /// An invalid or unsupported ROHC profile identifier was encountered.
+    /// Invalid or unsupported ROHC profile identifier encountered.
     #[error("Invalid or unsupported ROHC profile ID: 0x{0:02X}")]
     InvalidProfileId(u8),
 
-    /// The packet type discriminator (e.g., the first byte of a ROHC packet)
-    /// is invalid or not recognized by the specific profile handler.
+    /// Unrecognized ROHC packet type discriminator for the current profile.
     #[error(
         "Invalid ROHC packet type discriminator: 0x{discriminator:02X} for profile {profile_id:?}"
     )]
     InvalidPacketType {
         discriminator: u8,
-        profile_id: Option<u8>, // Optionally provide profile ID for context
+        profile_id: Option<u8>,
     },
 
-    /// An IP version other than the expected one (e.g., IPv4) was found.
+    /// Invalid IP version found; expected a specific version.
     #[error("Invalid IP version: expected {expected}, got {got}")]
     InvalidIpVersion { expected: u8, got: u8 },
 
-    /// An unsupported protocol was specified in a header (e.g., a non-UDP protocol
-    /// in an IP header when expecting UDP for ROHC Profile 1).
+    /// Unsupported protocol specified in a header (e.g., non-UDP in IP for Profile 1).
     #[error("Unsupported protocol: {protocol_id} in {layer} header")]
-    UnsupportedProtocol {
-        protocol_id: u8,
-        layer: String, // e.g., "IP", "UDP"
-    },
+    UnsupportedProtocol { protocol_id: u8, layer: String },
 
-    /// A CRC (Cyclic Redundancy Check) validation failed, indicating potential
-    /// data corruption or a mismatch in context.
+    /// CRC validation failed, indicating data corruption or context mismatch.
     #[error("CRC mismatch: expected 0x{expected:X}, got 0x{calculated:X} for {crc_type} CRC")]
     CrcMismatch {
         expected: u8,
         calculated: u8,
-        crc_type: String, // e.g., "ROHC-CRC8", "ROHC-CRC3"
+        crc_type: String,
     },
 
-    /// An error occurred during LSB (Least Significant Bits) encoding or decoding.
-    /// This typically means a value could not be unambiguously resolved.
+    /// LSB encoding or decoding operation failed.
     #[error("Invalid LSB operation for field '{field_name}': {description}")]
     InvalidLsbOperation {
         field_name: String,
@@ -70,7 +63,7 @@ pub enum RohcParsingError {
         structure_name: String,
     },
 
-    /// A field contained an invalid or unexpected value according to protocol rules.
+    /// A field contained an invalid or unexpected value.
     #[error("Invalid value for field '{field_name}' in {structure_name}: {description}")]
     InvalidFieldValue {
         field_name: String,
@@ -78,7 +71,7 @@ pub enum RohcParsingError {
         description: String,
     },
 
-    /// A general, profile-specific parsing error occurred.
+    /// General, profile-specific parsing error.
     #[error("Profile-specific parsing error for profile 0x{profile_id:02X}: {description}")]
     ProfileSpecificParsingError { profile_id: u8, description: String },
 }
@@ -89,9 +82,8 @@ pub enum RohcParsingError {
 /// ROHC packet from uncompressed headers or context information.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum RohcBuildingError {
-    /// The provided buffer was too small to hold the packet being built.
-    /// (Note: Most builders in Rohcstar will return `Vec<u8>`, making this less common
-    /// unless a fixed-size buffer is explicitly used by a specific function).
+    /// Provided buffer was too small for the packet being built.
+    /// (Less common in Rohcstar as builders typically return `Vec<u8>`).
     #[error("Buffer too small: needed {needed} bytes, have {available} for {context}")]
     BufferTooSmall {
         needed: usize,
@@ -99,81 +91,70 @@ pub enum RohcBuildingError {
         context: String,
     },
 
-    /// Necessary context information was missing or insufficient to build the packet.
+    /// Context information insufficient to build the packet.
     #[error("Context insufficient for building packet: {reason}")]
     ContextInsufficient { reason: String },
 
-    /// An invalid value was provided for a field during packet construction.
+    /// Invalid value provided for a field during packet construction.
     #[error("Invalid value for field '{field_name}' during packet building: {description}")]
     InvalidFieldValueForBuild {
         field_name: String,
         description: String,
     },
 
-    /// A general, profile-specific building error occurred.
+    /// General, profile-specific building error.
     #[error("Profile-specific building error for profile 0x{profile_id:02X}: {description}")]
     ProfileSpecificBuildingError { profile_id: u8, description: String },
 }
 
-/// The main error type for ROHC operations within the Rohcstar library.
+/// Main error type for ROHC operations in Rohcstar.
 ///
-/// This enum consolidates various error kinds that can occur during
-/// compression, decompression, context management, or other ROHC operations.
+/// Consolidates various error kinds from compression, decompression,
+/// context management, and other ROHC operations.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum RohcError {
-    /// An error occurred during packet parsing.
+    /// Error during packet parsing.
     #[error("Parsing error: {0}")]
     Parsing(#[from] RohcParsingError),
 
-    /// An error occurred during packet building.
+    /// Error during packet building.
     #[error("Building error: {0}")]
     Building(#[from] RohcBuildingError),
 
-    /// No ROHC context was found for the given Context Identifier (CID).
+    /// No ROHC context found for the given Context Identifier (CID).
     #[error("Context not found for CID: {0}")]
     ContextNotFound(u16),
 
-    /// An error occurred related to ROHC context state or management.
+    /// Error related to ROHC context state or management.
     #[error("Context error: {0}")]
     ContextError(String),
 
-    /// An operation was attempted that is invalid for the current ROHC state
-    /// (e.g., compressor or decompressor mode).
+    /// Operation invalid for the current ROHC state (e.g., compressor/decompressor mode).
     #[error("Invalid state for operation: {0}")]
     InvalidState(String),
 
-    /// The specified ROHC profile is not supported by this instance of Rohcstar
-    /// or by the current configuration.
+    /// Specified ROHC profile is not supported or configured.
     #[error("Unsupported ROHC profile: 0x{0:02X}")]
     UnsupportedProfile(u8),
 
-    /// The requested operation is not supported in the current ROHC operational mode
-    /// (e.g., Unidirectional, Bidirectional-Optimistic, Bidirectional-Reliable).
+    /// Operation not supported in the current ROHC operational mode (U/O/R-mode).
     #[error("Operation not supported in current ROHC mode: {0}")]
-    ModeNotSupported(String), // e.g. U-mode, O-mode, R-mode
+    ModeNotSupported(String),
 
-    /// An unexpected internal logic error occurred. This typically indicates a bug
-    /// within the Rohcstar library itself.
+    /// Unexpected internal logic error, likely a bug in Rohcstar.
     #[error("Internal logic error: {0}")]
     Internal(String),
 
-    /// An I/O error occurred (e.g., when reading from or writing to a stream,
-    /// though Rohcstar primarily deals with byte slices).
+    /// I/O error (placeholder, Rohcstar primarily uses byte slices).
     #[error("I/O error: {0}")]
-    Io(String), // Simplified; for real I/O, use std::io::Error or a wrapper
+    Io(String),
 
-    /// A profile-specific error that doesn't fit into parsing or building categories.
+    /// Profile-specific error not fitting parsing or building categories.
     #[error("Profile-specific error for profile 0x{profile_id:02X}: {description}")]
     ProfileSpecific { profile_id: u8, description: String },
 }
 
-// Optional: Implement From for easier error conversion if needed elsewhere
-// impl From<std::io::Error> for RohcError {
-//     fn from(err: std::io::Error) -> Self {
-//         RohcError::Io(err.to_string())
-//     }
-// }
-
+// Test module remains unchanged.
 #[cfg(test)]
 mod tests {
     use super::*;

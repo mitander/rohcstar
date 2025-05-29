@@ -80,7 +80,7 @@ pub enum GenericUncompressedHeaders {
 }
 
 impl GenericUncompressedHeaders {
-    /// Attempts to return a reference to RTP/UDP/IPv4 headers.
+    /// Returns a reference to the RTP/UDP/IPv4 headers if this is the `RtpUdpIpv4` variant.
     ///
     /// # Returns
     /// `Some(&RtpUdpIpv4Headers)` if the variant is `RtpUdpIpv4`, otherwise `None`.
@@ -93,7 +93,7 @@ impl GenericUncompressedHeaders {
         }
     }
 
-    /// Attempts to return a mutable reference to RTP/UDP/IPv4 headers.
+    /// Returns a mutable reference to the RTP/UDP/IPv4 headers if this is the `RtpUdpIpv4` variant.
     ///
     /// # Returns
     /// `Some(&mut RtpUdpIpv4Headers)` if the variant is `RtpUdpIpv4`, otherwise `None`.
