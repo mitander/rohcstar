@@ -119,7 +119,7 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPac
         dyn_rtp_sn: sn,
         dyn_rtp_timestamp: Timestamp::new(ts_val),
         dyn_rtp_marker: false, // Default marker for this helper
-        ts_stride: None,       // Added missing field, default to None for basic IR data
+        ts_stride: None,       // Defaults to None for basic IR data helper
         crc8: 0,               // Placeholder, calculated by builder
     }
 }

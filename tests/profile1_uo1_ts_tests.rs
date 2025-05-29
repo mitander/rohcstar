@@ -17,6 +17,8 @@ use rohcstar::profiles::profile1::{
     P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
 
+/// Tests basic UO-1-TS compression and decompression when TS changes, SN increments by one,
+/// and Marker remains stable.
 #[test]
 fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -37,13 +39,14 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
+    // Packet: SN+1, TS changes, Marker stable, IP-ID stable
     let headers = create_rtp_headers(101, 2000, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
         .unwrap();
 
-    assert_eq!(compressed.len(), 4);
+    assert_eq!(compressed.len(), 4); // Type + TS_LSB(2) + CRC8
     assert_eq!(compressed[0], P1_UO_1_TS_DISCRIMINATOR);
 
     let decompressed = engine
@@ -65,6 +68,8 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     assert!(!decomp_ctx.last_reconstructed_rtp_marker);
 }
 
+/// Tests UO-1-TS compression with a large jump in the RTP Timestamp value,
+/// ensuring SN and Marker are correctly handled.
 #[test]
 fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -85,7 +90,8 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
-    let new_ts_val: u32 = 10000 + 15000;
+    // Packet: SN+1, large TS change, Marker stable, IP-ID stable
+    let new_ts_val: u32 = 10000 + 15000; // Large TS jump
     let headers =
         create_rtp_headers(201, new_ts_val, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
@@ -112,6 +118,8 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
         Timestamp::new(new_ts_val)
     );
 }
+
+/// Tests packet type selection priority between UO-1-TS and UO-1-SN under various conditions.
 #[test]
 fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -121,6 +129,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let cid = 0u16;
     let ssrc = 0x11223344;
 
+    // Initial IR: SN=300, TS=3000, Marker=false
     let ir_headers = create_rtp_headers(300, 3000, false, ssrc);
     establish_ir_context(
         &mut engine,
@@ -132,6 +141,8 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     );
     let ip_id_in_context = ir_headers.ip_identification;
 
+    // Packet 1: SN=301 (ctx_sn+1), TS=4000 (changed), Marker=false (same), IP-ID=same
+    // Expected: UO-1-TS
     let headers1 = create_rtp_headers(301, 4000, false, ssrc).with_ip_id(ip_id_in_context);
     let compressed1 = engine
         .compress(
@@ -140,7 +151,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
             &GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone()),
         )
         .unwrap();
-    assert_eq!(compressed1.len(), 4);
+    assert_eq!(compressed1.len(), 4, "Packet 1 should be UO-1-TS");
     assert_eq!(compressed1[0], P1_UO_1_TS_DISCRIMINATOR);
     let decomp1_result = engine.decompress(&compressed1);
     assert!(decomp1_result.is_ok());
@@ -148,6 +159,8 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert_eq!(decomp1.rtp_sequence_number, 301);
     assert_eq!(decomp1.rtp_timestamp, Timestamp::new(4000));
 
+    // Packet 2: SN=302 (ctx_sn+1), TS=4000 (same as P1 context), Marker=true (changed), IP-ID=same
+    // Expected: UO-1-SN (Marker change takes precedence over UO-1-TS conditions)
     let headers2 = create_rtp_headers(302, 4000, true, ssrc).with_ip_id(ip_id_in_context);
     let compressed2 = engine
         .compress(
@@ -156,7 +169,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
             &GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone()),
         )
         .unwrap();
-    assert_eq!(compressed2.len(), 3);
+    assert_eq!(compressed2.len(), 3, "Packet 2 should be UO-1-SN");
     assert_eq!(
         compressed2[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
@@ -167,8 +180,10 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let decomp2 = decomp2_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp2.rtp_sequence_number, 302);
     assert!(decomp2.rtp_marker);
-    assert_eq!(decomp2.rtp_timestamp, Timestamp::new(4000));
+    assert_eq!(decomp2.rtp_timestamp, Timestamp::new(4000)); // TS from P1 context still
 
+    // Packet 3: SN=303 (ctx_sn+1), TS=4000 (same as P2 context), Marker=false (changed from P2 context), IP-ID=same
+    // Expected: UO-1-SN (Marker change)
     let headers3 = create_rtp_headers(303, 4000, false, ssrc).with_ip_id(ip_id_in_context);
     let compressed3 = engine
         .compress(
@@ -177,7 +192,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
             &GenericUncompressedHeaders::RtpUdpIpv4(headers3.clone()),
         )
         .unwrap();
-    assert_eq!(compressed3.len(), 3);
+    assert_eq!(compressed3.len(), 3, "Packet 3 should be UO-1-SN");
     assert_eq!(
         compressed3[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
@@ -187,9 +202,11 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp3_result.is_ok());
     let decomp3 = decomp3_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp3.rtp_sequence_number, 303);
-    assert_eq!(decomp3.rtp_timestamp, Timestamp::new(4000));
+    assert_eq!(decomp3.rtp_timestamp, Timestamp::new(4000)); // TS from P2 context
     assert!(!decomp3.rtp_marker);
 
+    // Packet 4: SN=305 (ctx_sn+2), TS=6000 (changed), Marker=false (same as P3 context), IP-ID changes
+    // Expected: UO-1-SN (SN jump > 1, overrides UO-1-TS/ID consideration)
     let headers4 =
         create_rtp_headers(305, 6000, false, ssrc).with_ip_id(ip_id_in_context.wrapping_add(1));
     let compressed4 = engine
@@ -199,7 +216,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
             &GenericUncompressedHeaders::RtpUdpIpv4(headers4.clone()),
         )
         .unwrap();
-    assert_eq!(compressed4.len(), 3);
+    assert_eq!(compressed4.len(), 3, "Packet 4 should be UO-1-SN");
     assert_eq!(
         compressed4[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
@@ -209,9 +226,11 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp4_result.is_ok());
     let decomp4 = decomp4_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp4.rtp_sequence_number, 305);
-    assert_eq!(decomp4.rtp_timestamp, Timestamp::new(4000));
+    assert_eq!(decomp4.rtp_timestamp, Timestamp::new(4000)); // TS from P3 context
 }
 
+/// Tests UO-1-TS where the Marker bit is TRUE in the context and remains TRUE for the packet,
+/// ensuring CRC calculation correctly uses the context marker.
 #[test]
 fn p1_uo1_ts_marker_from_context_for_crc() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -221,6 +240,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
     let cid = 0u16;
     let ssrc = 0xBADF00D;
 
+    // IR establishes context with Marker=true
     let ir_headers = create_rtp_headers(50, 500, true, ssrc);
     establish_ir_context(
         &mut engine,
@@ -232,6 +252,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
+    // Packet: SN+1, TS change, Marker still true (same as context), IP-ID stable
     let headers = create_rtp_headers(51, 600, true, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
@@ -239,7 +260,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
         .unwrap();
 
     assert_eq!(compressed.len(), 4);
-    assert_eq!(compressed[0], P1_UO_1_TS_DISCRIMINATOR);
+    assert_eq!(compressed[0], P1_UO_1_TS_DISCRIMINATOR); // UO-1-TS selected
 
     let decompressed = engine
         .decompress(&compressed)
@@ -249,7 +270,7 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
         .clone();
     assert_eq!(decompressed.rtp_sequence_number, 51);
     assert_eq!(decompressed.rtp_timestamp, Timestamp::new(600));
-    assert!(decompressed.rtp_marker);
+    assert!(decompressed.rtp_marker); // Marker correctly true
 
     let decomp_ctx = get_decompressor_context(&engine, cid);
     assert!(decomp_ctx.last_reconstructed_rtp_marker);
@@ -260,13 +281,15 @@ fn p1_uo1_ts_marker_from_context_for_crc() {
     assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 51);
 }
 
+/// Tests UO-1-TS packet compression and decompression when a small CID is used,
+/// ensuring the Add-CID octet is correctly prepended.
 #[test]
 fn p1_uo1_ts_with_add_cid() {
     let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
-    let cid = 3u16;
+    let cid = 3u16; // Small CID
     let ssrc = 0xFEEDF00D;
 
     let ir_headers = create_rtp_headers(70, 7000, false, ssrc);
@@ -280,13 +303,14 @@ fn p1_uo1_ts_with_add_cid() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
+    // Packet: SN+1, TS change, Marker stable, IP-ID stable
     let headers = create_rtp_headers(71, 7500, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
         .unwrap();
 
-    assert_eq!(compressed.len(), 5);
+    assert_eq!(compressed.len(), 5); // Add-CID + Type + TS_LSB(2) + CRC8
     assert_eq!(
         compressed[0],
         ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid as u8)
