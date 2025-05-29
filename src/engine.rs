@@ -19,13 +19,22 @@ use crate::time::{Clock, SystemClock};
 use crate::traits::ProfileHandler;
 
 /// The main ROHC processing engine.
+///
+/// Manages ROHC profile handlers and their associated compression/decompression
+/// contexts. It provides the primary API for compressing and decompressing packets.
 #[derive(Debug)]
 pub struct RohcEngine {
+    /// Stores registered ROHC profile handlers, keyed by their `RohcProfile` identifier.
     profile_handlers: HashMap<RohcProfile, Box<dyn ProfileHandler>>,
+    /// Manages active compressor and decompressor contexts.
     context_manager: ContextManager,
+    /// Default interval (in number of packets) for sending IR (Initialization/Refresh)
+    /// packets by compressors if a profile-specific interval is not used.
     default_ir_refresh_interval: u32,
-    /// Duration after which an inactive context is considered stale and can be pruned.
+    /// Duration after which an inactive context is considered stale and may be pruned
+    /// by `prune_stale_contexts`.
     context_timeout: Duration,
+    /// Shared clock instance for managing time-dependent operations like context timeouts.
     clock: Arc<dyn Clock>,
 }
 
@@ -56,7 +65,8 @@ impl RohcEngine {
     /// - `handler`: A `Box<dyn ProfileHandler>` for the profile.
     ///
     /// # Returns
-    /// `Ok(())` or `Err(RohcError::Internal)` if profile already registered.
+    /// - `Ok(())` if the handler was successfully registered.
+    /// - `Err(RohcError::Internal)` if a handler for this profile ID is already registered.
     pub fn register_profile_handler(
         &mut self,
         handler: Box<dyn ProfileHandler>,
@@ -81,17 +91,16 @@ impl RohcEngine {
     /// - `uncompressed_headers`: The `GenericUncompressedHeaders` to compress.
     ///
     /// # Returns
-    /// `Result<Vec<u8>, RohcError>` containing the compressed ROHC packet.
+    /// - `Ok(Vec<u8>)` containing the ROHC-compressed packet on success.
+    /// - `Err(RohcError)` if compression fails (e.g., context issues, unsupported profile, or profile-specific compression errors).
     pub fn compress(
         &mut self,
         cid: u16,
         profile_id_hint: Option<RohcProfile>,
         uncompressed_headers: &GenericUncompressedHeaders,
     ) -> Result<Vec<u8>, RohcError> {
-        // Attempt to get an existing compressor context
         match self.context_manager.get_compressor_context_mut(cid) {
             Ok(context_box) => {
-                // Found existing context, get its profile and handler
                 let profile_id = context_box.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or_else(|| {
                     RohcError::Internal(format!(
@@ -102,13 +111,11 @@ impl RohcEngine {
                 let result = handler.compress(context_box.as_mut(), uncompressed_headers);
 
                 if result.is_ok() {
-                    // Success: update last access
                     context_box.set_last_accessed(self.clock.now());
                 }
                 result
             }
             Err(RohcError::ContextNotFound(_)) => {
-                // Context not found, create a new one
                 let profile_to_use = profile_id_hint.ok_or_else(|| {
                     RohcError::Internal(format!(
                         "Cannot create new compressor context for CID {} without profile hint.",
@@ -125,17 +132,15 @@ impl RohcEngine {
                     self.default_ir_refresh_interval,
                     self.clock.now(),
                 );
-                // First compression call will typically send IR and initialize/update context
                 let result = handler.compress(new_context.as_mut(), uncompressed_headers);
                 if result.is_ok() {
-                    // Success: update last access
                     new_context.set_last_accessed(self.clock.now());
                 }
                 self.context_manager
                     .add_compressor_context(cid, new_context);
                 result
             }
-            Err(e) => Err(e), // Other errors from get_compressor_context_mut
+            Err(e) => Err(e),
         }
     }
 
@@ -146,7 +151,8 @@ impl RohcEngine {
     /// - `rohc_packet_bytes`: Byte slice of the complete incoming ROHC packet.
     ///
     /// # Returns
-    /// `Result<GenericUncompressedHeaders, RohcError>` with reconstructed headers.
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on success.
+    /// - `Err(RohcError)` if decompression fails (e.g., parsing errors, context issues, or profile-specific decompression errors).
     pub fn decompress(
         &mut self,
         rohc_packet_bytes: &[u8],
@@ -180,13 +186,11 @@ impl RohcEngine {
                 let result = handler.decompress(context_box.as_mut(), core_packet_slice);
 
                 if result.is_ok() {
-                    // Success: update last access
                     context_box.set_last_accessed(self.clock.now());
                 }
                 result
             }
             Err(RohcError::ContextNotFound(_)) => {
-                // Context not found, attempt to create from IR packet
                 let profile_id = self.peek_profile_from_core_packet(core_packet_slice)?;
                 let handler = self
                     .profile_handlers
@@ -196,7 +200,6 @@ impl RohcEngine {
                 let mut new_context = handler.create_decompressor_context(cid, self.clock.now());
                 let result = handler.decompress(new_context.as_mut(), core_packet_slice);
                 if result.is_ok() {
-                    // Success: update last access
                     new_context.set_last_accessed(self.clock.now());
                 }
                 self.context_manager
@@ -209,16 +212,19 @@ impl RohcEngine {
 
     /// Parses CID from a ROHC packet, handling Add-CID octets.
     ///
+    /// This is an internal helper function.
+    ///
     /// # Parameters
     /// - `rohc_packet_bytes`: Slice of the ROHC packet.
     ///
     /// # Returns
-    /// Tuple `(cid, is_add_cid_present, core_packet_slice)` or `RohcError`.
+    /// - `Ok((u16, bool, &'a [u8]))` containing the CID, a flag indicating if an Add-CID octet was present,
+    ///   and a slice representing the core packet data (after the Add-CID octet, if any).
+    /// - `Err(RohcError::Parsing(RohcParsingError::NotEnoughData))` if `rohc_packet_bytes` is empty.
     fn parse_cid_from_packet<'a>(
         &self,
         rohc_packet_bytes: &'a [u8],
     ) -> Result<(u16, bool, &'a [u8]), RohcError> {
-        // (Implementation from previous step is fine here, no timeout logic directly involves it)
         if rohc_packet_bytes.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
@@ -237,18 +243,20 @@ impl RohcEngine {
         }
     }
 
-    /// Peeks profile ID from a core ROHC packet (typically IR).
+    /// Peeks profile ID from a core ROHC packet (typically an IR packet).
+    /// Assumes the packet is an IR packet if a new context needs to be created.
+    /// This is an internal helper function.
     ///
     /// # Parameters
     /// - `core_packet_slice`: Packet data after Add-CID processing.
     ///
     /// # Returns
-    /// Inferred `RohcProfile` or `RohcError`.
+    /// - `Ok(RohcProfile)` containing the inferred ROHC profile ID on success.
+    /// - `Err(RohcError)` if parsing fails (e.g., due to insufficient data or an unsuitable packet type).
     fn peek_profile_from_core_packet(
         &self,
         core_packet_slice: &[u8],
     ) -> Result<RohcProfile, RohcError> {
-        // (Implementation from previous step is fine)
         if core_packet_slice.len() < 2 {
             // Need type byte + profile byte
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
@@ -278,12 +286,10 @@ impl RohcEngine {
         let now = self.clock.now();
         let timeout_duration = self.context_timeout;
 
-        // Identify stale compressor CIDs
         let stale_compressor_cids: Vec<u16> = self
             .context_manager
             .compressor_contexts_iter()
             .filter_map(|(cid, context_box)| {
-                // Check if context has been inactive longer than the timeout duration
                 if now.duration_since(context_box.last_accessed()) > timeout_duration {
                     Some(*cid)
                 } else {
@@ -292,13 +298,10 @@ impl RohcEngine {
             })
             .collect();
 
-        // Remove stale compressor contexts
         for cid in stale_compressor_cids {
             self.context_manager.remove_compressor_context(cid);
-            // Example: log::debug!("RohcEngine: Pruned stale compressor context for CID: {}", cid);
         }
 
-        // Identify stale decompressor CIDs
         let stale_decompressor_cids: Vec<u16> = self
             .context_manager
             .decompressor_contexts_iter()
@@ -311,10 +314,8 @@ impl RohcEngine {
             })
             .collect();
 
-        // Remove stale decompressor contexts
         for cid in stale_decompressor_cids {
             self.context_manager.remove_decompressor_context(cid);
-            // Example: log::debug!("RohcEngine: Pruned stale decompressor context for CID: {}", cid);
         }
     }
 
@@ -355,7 +356,6 @@ mod tests {
 
     const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
 
-    // Helper function from your tests, ensure it's defined or accessible
     fn create_test_rtp_headers_for_engine(sn: u16, ts: u32, marker: bool) -> RtpUdpIpv4Headers {
         RtpUdpIpv4Headers {
             ip_src: "192.168.1.10".parse().unwrap(),
@@ -503,24 +503,21 @@ mod tests {
             .register_profile_handler(Box::new(Profile1Handler::new()))
             .unwrap();
 
-        let uo0_packet_cid0 = vec![(0x0A << 3) | 0x05]; // SN=10, CRC=5, for implicit CID 0
+        let uo0_packet_cid0 = vec![(0x0A << 3) | 0x05]; // SN=10, CRC=5, for implicit CID 0. Length is 1.
         let result = engine.decompress(&uo0_packet_cid0);
-        let result_clone = result.clone();
+        let result_clone_for_assert_msg = result.clone();
 
-        // Expect error because context for CID 0 doesn't exist and UO-0 cannot init
+        // Expect NotEnoughData because peek_profile_from_core_packet needs at least 2 bytes
+        // (type + profile) to read a profile ID from an IR packet, and UO-0 is only 1 byte.
         assert!(
             matches!(
                 result,
                 Err(RohcError::Parsing(RohcParsingError::NotEnoughData { needed: 2, got: 1, context}))
                 if context == "Peeking profile ID from core packet"
             ),
-            "Expected NotEnoughData from peek_profile, got {:?}",
-            result_clone
+            "Expected NotEnoughData from peek_profile_from_core_packet for 1-byte UO-0, got {:?}",
+            result_clone_for_assert_msg
         );
-
-        if let Err(RohcError::InvalidState(msg)) = result_clone {
-            assert!(msg.contains("Cannot determine ROHC profile from non-IR packet for new CID"));
-        }
     }
 
     #[test]
@@ -582,50 +579,44 @@ mod tests {
 
     #[test]
     fn engine_prune_stale_contexts_works() {
-        use crate::packet_defs::RohcProfile; // Ensure RohcProfile is in scope
-        use crate::profiles::profile1::Profile1Handler; // Ensure Profile1Handler is in scope
-        use crate::time::mock_clock::MockClock; // For the mock clock
+        use crate::packet_defs::RohcProfile;
+        use crate::profiles::profile1::Profile1Handler;
+        use crate::time::mock_clock::MockClock;
         use std::sync::Arc;
         use std::time::{Duration, Instant};
 
-        // Define a fixed start time for deterministic testing
-        let start_time = Instant::now(); // In a real test suite, you might pick a truly fixed Instant
+        let start_time = Instant::now();
         let mock_clock = Arc::new(MockClock::new(start_time));
         let short_timeout = Duration::from_millis(100); // Contexts stale after 100ms
 
-        let mut engine = RohcEngine::new(
-            5, // default_ir_refresh_interval
-            short_timeout,
-            mock_clock.clone(),
-        );
+        let mut engine = RohcEngine::new(5, short_timeout, mock_clock.clone());
         engine
             .register_profile_handler(Box::new(Profile1Handler::new()))
             .unwrap();
 
-        let headers = create_test_rtp_headers_for_engine(1, 10, false); // Assuming this helper is available
+        let headers = create_test_rtp_headers_for_engine(1, 10, false);
         let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
         let cid10 = 10u16;
         let cid11 = 11u16;
-        let cid_fresh = 2u16; // Used in Phase 3
+        let cid_fresh = 2u16;
 
         // --- Phase 1: Prune cid11 contexts, keep cid10 compressor ---
-
-        // Create and access context for cid10. Engine uses mock_clock.now() for last_accessed.
+        // T0: Create and access context for cid10
         let _ = engine
             .compress(cid10, Some(RohcProfile::RtpUdpIp), &generic_headers)
             .unwrap();
-        // Current time: start_time (let's call this T0)
-        // cid10 compressor: last_accessed = T0
+        // cid10 compressor: last_accessed = T0 (start_time)
 
-        // Advance clock before creating cid11 contexts
-        mock_clock.advance(Duration::from_millis(10)); // Clock is now T0 + 10ms
+        // T0 + 10ms: Create cid11 compressor context
+        mock_clock.advance(Duration::from_millis(10));
         let compressed_ir_cid11 = engine
             .compress(cid11, Some(RohcProfile::RtpUdpIp), &generic_headers)
             .unwrap();
         // cid11 compressor: last_accessed = T0 + 10ms
 
-        mock_clock.advance(Duration::from_millis(10)); // Clock is now T0 + 20ms
+        // T0 + 20ms: Create cid11 decompressor context
+        mock_clock.advance(Duration::from_millis(10));
         let _ = engine.decompress(&compressed_ir_cid11).unwrap();
         // cid11 decompressor: last_accessed = T0 + 20ms
 
@@ -640,33 +631,20 @@ mod tests {
             "Initial decompressor count"
         );
 
-        // Advance clock so cid10 and cid11 are about halfway to stale
-        mock_clock.advance(short_timeout / 2); // Clock is now T0 + 20ms + 50ms = T0 + 70ms
-        // cid10 age: 70ms
-        // cid11 comp age: 60ms
-        // cid11 decomp age: 50ms
-
-        // Refresh cid10 to keep it alive
+        // T0 + 70ms: Refresh cid10.
+        // Context ages before refresh: cid10_comp=70ms, cid11_comp=60ms, cid11_decomp=50ms
+        mock_clock.advance(short_timeout / 2); // Advance by 50ms
         let _ = engine
             .compress(cid10, Some(RohcProfile::RtpUdpIp), &generic_headers)
             .unwrap();
         // cid10 compressor: last_accessed updated to T0 + 70ms
 
-        // Advance clock so cid11 contexts become stale, but refreshed cid10 does not.
-        // We want:
-        //   (clock_now - cid11_last_access) > short_timeout
-        //   (clock_now - cid10_last_access) < short_timeout
-        // Current clock: T0 + 70ms.
-        // cid11 comp last access: T0 + 10ms. Age = 60ms.
-        // cid11 decomp last access: T0 + 20ms. Age = 50ms.
-        // cid10 comp last access: T0 + 70ms. Age = 0ms (relative to this point).
-        // If we advance by, say, 60ms:
-        // Clock will be T0 + 130ms.
-        // cid11 comp age: 120ms (> 100ms timeout) -> STALE
-        // cid11 decomp age: 110ms (> 100ms timeout) -> STALE
-        // cid10 comp age: 60ms (< 100ms timeout) -> FRESH
+        // T0 + 130ms: Prune.
+        // Context ages at prune time:
+        // cid11_comp: (T0+130) - (T0+10) = 120ms (STALE because > 100ms timeout)
+        // cid11_decomp: (T0+130) - (T0+20) = 110ms (STALE)
+        // cid10_comp: (T0+130) - (T0+70) = 60ms (FRESH)
         mock_clock.advance(Duration::from_millis(60));
-
         engine.prune_stale_contexts();
 
         assert_eq!(
@@ -702,11 +680,9 @@ mod tests {
         );
 
         // --- Phase 2: Test pruning of the remaining cid10 context ---
-        // cid10 was last accessed when clock was T0 + 70ms.
-        // Current clock is T0 + 130ms. Its age is 60ms.
-        // To make it stale (age > 100ms), we need to advance by > 40ms. Let's advance by 50ms.
-        mock_clock.advance(Duration::from_millis(50)); // Clock is now T0 + 180ms. cid10 age is 110ms.
-
+        // cid10 last access: T0 + 70ms. Current clock: T0 + 130ms. Age: 60ms.
+        // Advance by 50ms to make cid10 stale. Clock = T0 + 180ms. cid10 age becomes 110ms.
+        mock_clock.advance(Duration::from_millis(50));
         engine.prune_stale_contexts();
         assert_eq!(
             engine.context_manager().compressor_context_count(),
@@ -721,22 +697,20 @@ mod tests {
         );
 
         // --- Phase 3: Test fresh context survives a prune if accessed within timeout ---
-        // Clock is T0 + 180ms
+        // Clock = T0 + 180ms
         let _ = engine
             .compress(cid_fresh, Some(RohcProfile::RtpUdpIp), &generic_headers)
-            .unwrap();
-        // cid_fresh last_accessed = T0 + 180ms
+            .unwrap(); // cid_fresh last_accessed = T0 + 180ms
         assert_eq!(engine.context_manager().compressor_context_count(), 1);
 
-        mock_clock.advance(short_timeout / 2); // Advance by 50ms. Clock = T0 + 230ms. cid_fresh age = 50ms.
-
+        // Clock = T0 + 230ms (cid_fresh age = 50ms). Refresh.
+        mock_clock.advance(short_timeout / 2);
         let _ = engine
             .compress(cid_fresh, Some(RohcProfile::RtpUdpIp), &generic_headers)
-            .unwrap(); // Refresh cid_fresh
-        // cid_fresh last_accessed = T0 + 230ms.
+            .unwrap(); // cid_fresh last_accessed = T0 + 230ms.
 
-        mock_clock.advance(short_timeout / 3); // Advance by ~33ms. Clock = T0 + ~263ms. cid_fresh age = ~33ms.
-
+        // Clock = T0 + ~263ms (cid_fresh age = ~33ms). Prune.
+        mock_clock.advance(short_timeout / 3);
         engine.prune_stale_contexts(); // Should not prune cid_fresh
         assert_eq!(
             engine.context_manager().compressor_context_count(),

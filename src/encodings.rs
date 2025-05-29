@@ -5,7 +5,7 @@
 //! in RFC 3095, Section 4.5 and Section 5.3.1. These utilities are designed to be
 //! generic and usable by various ROHC profiles.
 
-use crate::error::RohcParsingError; // Assuming this path is correct after error.rs refactor.
+use crate::error::RohcParsingError;
 
 /// Checks if a value falls within the W-LSB interpretation window.
 ///
@@ -23,8 +23,8 @@ use crate::error::RohcParsingError; // Assuming this path is correct after error
 ///   shifts the window to the left (lower values) relative to `reference_value`.
 ///
 /// # Returns
-/// `true` if `value` is within the W-LSB interpretation interval, `false` otherwise.
-/// Returns `false` if `num_lsb_bits` is 0 or greater than 64.
+/// - `true` if `value` is within the W-LSB interpretation interval.
+/// - `false` otherwise, or if `num_lsb_bits` is 0 or greater than 64.
 pub fn value_in_lsb_interval(
     value: u64,
     reference_value: u64,
@@ -68,8 +68,8 @@ pub fn value_in_lsb_interval(
 /// - `num_lsb_bits`: The number of LSBs (`k`) to extract. Must be between 1 and 64.
 ///
 /// # Returns
-/// A `Result` containing the LSB-encoded part of the value as `u64`.
-/// Returns `RohcParsingError::InvalidLsbOperation` if `num_lsb_bits` is 0 or greater than 64.
+/// - `Ok(u64)` containing the LSB-encoded part of the value.
+/// - `Err(RohcParsingError::InvalidLsbOperation)` if `num_lsb_bits` is 0 or greater than 64.
 pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 {
         return Err(RohcParsingError::InvalidLsbOperation {
@@ -112,13 +112,12 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
 /// - `reference_value`: The reference value (`v_ref`) from the context, used to disambiguate the LSBs.
 /// - `num_lsb_bits`: The number of LSBs (`k`) that were used for encoding.
 ///   Must be between 1 and 63, inclusive, for meaningful W-LSB decoding.
-///   k=64 implies the full value was sent, so no "decoding" in this sense is needed.
 /// - `p_offset`: The window offset parameter (`p`) from W-LSB.
 ///
 /// # Returns
-/// A `Result` containing the reconstructed `u64` value.
-/// Returns `RohcParsingError::InvalidLsbOperation` if decoding fails (e.g., invalid parameters,
-/// `received_lsbs` too large for `num_lsb_bits`, or no unique resolution in the window).
+/// - `Ok(u64)` containing the reconstructed value.
+/// - `Err(RohcParsingError::InvalidLsbOperation)` if decoding fails (e.g., invalid parameters,
+///   `received_lsbs` too large for `num_lsb_bits`, or no unique resolution in the window).
 pub fn decode_lsb(
     received_lsbs: u64,
     reference_value: u64,
@@ -138,7 +137,8 @@ pub fn decode_lsb(
         });
     }
 
-    let window_size = 1u64 << num_lsb_bits; // This is 2^k.
+    let window_size = 1u64 << num_lsb_bits;
+    debug_assert!(window_size > 0);
     let lsb_mask = window_size - 1;
 
     // Ensure received_lsbs themselves are valid for the given k.
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(decode_lsb(0, ref_val, k, 0).unwrap(), 0);
         assert_eq!(decode_lsb(3, ref_val, k, 0).unwrap(), 3);
 
-        let upper_val_in_window = ref_val.wrapping_add(15 - (ref_val & lsb_mask)); // simplified logic for test val
+        let upper_val_in_window = ref_val.wrapping_add(15 - (ref_val & lsb_mask));
         let upper_val_lsb = upper_val_in_window & lsb_mask;
         assert_eq!(
             decode_lsb(upper_val_lsb, ref_val, k, 0).unwrap(),
@@ -414,8 +414,7 @@ mod tests {
 
     #[test]
     fn decode_lsb_error_invalid_num_bits_combined() {
-        // num_lsb_bits must be > 0 and < 64 for decode_lsb.
-        let err_k0 = decode_lsb(0x01, 10, 0, 0).unwrap_err(); // k=0 is invalid
+        let err_k0 = decode_lsb(0x01, 10, 0, 0).unwrap_err();
         match err_k0 {
             RohcParsingError::InvalidLsbOperation {
                 field_name,
@@ -427,7 +426,7 @@ mod tests {
             _ => panic!("Unexpected error type for k=0: {:?}", err_k0),
         }
 
-        let err_k64 = decode_lsb(0x01, 10, 64, 0).unwrap_err(); // k=64 is invalid for LSB *decoding*
+        let err_k64 = decode_lsb(0x01, 10, 64, 0).unwrap_err();
         match err_k64 {
             RohcParsingError::InvalidLsbOperation {
                 field_name,
@@ -442,8 +441,7 @@ mod tests {
 
     #[test]
     fn decode_lsb_error_received_lsbs_too_large_for_k_combined() {
-        // received_lsbs (0x10 = 16) cannot be represented by k=3 bits (max LSB value 0x07 = 7).
-        let err = decode_lsb(0x10, 10, 3, 0).unwrap_err();
+        let err = decode_lsb(0x10, 10, 3, 0).unwrap_err(); // 0x10 (16) is too large for k=3 (max 7)
         match err {
             RohcParsingError::InvalidLsbOperation {
                 field_name,
@@ -462,43 +460,20 @@ mod tests {
 
     #[test]
     fn decode_lsb_error_conditions_no_resolution() {
-        // Example where no candidate falls in the window, even after trying alternative.
-        // This can happen if p_offset is large, pushing the window far from sensible candidates.
-        // Let ref=10, k=3 (window_size=8, mask=7), received_lsb=0.
-        // If p=10, interval_base = 10-10=0. Window [0,7].
-        // cand = (0 & !7) | 0 = 0. 0 >= 0. Is 0.wrapping_sub(0) < 8? Yes. Result should be 0.
         assert_eq!(decode_lsb(0, 10, 3, 10).unwrap(), 0);
 
-        // Let ref=200, k=3 (win=8, mask=7), received_lsb=0, p=10.
+        // ref=200, k=3 (win=8, mask=7), received_lsb=0, p=10.
         // interval_base = 200-10=190. Window [190,197].
         // cand1_base = (190 & !7) | 0 = (190 - 190%8) | 0 = (190 - 6) | 0 = 184.
         // cand1 = 184. 184 < 190. cand1 = 184+8 = 192.
         // Is 192.sub(190) < 8? 2 < 8. Yes. Result is 192.
         assert_eq!(decode_lsb(0, 200, 3, 10).unwrap(), 192);
 
-        // Test case from your original tests that might have aimed for an error:
-        // assert_eq!(decode_lsb(0, 200, 3, 10).unwrap(), 192); // This one resolves correctly
-        //
-        // Let's try to force an error: large p_offset to shift window extremely.
         // ref=50, k=3, received_lsb=0. p=40. interval_base=10. Window [10,17].
         // cand_base = (10 & !7) | 0 = 8 | 0 = 8.
         // cand1 = 8. 8 < 10. cand1 = 8+8 = 16.
         // Is 16.sub(10) < 8? 6 < 8. Yes. Result 16.
         assert_eq!(decode_lsb(0, 50, 3, 40).unwrap(), 16);
-
-        // If an error is desired, the inputs must be such that neither candidate works.
-        // Example: v_ref=10, k=1 (window_size=2, lsb_mask=1), lsb=0, p=0. Interval [10,11].
-        // cand_base = (10 & !1) | 0 = 10. candidate_v=10. 10.sub(10)<2. Yes. result=10.
-        //
-        // Example: v_ref=10, k=1, lsb=0, p= -100 (interval_base = 110, window [110,111])
-        // cand_base = (110 & !1) | 0 = 110. candidate_v=110. 110.sub(110)<2. Yes. result=110.
-
-        // It's actually hard to make decode_lsb fail with "no resolution" if inputs for k and lsb_val are valid,
-        // because the algorithm is designed to always find a candidate in the 2^k range around v_ref-p.
-        // The error case primarily happens if k is invalid or received_lsbs > mask.
-        // A "no resolution" typically means the reference value has drifted too far for the LSBs to be useful,
-        // which implies a higher-level context issue, not a flaw in W-LSB math itself if k is small.
-        // The detailed error message with candidates and window helps debug such higher-level issues.
     }
 
     #[test]

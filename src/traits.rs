@@ -87,8 +87,8 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// - `headers`: The `GenericUncompressedHeaders` to be compressed.
     ///
     /// # Returns
-    /// A `Result` containing the ROHC-compressed packet as a `Vec<u8>`,
-    /// or a `RohcError` if compression fails.
+    /// - `Ok(Vec<u8>)` containing the ROHC-compressed packet on success.
+    /// - `Err(RohcError)` if compression fails.
     fn compress(
         &self,
         context: &mut dyn RohcCompressorContext,
@@ -102,8 +102,8 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// - `packet_bytes`: A slice containing the ROHC packet data to decompress.
     ///
     /// # Returns
-    /// A `Result` containing the reconstructed `GenericUncompressedHeaders`,
-    /// or a `RohcError` if decompression fails.
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on success.
+    /// - `Err(RohcError)` if decompression fails.
     fn decompress(
         &self,
         context: &mut dyn RohcDecompressorContext,
@@ -214,7 +214,6 @@ mod tests {
             _context: &mut dyn RohcCompressorContext,
             headers: &GenericUncompressedHeaders,
         ) -> Result<Vec<u8>, RohcError> {
-            // In a real scenario, the engine would call set_last_accessed on the context after this.
             match headers {
                 GenericUncompressedHeaders::TestRaw(data) => {
                     let mut cd = Vec::new();
@@ -232,7 +231,6 @@ mod tests {
             _context: &mut dyn RohcDecompressorContext,
             rohc_packet_data: &[u8],
         ) -> Result<GenericUncompressedHeaders, RohcError> {
-            // In a real scenario, the engine would call set_last_accessed on the context after this.
             if rohc_packet_data.is_empty() {
                 return Err(RohcError::Parsing(
                     crate::error::RohcParsingError::NotEnoughData {

@@ -213,7 +213,8 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
 /// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 computation.
 ///
 /// # Returns
-/// A `Result` containing the built IR packet as `Vec<u8>`, or a `RohcBuildingError`.
+/// - `Ok(Vec<u8>)` containing the built IR packet.
+/// - `Err(RohcBuildingError)` if packet construction fails (e.g., invalid field values).
 pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
@@ -305,7 +306,8 @@ pub fn build_profile1_ir_packet(
 /// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 verification.
 ///
 /// # Returns
-/// A `Result` containing the parsed `IrPacket` or a `RohcParsingError`.
+/// - `Ok(IrPacket)` containing the parsed IR packet data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., not enough data, invalid type, CRC mismatch).
 pub fn parse_profile1_ir_packet(
     core_packet_bytes: &[u8],
     cid_from_engine: u16,
@@ -477,6 +479,13 @@ pub fn parse_profile1_ir_packet(
 }
 
 /// Builds a ROHC Profile 1 UO-0 packet.
+///
+/// # Parameters
+/// * `packet_data` - Data for the UO-0 packet.
+///
+/// # Returns
+/// - `Ok(Vec<u8>)` containing the built UO-0 packet.
+/// - `Err(RohcBuildingError)` if field values are invalid for UO-0.
 pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -514,6 +523,14 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
 }
 
 /// Parses a ROHC Profile 1 UO-0 packet.
+///
+/// # Parameters
+/// * `core_packet_data` - Byte slice of the core UO-0 packet (single byte).
+/// * `cid_from_engine` - Optional CID if Add-CID was processed by the engine.
+///
+/// # Returns
+/// - `Ok(Uo0Packet)` containing the parsed UO-0 data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., incorrect length, invalid packet type).
 pub fn parse_profile1_uo0_packet(
     core_packet_data: &[u8],
     cid_from_engine: Option<u8>,
@@ -548,6 +565,13 @@ pub fn parse_profile1_uo0_packet(
 }
 
 /// Builds a ROHC Profile 1 UO-1-SN packet.
+///
+/// # Parameters
+/// * `packet_data` - Data for the UO-1-SN packet.
+///
+/// # Returns
+/// - `Ok(Vec<u8>)` containing the built UO-1-SN packet.
+/// - `Err(RohcBuildingError)` if field values are invalid for UO-1-SN.
 pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     if packet_data.num_sn_lsb_bits != P1_UO1_SN_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -597,6 +621,13 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 }
 
 /// Parses a ROHC Profile 1 UO-1-SN packet.
+///
+/// # Parameters
+/// * `core_packet_bytes` - Byte slice of the core UO-1-SN packet.
+///
+/// # Returns
+/// - `Ok(Uo1Packet)` containing the parsed UO-1-SN data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., not enough data, invalid packet type).
 pub fn parse_profile1_uo1_sn_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -636,6 +667,13 @@ pub fn parse_profile1_uo1_sn_packet(
 }
 
 /// Builds a ROHC Profile 1 UO-1-TS packet.
+///
+/// # Parameters
+/// * `packet_data` - Data for the UO-1-TS packet.
+///
+/// # Returns
+/// - `Ok(Vec<u8>)` containing the built UO-1-TS packet.
+/// - `Err(RohcBuildingError)` if field values are invalid for UO-1-TS.
 pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ts_lsb =
         packet_data
@@ -691,6 +729,13 @@ pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 }
 
 /// Parses a ROHC Profile 1 UO-1-TS packet.
+///
+/// # Parameters
+/// * `core_packet_bytes` - Byte slice of the core UO-1-TS packet.
+///
+/// # Returns
+/// - `Ok(Uo1Packet)` containing the parsed UO-1-TS data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., not enough data, invalid packet type).
 pub fn parse_profile1_uo1_ts_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -729,6 +774,13 @@ pub fn parse_profile1_uo1_ts_packet(
 }
 
 /// Builds a ROHC Profile 1 UO-1-ID packet.
+///
+/// # Parameters
+/// * `packet_data` - Data for the UO-1-ID packet.
+///
+/// # Returns
+/// - `Ok(Vec<u8>)` containing the built UO-1-ID packet.
+/// - `Err(RohcBuildingError)` if field values are invalid for UO-1-ID.
 pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ip_id_lsb =
         packet_data
@@ -786,6 +838,13 @@ pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 }
 
 /// Parses a ROHC Profile 1 UO-1-ID packet.
+///
+/// # Parameters
+/// * `core_packet_bytes` - Byte slice of the core UO-1-ID packet.
+///
+/// # Returns
+/// - `Ok(Uo1Packet)` containing the parsed UO-1-ID data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., not enough data, invalid packet type).
 pub fn parse_profile1_uo1_id_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
@@ -825,17 +884,12 @@ pub fn parse_profile1_uo1_id_packet(
 
 /// Builds a ROHC Profile 1 UO-1-RTP packet.
 ///
-/// This creates the core UO-1-RTP packet: Type (1) + TS_SCALED (1) + CRC-8 (1).
-/// The marker bit is encoded in the type octet. SN increments by 1 implicitly
-/// when this packet type is chosen by the compressor.
-/// Prepends an Add-CID octet if `packet_data.cid` specifies a small CID (1-15).
-///
 /// # Parameters
-/// * `packet_data` - A reference to `Uo1Packet` containing TS_SCALED, marker, CRC-8, and optional CID.
-///   The `ts_scaled` field in `packet_data` must be `Some`.
+/// * `packet_data` - Data for the UO-1-RTP packet.
 ///
 /// # Returns
-/// A `Result` containing the built UO-1-RTP packet as `Vec<u8>`, or a `RohcBuildingError`.
+/// - `Ok(Vec<u8>)` containing the built UO-1-RTP packet.
+/// - `Err(RohcBuildingError)` if field values are invalid for UO-1-RTP.
 pub fn build_profile1_uo1_rtp_packet(
     packet_data: &Uo1Packet,
 ) -> Result<Vec<u8>, RohcBuildingError> {
@@ -880,16 +934,12 @@ pub fn build_profile1_uo1_rtp_packet(
 
 /// Parses a ROHC Profile 1 UO-1-RTP packet.
 ///
-/// Assumes `core_packet_bytes` is the core UO-1-RTP packet (typically 3 bytes:
-/// Type, TS_SCALED, CRC-8), after any Add-CID processing by the ROHC engine.
-/// The CID is determined by the engine and is not part of `core_packet_bytes` here.
-///
 /// # Parameters
 /// * `core_packet_bytes` - Byte slice of the core UO-1-RTP packet.
 ///
 /// # Returns
-/// A `Result` containing the parsed `Uo1Packet` (with `ts_scaled` and `marker` fields populated)
-/// or a `RohcParsingError`.
+/// - `Ok(Uo1Packet)` containing the parsed UO-1-RTP data.
+/// - `Err(RohcParsingError)` if parsing fails (e.g., not enough data, invalid packet type).
 pub fn parse_profile1_uo1_rtp_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {

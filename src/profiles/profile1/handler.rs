@@ -51,8 +51,8 @@ impl Profile1Handler {
     /// - Significant SN, TS, or IP-ID jump occurs that might exceed UO LSB encoding capabilities.
     ///
     /// # Parameters
-    /// * `context` - Reference to the current `Profile1CompressorContext`.
-    /// * `uncompressed_headers` - Reference to the current uncompressed headers.
+    /// - `context`: Reference to the current `Profile1CompressorContext`.
+    /// - `uncompressed_headers`: Reference to the current uncompressed headers.
     ///
     /// # Returns
     /// `true` if an IR packet should be sent, `false` otherwise.
@@ -113,6 +113,14 @@ impl Profile1Handler {
 
     /// Prepares and builds an IR or IR-DYN packet based on current context and uncompressed headers.
     /// Handles SSRC changes, TS_STRIDE signaling, and updates compressor state post-transmission.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `uncompressed_headers`: The headers of the packet to compress as IR.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the compressed IR packet.
+    /// - `Err(RohcError)` if building the IR packet fails (e.g., `RohcBuildingError::InvalidFieldValueForBuild`).
     fn compress_as_ir(
         &self,
         context: &mut Profile1CompressorContext,
@@ -165,6 +173,14 @@ impl Profile1Handler {
     }
 
     /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets, selecting the appropriate UO type.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `uncompressed_headers`: The headers of the packet to compress as UO.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the compressed UO packet.
+    /// - `Err(RohcError)` if LSB encoding or building the selected UO packet fails.
     fn compress_as_uo(
         &self,
         context: &mut Profile1CompressorContext,
@@ -235,6 +251,14 @@ impl Profile1Handler {
     }
 
     /// Builds a ROHC Profile 1 UO-0 packet.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `current_sn`: The current RTP sequence number.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the UO-0 packet.
+    /// - `Err(RohcError)` if LSB encoding or packet building fails.
     fn build_compress_uo0(
         &self,
         context: &mut Profile1CompressorContext,
@@ -258,6 +282,15 @@ impl Profile1Handler {
     }
 
     /// Builds a ROHC Profile 1 UO-1-TS packet.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `current_sn`: The current RTP sequence number.
+    /// - `current_ts`: The current RTP timestamp.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the UO-1-TS packet.
+    /// - `Err(RohcError)` if LSB encoding or packet building fails.
     fn build_compress_uo1_ts(
         &self,
         context: &mut Profile1CompressorContext,
@@ -274,7 +307,7 @@ impl Profile1Handler {
         let calculated_crc8 = self.crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
         let uo1_ts_packet_data = Uo1Packet {
             cid: context.get_small_cid_for_packet(),
-            marker: false,
+            marker: false, // UO-1-TS implies marker is unchanged from context
             ts_lsb: Some(ts_lsb_val),
             num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
             crc8: calculated_crc8,
@@ -285,6 +318,15 @@ impl Profile1Handler {
     }
 
     /// Builds a ROHC Profile 1 UO-1-SN packet.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `current_sn`: The current RTP sequence number.
+    /// - `current_marker`: The current RTP marker bit.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the UO-1-SN packet.
+    /// - `Err(RohcError)` if LSB encoding or packet building fails.
     fn build_compress_uo1_sn(
         &self,
         context: &mut Profile1CompressorContext,
@@ -312,6 +354,15 @@ impl Profile1Handler {
     }
 
     /// Builds a ROHC Profile 1 UO-1-ID packet.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable compressor context.
+    /// - `current_sn`: The current RTP sequence number.
+    /// - `current_ip_id`: The current IP Identification value.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the UO-1-ID packet.
+    /// - `Err(RohcError)` if LSB encoding or packet building fails.
     fn build_compress_uo1_id(
         &self,
         context: &mut Profile1CompressorContext,
@@ -335,10 +386,21 @@ impl Profile1Handler {
             crc8: calculated_crc8,
             ..Default::default()
         };
+        // context.current_lsb_ip_id_width might be needed if it varied
         build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
     }
 
     /// Builds a ROHC Profile 1 UO-1-RTP packet.
+    ///
+    /// # Parameters
+    /// - `context`: The compressor context (immutable borrow as it primarily reads for this packet type).
+    /// - `current_sn`: The current RTP sequence number.
+    /// - `ts_scaled_val`: The calculated TS_SCALED value.
+    /// - `current_marker`: The current RTP marker bit.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing the UO-1-RTP packet.
+    /// - `Err(RohcError)` if packet building fails.
     fn build_compress_uo1_rtp(
         &self,
         context: &Profile1CompressorContext,
@@ -374,6 +436,14 @@ impl Profile1Handler {
     }
 
     /// Parses an IR packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core IR packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing the IR packet fails (e.g., `RohcParsingError::InvalidProfileId`, `CrcMismatch`).
     fn parse_and_reconstruct_ir(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -398,6 +468,14 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-0 packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-0 packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, LSB decoding, or CRC validation fails.
     fn parse_and_reconstruct_uo0(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -443,6 +521,14 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-SN packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-SN packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, LSB decoding, or CRC validation fails.
     fn parse_and_reconstruct_uo1_sn(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -484,6 +570,14 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-TS packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-TS packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, LSB decoding, or CRC validation fails.
     fn parse_and_reconstruct_uo1_ts(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -529,6 +623,14 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-ID packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-ID packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, LSB decoding, or CRC validation fails.
     fn parse_and_reconstruct_uo1_id(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -576,6 +678,14 @@ impl Profile1Handler {
     }
 
     /// Parses a UO-1-RTP packet, updates decompressor context, and reconstructs headers.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-RTP packet.
+    ///
+    /// # Returns
+    /// - `Ok(RtpUdpIpv4Headers)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, TS reconstruction, or CRC validation fails.
     fn parse_and_reconstruct_uo1_rtp(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -675,6 +785,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses an IR packet, updates context, and transitions to FullContext mode.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core IR packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing or reconstructing the IR packet fails.
     fn decompress_as_ir(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -700,6 +818,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses a UO-0 packet in Full Context mode, handling state transitions.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-0 packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, reconstruction, or state handling leads to an error.
     fn decompress_as_uo0(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -711,6 +837,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses a UO-1-SN packet in Full Context mode, handling state transitions.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-SN packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, reconstruction, or state handling leads to an error.
     fn decompress_as_uo1_sn(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -722,6 +856,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses a UO-1-TS packet in Full Context mode, handling state transitions.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-TS packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, reconstruction, or state handling leads to an error.
     fn decompress_as_uo1_ts(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -733,6 +875,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses a UO-1-ID packet in Full Context mode, handling state transitions.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-ID packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, reconstruction, or state handling leads to an error.
     fn decompress_as_uo1_id(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -744,6 +894,14 @@ impl Profile1Handler {
     }
 
     /// Decompresses a UO-1-RTP packet in Full Context mode, handling state transitions.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the core UO-1-RTP packet.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers.
+    /// - `Err(RohcError)` if parsing, reconstruction, or state handling leads to an error.
     fn decompress_as_uo1_rtp(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -771,6 +929,15 @@ impl Profile1Handler {
     }
 
     /// Handles decompression logic when the decompressor is in Static Context (SC) state.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the ROHC packet.
+    /// - `discriminated_type`: The packet type determined from the first byte.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on successful decompression and context update.
+    /// - `Err(RohcError)` if parsing, reconstruction, or a state violation occurs (e.g., UO-0 in SC mode).
     fn decompress_in_sc_state(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -811,20 +978,19 @@ impl Profile1Handler {
                     res.map(GenericUncompressedHeaders::RtpUdpIpv4)
                 }
                 Profile1PacketType::Uo0 => {
-                    is_failure_of_dynamic_updater_parse = false; // UO-0 is not expected to update dynamic context from SC
+                    is_failure_of_dynamic_updater_parse = false;
                     Err(RohcError::InvalidState(
                     "UO-0 packet received in StaticContext mode; cannot establish dynamic context.".to_string()
                 ))
                 }
                 Profile1PacketType::Unknown(val) => {
-                    is_failure_of_dynamic_updater_parse = true; // Assume unknown might have been an updater
+                    is_failure_of_dynamic_updater_parse = true;
                     Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                         discriminator: val,
                         profile_id: Some(self.profile_id().into()),
                     }))
                 }
                 Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-                    // This case should be handled by the main decompress function before mode-specific logic
                     unreachable!("IR packet routed to decompress_in_sc_state.");
                 }
             };
@@ -833,23 +999,20 @@ impl Profile1Handler {
             Ok(headers) => {
                 context.sc_to_nc_k_failures = 0;
                 context.sc_to_nc_n_window_count = 0;
-                // If a dynamically updating UO-1 packet or a UO-1-RTP (which updates TS via scaled) is successful
                 if discriminated_type.is_dynamically_updating_type()
                     && (discriminated_type.is_uo1()
                         || discriminated_type
                             == Profile1PacketType::Uo1Rtp {
                                 marker: context.last_reconstructed_rtp_marker,
                             })
-                // Check if it's UO-1-RTP explicitly if it has specific conditions.
                 {
                     context.mode = Profile1DecompressorMode::FullContext;
-                    context.fc_packets_successful_streak = 1; // Start streak for potential SO transition
+                    context.fc_packets_successful_streak = 1;
                 }
                 Ok(headers)
             }
             Err(ref e) => {
                 context.sc_to_nc_n_window_count = context.sc_to_nc_n_window_count.saturating_add(1);
-                // Only count failures for packets that *could* have updated dynamic context
                 if is_failure_of_dynamic_updater_parse && !matches!(e, RohcError::InvalidState(_)) {
                     context.sc_to_nc_k_failures = context.sc_to_nc_k_failures.saturating_add(1);
                 }
@@ -858,7 +1021,6 @@ impl Profile1Handler {
                     context.mode = Profile1DecompressorMode::NoContext;
                     context.reset_for_nc_transition();
                 } else if context.sc_to_nc_n_window_count >= P1_DECOMPRESSOR_SC_TO_NC_N2 {
-                    // Reset window counters if N2 is reached without K2 failures
                     context.sc_to_nc_k_failures = 0;
                     context.sc_to_nc_n_window_count = 0;
                 }
@@ -868,6 +1030,15 @@ impl Profile1Handler {
     }
 
     /// Handles decompression logic when the decompressor is in Second Order (SO) state.
+    ///
+    /// # Parameters
+    /// - `context`: The mutable decompressor context.
+    /// - `packet_bytes`: The byte slice of the ROHC packet.
+    /// - `discriminated_type`: The packet type determined from the first byte.
+    ///
+    /// # Returns
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on successful decompression and context update.
+    /// - `Err(RohcError)` if parsing, reconstruction, or a state violation occurs.
     fn decompress_in_so_state(
         &self,
         context: &mut Profile1DecompressorContext,
@@ -1050,8 +1221,8 @@ impl ProfileHandler for Profile1Handler {
     /// - `headers`: The `GenericUncompressedHeaders` to be compressed.
     ///
     /// # Returns
-    /// A `Result` containing the ROHC-compressed packet as a `Vec<u8>`,
-    /// or a `RohcError` if compression fails.
+    /// - `Ok(Vec<u8>)` containing the ROHC-compressed packet on success.
+    /// - `Err(RohcError)` if compression fails.
     fn compress(
         &self,
         context_dyn: &mut dyn RohcCompressorContext,
@@ -1092,8 +1263,8 @@ impl ProfileHandler for Profile1Handler {
     /// - `packet_bytes`: A slice containing the ROHC packet data to decompress.
     ///
     /// # Returns
-    /// A `Result` containing the reconstructed `GenericUncompressedHeaders`,
-    /// or a `RohcError` if decompression fails.
+    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on success.
+    /// - `Err(RohcError)` if decompression fails.
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
