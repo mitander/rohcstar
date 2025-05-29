@@ -64,17 +64,17 @@ pub struct Profile1CompressorContext {
     pub p_ts: i64,
     /// Current number of LSBs used for SN encoding.
     pub current_lsb_sn_width: u8,
-    /// Current number of LSBs used for TS encoding (if applicable).
+    /// Current number of LSBs used for TS encoding (if applicable for current packet type).
     pub current_lsb_ts_width: u8,
     /// Full value of the IP Identification of the last sent packet.
     pub last_sent_ip_id_full: u16,
     /// W-LSB `p` offset for IP-ID encoding/decoding.
     pub p_ip_id: i64,
-    /// Current number of LSBs used for IP-ID encoding (if applicable).
+    /// Current number of LSBs used for IP-ID encoding (if applicable for current packet type).
     pub current_lsb_ip_id_width: u8,
     /// Number of First Order (FO) packets sent since the last IR packet.
     pub fo_packets_sent_since_ir: u32,
-    /// Configured interval for sending IR refresh packets.
+    /// Configured interval for sending IR refresh packets (0 means no periodic refresh based on count).
     pub ir_refresh_interval: u32,
     /// Number of consecutive FO packets sent (used for FO -> SO transition).
     pub consecutive_fo_packets_sent: u32,
@@ -82,18 +82,14 @@ pub struct Profile1CompressorContext {
     pub last_accessed: Instant,
 
     // --- TS Stride specific fields (RFC 3095, Section 4.5.4) ---
-    /// Detected timestamp stride (constant TS increment between packets).
-    /// `None` if no stride is currently detected or active.
+    /// Detected timestamp stride (constant TS increment); `None` if no stride active.
     pub ts_stride: Option<u32>,
-    /// Base timestamp (`TS_Offset` in RFC 3095, 4.5.4) for TS_SCALED calculation.
-    /// This is the timestamp of the packet *before* the first packet that contributed
-    /// to establishing the current `ts_stride`.
+    /// Base timestamp (`TS_Offset`) for TS_SCALED calculation. This is the RTP Timestamp
+    /// of the packet immediately *preceding* the first packet that established the current `ts_stride`.
     pub ts_offset: Timestamp,
     /// Number of consecutive packets observed with the current `ts_stride`.
-    /// Used to reach `P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD`.
     pub ts_stride_packets: u32,
-    /// Flag indicating if TS_SCALED compression mode is currently active.
-    /// Becomes true once `ts_stride_packets` reaches `P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD`.
+    /// Flag indicating if TS_SCALED compression mode is currently active for outgoing packets.
     pub ts_scaled_mode: bool,
 }
 
@@ -106,7 +102,8 @@ impl Profile1CompressorContext {
     ///
     /// # Parameters
     /// * `cid` - The Context Identifier (CID) for this flow.
-    /// * `ir_refresh_interval` - The packet interval for sending IR refresh packets.
+    /// * `ir_refresh_interval` - The packet interval for sending IR refresh packets. A value of 0
+    ///   disables periodic refresh based on packet count, though IRs may still be sent for other reasons.
     /// * `creation_time` - The `Instant` at which this context is being created, used for `last_accessed`.
     pub fn new(cid: u16, ir_refresh_interval: u32, creation_time: Instant) -> Self {
         Self {
@@ -131,7 +128,6 @@ impl Profile1CompressorContext {
             ir_refresh_interval,
             consecutive_fo_packets_sent: 0,
             last_accessed: creation_time,
-            // Initialize TS Stride fields
             ts_stride: None,
             ts_offset: Timestamp::new(0),
             ts_stride_packets: 0,
@@ -167,7 +163,7 @@ impl Profile1CompressorContext {
 
         // Reset TS stride detection state
         self.ts_stride = None;
-        self.ts_offset = Timestamp::new(0);
+        self.ts_offset = Timestamp::new(0); // Will be properly set by first call to update_ts_stride_detection
         self.ts_stride_packets = 0;
         self.ts_scaled_mode = false;
     }
@@ -202,11 +198,15 @@ impl Profile1CompressorContext {
     /// # Returns
     /// `true` if TS scaled mode became active *during this specific update*, `false` otherwise.
     pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
-        if self.last_sent_rtp_ts_full.value() == 0 && self.rtp_ssrc == 0 {
-            // Not enough history to detect stride if context wasn't properly seeded (e.g., before first IR)
-            // or if last_sent_ts was genuinely zero (which could be valid after initialization).
-            // The key is having a non-zero rtp_ssrc which indicates a flow has started.
-            // And last_sent_rtp_ts_full should be the TS of the *previous* packet.
+        if self.rtp_ssrc == 0 {
+            // SSRC must be known to start stride detection
+            return false;
+        }
+        if self.last_sent_rtp_ts_full.value() == 0 && self.ts_stride_packets == 0 {
+            // If it's the very first packet for this SSRC (last_sent_ts_full is 0 from init,
+            // and ts_stride_packets is 0), we can't calculate a diff yet.
+            // The 'last_sent_rtp_ts_full' will be updated with current_packet_ts after this call,
+            // and the *next* packet will allow for diff calculation.
             return false;
         }
 
@@ -215,33 +215,33 @@ impl Profile1CompressorContext {
 
         match self.ts_stride {
             None => {
-                // No stride currently suspected. Attempt to establish one.
                 if ts_diff > 0 {
                     self.ts_stride = Some(ts_diff);
-                    self.ts_offset = self.last_sent_rtp_ts_full; // TS of the packet *before* current one
+                    self.ts_offset = self.last_sent_rtp_ts_full;
                     self.ts_stride_packets = 1;
-                    self.ts_scaled_mode = false; // Not active yet, needs more confidence
+                    self.ts_scaled_mode = false;
                 }
-                // If ts_diff is not positive, no stride can be started. State remains None.
             }
             Some(current_established_stride) => {
                 if current_established_stride == ts_diff && ts_diff > 0 {
-                    // Consistent positive stride detected.
                     self.ts_stride_packets += 1;
                     if self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
                         && !self.ts_scaled_mode
-                    // Only activate if not already active
                     {
                         self.ts_scaled_mode = true;
                         newly_activated_scaled_mode = true;
-                        // ts_offset remains as set when the stride was first suspected.
                     }
                 } else {
-                    // Stride broken (different diff or not positive). Reset detection.
                     self.ts_stride = None;
-                    self.ts_offset = Timestamp::new(0); // Reset offset
+                    self.ts_offset = Timestamp::new(0);
                     self.ts_stride_packets = 0;
                     self.ts_scaled_mode = false;
+                    // Attempt to start new stride detection if current diff is positive
+                    if ts_diff > 0 {
+                        self.ts_stride = Some(ts_diff);
+                        self.ts_offset = self.last_sent_rtp_ts_full;
+                        self.ts_stride_packets = 1;
+                    }
                 }
             }
         }
@@ -266,45 +266,37 @@ impl Profile1CompressorContext {
             return None;
         }
 
-        // If ts_scaled_mode is true, ts_stride must be Some.
         let stride_val = self
             .ts_stride
             .expect("ts_stride cannot be None if ts_scaled_mode is true");
+        debug_assert!(
+            stride_val > 0,
+            "Stride value must be positive in scaled mode"
+        );
         if stride_val == 0 {
-            // Stride of zero is invalid for TS_SCALED calculation.
+            // Should be caught by debug_assert, but defensive check
             return None;
         }
 
         let offset_from_base = current_packet_ts.wrapping_diff(self.ts_offset);
 
-        // The current packet's timestamp must be a positive, integer multiple of strides
-        // away from the ts_offset for TS_SCALED to be valid.
-        if offset_from_base % stride_val != 0 ||
-           (offset_from_base == 0 && current_packet_ts != self.ts_offset) || // current_ts == ts_offset is TS_SCALED = 0
-           (current_packet_ts.value() < self.ts_offset.value() && offset_from_base != 0)
-        // Handle wrap-around correctly
-        {
-            // If current_packet_ts is less than ts_offset (and they are not equal),
-            // it means TS went "backwards" or wrapped around in an unexpected way
-            // relative to the stride base, unless the difference is a very large positive number due to wrap.
-            // A simpler check for non-negative progression could be just:
-            // if current_packet_ts.value() < self.ts_offset.value() && (offset_from_base / stride_val) == 0 {
-            //     // Not robust enough for all wrap cases
-            // }
-            // The modulo check covers alignment. The second part of the condition attempts
-            // to ensure that TS is advancing.
-            if offset_from_base > 0
-                && (offset_from_base / stride_val) < self.ts_stride_packets
-                && self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
-            {
-                // If TS_SCALED value is less than packets seen to establish stride, implies TS jump backwards or irregular.
-                // This check may be too aggressive. The modulo check is key.
-                // Revisit this if it causes issues with valid wrap-around cases.
-            } else if offset_from_base == 0 && current_packet_ts != self.ts_offset {
-                return None; // Should not happen if ts_offset means the packet *before* first stride packet.
-            } else if offset_from_base % stride_val != 0 {
-                return None; // Not aligned
-            }
+        if offset_from_base % stride_val != 0 {
+            return None; // Not aligned with stride
+        }
+        // This check tries to ensure TS is generally advancing or at least not regressing
+        // in a way that makes the scaled value meaningless before wrapping.
+        // If current_ts is less than ts_offset, but the diff is not 0 (meaning they are not equal),
+        // it implies a wrap-around that could be valid if it still aligns.
+        // However, a simple "less than" check is tricky with wrapping.
+        // The main guard is the modulo check. If TS truly jumped back non-aligned, modulo fails.
+        // If it jumped back aligned, scaled value might be very large.
+        if current_packet_ts.value() < self.ts_offset.value() && offset_from_base != 0 {
+            // If current_ts < ts_offset, but the wrapping_diff results in a small positive
+            // number (e.g. ts_offset=U32_MAX-10, current_ts=5, diff=15), it's a valid forward wrap.
+            // If current_ts < ts_offset and diff is huge (meaning it's truly before),
+            // then scaled_value_u32 would be large and caught by P1_TS_SCALED_MAX_VALUE.
+            // This condition might be too restrictive or needs more nuance for all wrapping cases.
+            // For now, relying on modulo and max value check.
         }
 
         let scaled_value_u32 = offset_from_base / stride_val;
@@ -312,8 +304,7 @@ impl Profile1CompressorContext {
         if scaled_value_u32 <= P1_TS_SCALED_MAX_VALUE {
             Some(scaled_value_u32 as u8)
         } else {
-            // TS_SCALED would overflow the 8-bit field.
-            None
+            None // TS_SCALED would overflow the 8-bit field.
         }
     }
 }
@@ -425,15 +416,12 @@ pub struct Profile1DecompressorContext {
     pub last_accessed: Instant,
 
     // --- TS Stride specific fields ---
-    /// Timestamp stride established from an IR-DYN packet or inferred.
-    /// `None` if no stride is currently established or considered active by the decompressor.
+    /// Timestamp stride established from an IR-DYN packet or inferred; `None` if not active.
     pub ts_stride: Option<u32>,
-    /// Base timestamp (`TS_Offset`) for reconstructing TS from TS_SCALED.
-    /// Set by IR-DYN or during inference.
+    /// Base timestamp (`TS_Offset`) for reconstructing TS from TS_SCALED. Set by IR-DYN or inference.
     pub ts_offset: Timestamp,
-    /// Flag indicating if the decompressor expects and can use TS_SCALED values.
-    /// This is typically set to true if an IR-DYN packet with a TS_STRIDE extension
-    /// is successfully processed, or if a UO-1-RTP packet is successfully decoded.
+    /// Flag indicating if the decompressor expects/uses TS_SCALED values.
+    /// Activated by IR-DYN with TS_STRIDE or successful UO-1-RTP decoding.
     pub ts_scaled_mode: bool,
 }
 
@@ -473,8 +461,7 @@ impl Profile1DecompressorContext {
             so_consecutive_failures: 0,
             sc_to_nc_k_failures: 0,
             sc_to_nc_n_window_count: 0,
-            last_accessed: Instant::now(), // Initialized on creation
-            // Initialize TS Stride fields
+            last_accessed: Instant::now(),
             ts_stride: None,
             ts_offset: Timestamp::new(0),
             ts_scaled_mode: false,
@@ -486,8 +473,8 @@ impl Profile1DecompressorContext {
     /// Static fields are populated from the IR packet. Dynamic fields related to
     /// RTP (SN, TS, Marker) are also set. IP-ID is typically reset for Profile 1
     /// as it's not part of the IR-DYN dynamic chain.
-    /// TS Stride fields are reset here; they will be updated if the IR packet
-    /// contains a TS_STRIDE extension.
+    /// If the IR packet contains a TS_STRIDE extension, the decompressor's
+    /// TS stride information (`ts_stride`, `ts_offset`, `ts_scaled_mode`) is updated accordingly.
     /// The `last_accessed` time is **not** updated by this method; the caller should handle that.
     ///
     /// # Parameters
@@ -507,7 +494,7 @@ impl Profile1DecompressorContext {
         self.last_reconstructed_rtp_sn_full = ir_packet.dyn_rtp_sn;
         self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
         self.last_reconstructed_rtp_marker = ir_packet.dyn_rtp_marker;
-        self.last_reconstructed_ip_id_full = 0; // IP-ID not in P1 IR dynamic chain, reset/default.
+        self.last_reconstructed_ip_id_full = 0;
 
         self.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         self.p_sn = P1_DEFAULT_P_SN_OFFSET;
@@ -516,11 +503,9 @@ impl Profile1DecompressorContext {
         self.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
         self.p_ip_id = P1_DEFAULT_P_IPID_OFFSET;
 
-        // Reset TS stride related fields. These will be updated if the IR packet
-        // (specifically IR-DYN) carries a TS_STRIDE extension.
-        self.ts_stride = ir_packet.ts_stride; // Updated to use stride from IR if present
-        self.ts_offset = ir_packet.dyn_rtp_timestamp; // Base is IR's TS if stride is set/inferred
-        self.ts_scaled_mode = ir_packet.ts_stride.is_some(); // Activate if IR carried stride
+        self.ts_stride = ir_packet.ts_stride;
+        self.ts_offset = ir_packet.dyn_rtp_timestamp;
+        self.ts_scaled_mode = ir_packet.ts_stride.is_some();
     }
 
     /// Resets dynamic fields and state machine counters when transitioning to NoContext (NC) mode.
@@ -541,7 +526,6 @@ impl Profile1DecompressorContext {
         self.sc_to_nc_k_failures = 0;
         self.sc_to_nc_n_window_count = 0;
 
-        // Reset TS stride fields
         self.ts_stride = None;
         self.ts_offset = Timestamp::new(0);
         self.ts_scaled_mode = false;
@@ -560,10 +544,14 @@ impl Profile1DecompressorContext {
     /// `Some(Timestamp)` with the reconstructed timestamp if `ts_stride` is known.
     /// `None` if `ts_stride` is `None` (meaning stride is not established).
     pub fn reconstruct_ts_from_scaled(&self, ts_scaled_received: u8) -> Option<Timestamp> {
-        let stride_val = self.ts_stride?; // If no stride, cannot reconstruct.
+        let stride_val = self.ts_stride?;
+        debug_assert!(
+            stride_val > 0,
+            "Stride must be positive for scaled TS reconstruction"
+        );
 
         let reconstructed_ts_val = self
-            .ts_offset // ts_offset is the TS of the packet before the stride sequence started
+            .ts_offset
             .value()
             .wrapping_add(ts_scaled_received as u32 * stride_val);
         Some(Timestamp::new(reconstructed_ts_val))
@@ -583,35 +571,42 @@ impl Profile1DecompressorContext {
     /// # Parameters
     /// * `new_ts` - The timestamp of the most recently successfully decompressed packet.
     pub fn infer_ts_stride_from_decompressed_ts(&mut self, new_ts: Timestamp) {
-        if self.last_reconstructed_rtp_ts_full.value() == 0 && self.rtp_ssrc == 0 {
-            // Not enough history or context not fully initialized to infer a stride reliably.
+        if self.rtp_ssrc == 0 {
+            // SSRC must be known from IR to start reliable inference.
+            return;
+        }
+        // If last_reconstructed_rtp_ts_full is 0 and mode is NoContext or StaticContext,
+        // it implies this might be the first dynamic update after an IR (or IR-STATIC).
+        // In such cases, ts_offset is already set to the IR's timestamp by initialize_from_ir_packet.
+        // We need a previous TS to calculate a diff.
+        if self.mode != Profile1DecompressorMode::FullContext
+            && self.mode != Profile1DecompressorMode::SecondOrder
+            && self.last_reconstructed_rtp_ts_full.value() == 0
+            && self.ts_stride.is_none()
+        {
+            // Cannot infer stride without a previous TS to diff against.
+            // This often happens after an IR-STATIC or if first packet is not IR.
             return;
         }
 
         let ts_diff = new_ts.wrapping_diff(self.last_reconstructed_rtp_ts_full);
 
         if ts_diff > 0 {
-            // A positive difference might indicate a new or continuing stride.
             if self.ts_stride.is_none() {
-                // No current stride inferred; this is the first positive diff observed.
                 self.ts_stride = Some(ts_diff);
-                // The base for this newly inferred stride is the TS of the *previous* packet.
                 self.ts_offset = self.last_reconstructed_rtp_ts_full;
             } else if self.ts_stride == Some(ts_diff) {
-                // The observed difference matches the currently inferred stride.
-                // No change needed to ts_stride or ts_offset for inference.
+                // Consistent stride, no change to offset or stride needed.
             } else {
-                // The observed difference is positive but *different* from the currently inferred stride.
-                // This means the previous inferred stride is broken. Reset and try to infer new.
-                self.ts_stride = Some(ts_diff);
-                self.ts_offset = self.last_reconstructed_rtp_ts_full;
+                // ts_diff > 0 but different from current_stride
+                self.ts_stride = Some(ts_diff); // New stride inferred
+                self.ts_offset = self.last_reconstructed_rtp_ts_full; // New base for this new stride
             }
         } else {
-            // ts_diff is <= 0
-            // Timestamp did not increase or it decreased. This breaks any positive stride inference.
-            // If a stride was previously inferred, it's now invalid.
+            // ts_diff <= 0
             if self.ts_stride.is_some() {
-                self.ts_stride = None;
+                // If a stride was previously inferred
+                self.ts_stride = None; // Stride broken
                 self.ts_offset = Timestamp::new(0); // Reset offset
             }
         }
@@ -811,12 +806,12 @@ mod tests {
         assert_eq!(comp_ctx.ts_stride_packets, 4);
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1640);
 
-        // Packet 5 (ts_diff = 100) -> Stride broken
+        // Packet 5 (ts_diff = 100) -> Stride broken, attempts to start new
         assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1740)));
-        assert_eq!(comp_ctx.ts_stride, None); // Resets
-        assert_eq!(comp_ctx.ts_offset, Timestamp::new(0));
-        assert_eq!(comp_ctx.ts_stride_packets, 0);
-        assert!(!comp_ctx.ts_scaled_mode); // Deactivated
+        assert_eq!(comp_ctx.ts_stride, Some(100)); // New stride detected
+        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1640)); // Offset is prev TS
+        assert_eq!(comp_ctx.ts_stride_packets, 1);
+        assert!(!comp_ctx.ts_scaled_mode); // Deactivated, new stride not yet confirmed
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1740);
 
         // Packet 6 (ts_diff = 80 from 1740) -> New stride detection starts
@@ -831,41 +826,24 @@ mod tests {
     fn compressor_calculate_ts_scaled_logic() {
         let mut comp_ctx = Profile1CompressorContext::new(1, 20, Instant::now());
         comp_ctx.rtp_ssrc = 0x1234;
-        // Manually set up an active stride for testing calculate_ts_scaled directly
         comp_ctx.ts_stride = Some(160);
         comp_ctx.ts_offset = Timestamp::new(1000);
-        comp_ctx.ts_stride_packets = P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD; // Ensure it's established
+        comp_ctx.ts_stride_packets = P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD;
         comp_ctx.ts_scaled_mode = true;
 
-        // TS_SCALED = (current_ts - ts_offset) / stride
-        // current_ts = 1000, ts_offset = 1000. (1000-1000)/160 = 0
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1000)), Some(0));
-        // current_ts = 1160, ts_offset = 1000. (1160-1000)/160 = 1
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1160)), Some(1));
-        // current_ts = 1480, ts_offset = 1000. (1480-1000)/160 = 3
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1480)), Some(3));
 
-        let far_ts = Timestamp::new(1000 + 200 * 160); // TS_SCALED = 200
+        let far_ts = Timestamp::new(1000 + 200 * 160);
         assert_eq!(comp_ctx.calculate_ts_scaled(far_ts), Some(200));
 
-        // TS_SCALED overflow
-        let overflow_ts = Timestamp::new(1000 + 300 * 160); // TS_SCALED = 300
+        let overflow_ts = Timestamp::new(1000 + 300 * 160);
         assert_eq!(comp_ctx.calculate_ts_scaled(overflow_ts), None);
 
-        // TS not aligned with stride
-        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1650)), None);
+        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1650)), None); // Not aligned
+        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(900)), None); // Before offset
 
-        // TS before offset (current_ts < ts_offset) -> should result in None if offset_from_base would be negative
-        // The current logic `offset_from_base / stride_val` for u32 can produce large positive on underflow.
-        // The added check `current_packet_ts.value() < self.ts_offset.value() && offset_from_base != 0`
-        // handles this.
-        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(900)), None);
-        assert_eq!(
-            comp_ctx.calculate_ts_scaled(Timestamp::new(1000 - 160)),
-            None
-        );
-
-        // Test when mode is not active
         comp_ctx.ts_scaled_mode = false;
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1160)), None);
     }
@@ -873,30 +851,26 @@ mod tests {
     #[test]
     fn decompressor_infer_ts_stride_logic() {
         let mut decomp_ctx = Profile1DecompressorContext::new(1);
-        decomp_ctx.rtp_ssrc = 0x1234; // Simulate initialized SSRC
+        decomp_ctx.rtp_ssrc = 0x1234;
         decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
 
-        // Infer first stride
         decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160));
         assert_eq!(decomp_ctx.ts_stride, Some(160));
         assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000));
-        assert!(!decomp_ctx.ts_scaled_mode); // Inference alone does not activate mode
+        assert!(!decomp_ctx.ts_scaled_mode);
         decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1160);
 
-        // Confirm stride by same diff
         decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1320));
-        assert_eq!(decomp_ctx.ts_stride, Some(160)); // Stays the same
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000)); // Offset remains from first inference
+        assert_eq!(decomp_ctx.ts_stride, Some(160));
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000));
         decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1320);
 
-        // Break stride with a different positive diff
         decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1400)); // Diff is 80
-        assert_eq!(decomp_ctx.ts_stride, Some(80)); // New stride inferred
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1320)); // New base
+        assert_eq!(decomp_ctx.ts_stride, Some(80));
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1320));
         decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1400);
 
-        // Break stride with zero diff
-        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1400));
+        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1400)); // Zero diff
         assert_eq!(decomp_ctx.ts_stride, None);
         assert_eq!(decomp_ctx.ts_offset, Timestamp::new(0));
     }
@@ -904,10 +878,8 @@ mod tests {
     #[test]
     fn decompressor_reconstruct_ts_from_scaled_logic() {
         let mut decomp_ctx = Profile1DecompressorContext::new(1);
-        // Simulate stride established by IR-DYN or prior UO-1-RTP
         decomp_ctx.ts_stride = Some(160);
         decomp_ctx.ts_offset = Timestamp::new(1000);
-        // decomp_ctx.ts_scaled_mode = true; // This flag doesn't directly affect reconstruction math itself
 
         assert_eq!(
             decomp_ctx.reconstruct_ts_from_scaled(0),
@@ -922,7 +894,6 @@ mod tests {
             Some(Timestamp::new(1800))
         );
 
-        // If no stride is established in context
         decomp_ctx.ts_stride = None;
         assert_eq!(decomp_ctx.reconstruct_ts_from_scaled(1), None);
     }
@@ -959,7 +930,7 @@ mod tests {
     fn context_trait_downcasting_decompressor() {
         let mut decomp_ctx: Box<dyn RohcDecompressorContext> =
             Box::new(Profile1DecompressorContext::new(2));
-        decomp_ctx.set_cid(3); // Example of using trait method
+        decomp_ctx.set_cid(3);
 
         let specific_ctx_mut = decomp_ctx
             .as_any_mut()
@@ -967,7 +938,7 @@ mod tests {
         assert!(specific_ctx_mut.is_some());
         if let Some(ctx) = specific_ctx_mut {
             assert_eq!(ctx.cid, 3);
-            ctx.mode = Profile1DecompressorMode::StaticContext; // Modify specific field
+            ctx.mode = Profile1DecompressorMode::StaticContext;
             assert_eq!(ctx.mode, Profile1DecompressorMode::StaticContext);
         }
     }
