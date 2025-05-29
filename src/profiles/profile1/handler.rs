@@ -75,9 +75,20 @@ impl Profile1Handler {
             return true;
         }
 
+        if context.ts_scaled_mode
+            && context
+                .calculate_ts_scaled(uncompressed_headers.rtp_timestamp)
+                .is_none()
+        {
+            return true;
+        }
+
         let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT;
         if sn_k > 0 && sn_k < 16 {
-            let max_safe_sn_delta: u16 = 1 << (sn_k.saturating_sub(1));
+            // RFC 3095 Section 4.5.1 W-LSB, parameter p typically 0 or 1.
+            // Max delta is roughly 2^(k-1) - 1 before ambiguity or needing IR for safety.
+            // max_safe_sn_delta is window_size / 2.
+            let max_safe_sn_delta: u16 = (1u16 << sn_k).saturating_sub(1) / 2;
             let current_sn = uncompressed_headers.rtp_sequence_number;
             let diff_sn_abs = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
             let diff_sn_abs_alt = context.last_sent_rtp_sn_full.wrapping_sub(current_sn);
@@ -87,7 +98,7 @@ impl Profile1Handler {
         }
         let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT;
         if ts_k > 0 && ts_k < 32 {
-            let max_safe_ts_delta: u32 = 1 << (ts_k.saturating_sub(1));
+            let max_safe_ts_delta: u32 = (1u32 << ts_k).saturating_sub(1) / 2;
             let current_ts_val = uncompressed_headers.rtp_timestamp.value();
             let last_ts_val = context.last_sent_rtp_ts_full.value();
             let diff_ts_abs = current_ts_val.wrapping_sub(last_ts_val);
@@ -96,10 +107,11 @@ impl Profile1Handler {
                 return true;
             }
         }
+
         if uncompressed_headers.ip_identification != context.last_sent_ip_id_full {
             let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
             if ipid_k > 0 && ipid_k < 16 {
-                let max_safe_ipid_delta: u16 = 1 << (ipid_k.saturating_sub(1));
+                let max_safe_ipid_delta: u16 = (1u16 << ipid_k).saturating_sub(1) / 2;
                 let current_ip_id = uncompressed_headers.ip_identification;
                 let diff_ipid_abs = current_ip_id.wrapping_sub(context.last_sent_ip_id_full);
                 let diff_ipid_abs_alt = context.last_sent_ip_id_full.wrapping_sub(current_ip_id);
@@ -129,18 +141,19 @@ impl Profile1Handler {
         let ssrc_changed_or_initial =
             context.rtp_ssrc == 0 || context.rtp_ssrc != uncompressed_headers.rtp_ssrc;
 
-        let ir_packet_ts_stride_to_send: Option<u32>;
-
         if ssrc_changed_or_initial {
+            // Full reinitialization, including resetting any prior stride detection.
             context.initialize_context_from_uncompressed_headers(uncompressed_headers);
-            ir_packet_ts_stride_to_send = None;
-        } else if context.ts_scaled_mode {
-            ir_packet_ts_stride_to_send = context.ts_stride;
-        } else {
-            ir_packet_ts_stride_to_send = None;
         }
 
+        // Update stride detection by comparing current and previous packet TS.
         context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp);
+
+        let ir_packet_signals_ts_stride: Option<u32> = if context.ts_scaled_mode {
+            context.ts_stride
+        } else {
+            None
+        };
 
         let ir_data = IrPacket {
             cid: context.cid,
@@ -154,7 +167,7 @@ impl Profile1Handler {
             dyn_rtp_sn: uncompressed_headers.rtp_sequence_number,
             dyn_rtp_timestamp: uncompressed_headers.rtp_timestamp,
             dyn_rtp_marker: uncompressed_headers.rtp_marker,
-            ts_stride: ir_packet_ts_stride_to_send,
+            ts_stride: ir_packet_signals_ts_stride,
         };
 
         let rohc_packet_bytes = build_profile1_ir_packet(&ir_data, &self.crc_calculators)
@@ -168,6 +181,12 @@ impl Profile1Handler {
         context.mode = Profile1CompressorMode::FirstOrder;
         context.fo_packets_sent_since_ir = 0;
         context.consecutive_fo_packets_sent = 0;
+
+        if ir_packet_signals_ts_stride.is_some() {
+            // TS_STRIDE was signaled, set compressor ts_offset to the TS of this IR packet
+            // because this is what the decompressor will use as its reference.
+            context.ts_offset = uncompressed_headers.rtp_timestamp;
+        }
 
         Ok(rohc_packet_bytes)
     }
@@ -1422,35 +1441,45 @@ mod tests {
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
             .unwrap();
+
         comp_ctx.rtp_ssrc = 0x12345678;
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1000);
+        comp_ctx.ip_source = "1.2.3.4".parse().unwrap();
+        comp_ctx.ip_destination = "5.6.7.8".parse().unwrap();
+        comp_ctx.udp_source_port = 100;
+        comp_ctx.udp_destination_port = 200;
+
         comp_ctx.update_ts_stride_detection(Timestamp::new(1160));
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1160);
         comp_ctx.update_ts_stride_detection(Timestamp::new(1320));
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1320);
         comp_ctx.update_ts_stride_detection(Timestamp::new(1480));
-        assert!(comp_ctx.ts_scaled_mode);
+
+        assert!(comp_ctx.ts_scaled_mode,);
         assert_eq!(comp_ctx.ts_stride, Some(160));
         assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000));
 
-        let headers_ir = create_test_rtp_headers(200, Timestamp::new(3000), false);
+        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1480);
+
+        let ir_packet_ts_val = 1480 + 160;
+        let ir_packet_ts = Timestamp::new(ir_packet_ts_val);
+
+        let headers_ir = create_test_rtp_headers(200, ir_packet_ts, false);
         let generic_headers_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir.clone());
 
-        comp_ctx_dyn
-            .as_any_mut()
-            .downcast_mut::<Profile1CompressorContext>()
-            .unwrap()
-            .mode = Profile1CompressorMode::InitializationAndRefresh;
+        comp_ctx.mode = Profile1CompressorMode::InitializationAndRefresh;
 
         let compressed_ir = handler
             .compress(comp_ctx_dyn.as_mut(), &generic_headers_ir)
             .unwrap();
 
+        // 1 (Type) + 1 (Profile) + 16 (Static) + 7 (Base Dynamic) + 4 (TS Stride Ext) + 1 (CRC) = 30
+        assert_eq!(compressed_ir.len(), 30,);
+
         let rtp_flags_octet_index_in_packet = 24;
         assert_eq!(
             compressed_ir[rtp_flags_octet_index_in_packet] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
-            "TS Stride bit not set in IR"
         );
 
         let decompressed_generic_ir = handler
@@ -1459,27 +1488,17 @@ mod tests {
         let decomp_headers_ir = decompressed_generic_ir.as_rtp_udp_ipv4().unwrap();
 
         assert_eq!(decomp_headers_ir.rtp_sequence_number, 200);
-        assert_eq!(decomp_headers_ir.rtp_timestamp, Timestamp::new(3000));
+        assert_eq!(decomp_headers_ir.rtp_timestamp, ir_packet_ts,);
 
         let decomp_ctx = decomp_ctx_dyn
             .as_any()
             .downcast_ref::<Profile1DecompressorContext>()
             .unwrap();
+
         assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
-        assert!(
-            decomp_ctx.ts_scaled_mode,
-            "Decompressor TS scaled mode not activated by IR stride"
-        );
-        assert_eq!(
-            decomp_ctx.ts_stride,
-            Some(160),
-            "Decompressor TS stride not set by IR"
-        );
-        assert_eq!(
-            decomp_ctx.ts_offset,
-            Timestamp::new(3000),
-            "Decompressor TS offset not set to IR TS"
-        );
+        assert!(decomp_ctx.ts_scaled_mode,);
+        assert_eq!(decomp_ctx.ts_stride, Some(160),);
+        assert_eq!(decomp_ctx.ts_offset, ir_packet_ts,);
     }
 
     #[test]

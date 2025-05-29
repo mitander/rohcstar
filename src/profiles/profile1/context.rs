@@ -223,10 +223,14 @@ impl Profile1CompressorContext {
                 }
             }
             Some(current_established_stride) => {
-                if current_established_stride == ts_diff && ts_diff > 0 {
-                    self.ts_stride_packets += 1;
-                    if self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
-                        && !self.ts_scaled_mode
+                if ts_diff > 0
+                    && current_established_stride > 0
+                    && ts_diff % current_established_stride == 0
+                {
+                    self.ts_stride_packets = self.ts_stride_packets.saturating_add(1);
+
+                    if !self.ts_scaled_mode
+                        && self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
                     {
                         self.ts_scaled_mode = true;
                         newly_activated_scaled_mode = true;
@@ -236,7 +240,8 @@ impl Profile1CompressorContext {
                     self.ts_offset = Timestamp::new(0);
                     self.ts_stride_packets = 0;
                     self.ts_scaled_mode = false;
-                    // Attempt to start new stride detection if current diff is positive
+
+                    // Attempt to start new stride detection if current ts_diff is positive
                     if ts_diff > 0 {
                         self.ts_stride = Some(ts_diff);
                         self.ts_offset = self.last_sent_rtp_ts_full;

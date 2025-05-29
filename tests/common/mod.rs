@@ -9,7 +9,7 @@ use rohcstar::engine::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::constants::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-    P1_UO_1_SN_PACKET_TYPE_PREFIX,
+    P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, P1_UO_1_SN_PACKET_TYPE_PREFIX,
 };
 use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
@@ -69,6 +69,71 @@ pub fn create_test_engine_with_mock_clock(
     let mock_clock = Arc::new(MockClock::new(initial_mock_time));
     let engine = RohcEngine::new(ir_refresh_interval, timeout, mock_clock.clone());
     (engine, mock_clock)
+}
+
+/// Establishes a Profile 1 context in the ROHC engine where the compressor
+/// has an active TS stride and has signaled this stride to the decompressor via an IR-DYN packet.
+///
+/// # Parameters
+/// - `engine`: Mutable reference to the `RohcEngine`.
+/// - `cid`: Context ID for the flow.
+/// - `ssrc`: SSRC for the RTP flow.
+/// - `initial_sn`: Initial RTP sequence number for context establishment.
+/// - `initial_ts`: Initial RTP timestamp for context establishment. This will be the
+///   `ts_offset` in the compressor after the stride is detected using this as a base.
+/// - `stride`: The desired RTP timestamp stride to establish.
+pub fn establish_ts_stride_context(
+    engine: &mut RohcEngine,
+    cid: u16,
+    ssrc: u32,
+    initial_sn: u16,
+    initial_ts_for_first_ir: u32,
+    stride: u32,
+) {
+    let mut current_sn = initial_sn;
+    let mut current_ts = initial_ts_for_first_ir;
+    let mut last_known_ip_id;
+
+    establish_ir_context(engine, cid, current_sn, current_ts, false, ssrc);
+    last_known_ip_id = get_compressor_context(engine, cid).last_sent_ip_id_full;
+
+    for _i in 0..P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD {
+        current_sn = current_sn.wrapping_add(1);
+        current_ts = current_ts.wrapping_add(stride);
+        let headers =
+            create_rtp_headers(current_sn, current_ts, false, ssrc).with_ip_id(last_known_ip_id);
+        let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
+        // We only care about updating the compressor's internal state here.
+        let _ = engine
+            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers)
+            .unwrap();
+        last_known_ip_id = get_compressor_context(engine, cid).last_sent_ip_id_full;
+    }
+
+    // Force a new IR. Since compressor is in ts_scaled_mode, this IR will carry ts_stride.
+    // The TS of THIS IR will become the new ts_offset for BOTH compressor and decompressor.
+    current_sn = current_sn.wrapping_add(1);
+    current_ts = current_ts.wrapping_add(stride);
+
+    let headers_final_ir =
+        create_rtp_headers(current_sn, current_ts, false, ssrc).with_ip_id(last_known_ip_id);
+    let generic_final_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_final_ir);
+
+    // Force compressor into IR mode for this packet
+    let comp_ctx_dyn = engine
+        .context_manager_mut()
+        .get_compressor_context_mut(cid)
+        .unwrap();
+    let comp_ctx = comp_ctx_dyn
+        .as_any_mut()
+        .downcast_mut::<Profile1CompressorContext>()
+        .unwrap();
+    comp_ctx.mode = Profile1CompressorMode::InitializationAndRefresh;
+
+    let compressed_final_ir = engine
+        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_final_ir)
+        .unwrap();
+    let _ = engine.decompress(&compressed_final_ir).unwrap();
 }
 
 /// Creates RTP/UDP/IPv4 headers with customizable fields.
