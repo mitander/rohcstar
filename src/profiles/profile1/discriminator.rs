@@ -39,7 +39,7 @@ impl Profile1PacketType {
     /// The order of checks is important to correctly discriminate between UO-1 variants.
     ///
     /// # Parameters
-    /// * `byte` - The first byte of the core ROHC Profile 1 packet.
+    /// - `byte`: The first byte of the core ROHC Profile 1 packet.
     ///
     /// # Returns
     /// The corresponding `Profile1PacketType`.

@@ -40,7 +40,7 @@ impl CrcCalculators {
     /// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) using the pre-initialized instance.
     ///
     /// # Parameters
-    /// * `data` - A slice of bytes over which the CRC will be calculated.
+    /// - `data`: A slice of bytes over which the CRC will be calculated.
     ///
     /// # Returns
     /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
@@ -52,7 +52,7 @@ impl CrcCalculators {
     /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) using the pre-initialized instance.
     ///
     /// # Parameters
-    /// * `data` - A slice of bytes over which the CRC will be calculated.
+    /// 0 `data`: A slice of bytes over which the CRC will be calculated.
     ///
     /// # Returns
     /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
@@ -86,7 +86,7 @@ impl Default for CrcCalculators {
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// * `data` - A slice of bytes over which the CRC will be calculated.
+/// - `data`: A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
 /// The calculated 8-bit CRC value.
@@ -107,7 +107,7 @@ pub fn calculate_rohc_crc8_direct(data: &[u8]) -> u8 {
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// * `data` - A slice of bytes over which the CRC will be calculated.
+/// - `data`: A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
 /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).

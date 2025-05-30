@@ -27,7 +27,7 @@ use crate::packet_defs::RohcProfile;
 /// basic validation of header lengths and protocol types.
 ///
 /// # Parameters
-/// * `data` - A byte slice starting with the IPv4 header.
+/// - `data`: A byte slice starting with the IPv4 header.
 ///
 /// # Returns
 /// A `Result` containing the parsed `RtpUdpIpv4Headers` or a `RohcParsingError`.
@@ -209,8 +209,8 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
 /// octet and the 4-byte stride value is appended to the dynamic chain.
 ///
 /// # Parameters
-/// * `ir_data` - A reference to `IrPacket` containing all necessary field values.
-/// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 computation.
+/// - `ir_data`: A reference to `IrPacket` containing all necessary field values.
+/// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 computation.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built IR packet.
@@ -329,9 +329,9 @@ pub fn build_profile1_ir_packet(
 /// in the dynamic chain if the corresponding flag in RTP_Flags is set.
 ///
 /// # Parameters
-/// * `core_packet_bytes` - Byte slice of the core IR packet.
-/// * `cid_from_engine` - The CID determined by the ROHC engine.
-/// * `crc_calculators` - An instance of `CrcCalculators` for CRC-8 verification.
+/// - `core_packet_bytes`: Byte slice of the core IR packet.
+/// - `cid_from_engine`: The CID determined by the ROHC engine.
+/// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 verification.
 ///
 /// # Returns
 /// - `Ok(IrPacket)` containing the parsed IR packet data.
@@ -511,7 +511,7 @@ pub fn parse_profile1_ir_packet(
 /// Builds a ROHC Profile 1 UO-0 packet.
 ///
 /// # Parameters
-/// * `packet_data` - Data for the UO-0 packet.
+/// - `packet_data`: Data for the UO-0 packet.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built UO-0 packet.
@@ -573,8 +573,8 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
 /// Parses a ROHC Profile 1 UO-0 packet.
 ///
 /// # Parameters
-/// * `core_packet_data` - Byte slice of the core UO-0 packet (single byte).
-/// * `cid_from_engine` - Optional CID if Add-CID was processed by the engine.
+/// - `core_packet_data`: Byte slice of the core UO-0 packet (single byte).
+/// - `cid_from_engine`: Optional CID if Add-CID was processed by the engine.
 ///
 /// # Returns
 /// - `Ok(Uo0Packet)` containing the parsed UO-0 data.
@@ -624,7 +624,7 @@ pub fn parse_profile1_uo0_packet(
 /// Builds a ROHC Profile 1 UO-1-SN packet.
 ///
 /// # Parameters
-/// * `packet_data` - Data for the UO-1-SN packet.
+/// - `packet_data`: Data for the UO-1-SN packet.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built UO-1-SN packet.
@@ -691,7 +691,7 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 /// Parses a ROHC Profile 1 UO-1-SN packet.
 ///
 /// # Parameters
-/// * `core_packet_bytes` - Byte slice of the core UO-1-SN packet.
+/// - `core_packet_bytes`: Byte slice of the core UO-1-SN packet.
 ///
 /// # Returns
 /// - `Ok(Uo1Packet)` containing the parsed UO-1-SN data.
@@ -739,7 +739,7 @@ pub fn parse_profile1_uo1_sn_packet(
 /// Builds a ROHC Profile 1 UO-1-TS packet.
 ///
 /// # Parameters
-/// * `packet_data` - Data for the UO-1-TS packet.
+/// - `packet_data`: Data for the UO-1-TS packet.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built UO-1-TS packet.
@@ -808,7 +808,7 @@ pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 /// Parses a ROHC Profile 1 UO-1-TS packet.
 ///
 /// # Parameters
-/// * `core_packet_bytes` - Byte slice of the core UO-1-TS packet.
+/// - `core_packet_bytes`: Byte slice of the core UO-1-TS packet.
 ///
 /// # Returns
 /// - `Ok(Uo1Packet)` containing the parsed UO-1-TS data.
@@ -855,7 +855,7 @@ pub fn parse_profile1_uo1_ts_packet(
 /// Builds a ROHC Profile 1 UO-1-ID packet.
 ///
 /// # Parameters
-/// * `packet_data` - Data for the UO-1-ID packet.
+/// - `packet_data: - Data for the UO-1-ID packet.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built UO-1-ID packet.
@@ -930,7 +930,7 @@ pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
 /// Parses a ROHC Profile 1 UO-1-ID packet.
 ///
 /// # Parameters
-/// * `core_packet_bytes` - Byte slice of the core UO-1-ID packet.
+/// - `core_packet_bytes`: Byte slice of the core UO-1-ID packet.
 ///
 /// # Returns
 /// - `Ok(Uo1Packet)` containing the parsed UO-1-ID data.
@@ -977,7 +977,7 @@ pub fn parse_profile1_uo1_id_packet(
 /// Builds a ROHC Profile 1 UO-1-RTP packet.
 ///
 /// # Parameters
-/// * `packet_data` - Data for the UO-1-RTP packet.
+/// - `packet_data`: Data for the UO-1-RTP packet.
 ///
 /// # Returns
 /// - `Ok(Vec<u8>)` containing the built UO-1-RTP packet.
@@ -1033,7 +1033,7 @@ pub fn build_profile1_uo1_rtp_packet(
 /// Parses a ROHC Profile 1 UO-1-RTP packet.
 ///
 /// # Parameters
-/// * `core_packet_bytes` - Byte slice of the core UO-1-RTP packet.
+/// - `core_packet_bytes`: Byte slice of the core UO-1-RTP packet.
 ///
 /// # Returns
 /// - `Ok(Uo1Packet)` containing the parsed UO-1-RTP data.
@@ -1089,10 +1089,10 @@ pub fn parse_profile1_uo1_rtp_packet(
 ///   Total: 11 bytes
 ///
 /// # Parameters
-/// * `context_ssrc` - The SSRC from the context.
-/// * `sn_for_crc` - The sequence number for CRC calculation.
-/// * `ts_for_crc` - The timestamp for CRC calculation.
-/// * `marker_for_crc` - The marker bit for CRC calculation.
+/// - `context_ssrc`: The SSRC from the context.
+/// - `sn_for_crc`: The sequence number for CRC calculation.
+/// - `ts_for_crc`: The timestamp for CRC calculation.
+/// - `marker_for_crc`: The marker bit for CRC calculation.
 ///
 /// # Returns
 /// A fixed-size array containing the CRC input payload.
@@ -1136,11 +1136,11 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
 ///   Total: 12 bytes
 ///
 /// # Parameters
-/// * `context_ssrc` - The SSRC from the context.
-/// * `sn_for_crc` - The sequence number for CRC calculation.
-/// * `ts_for_crc` - The timestamp for CRC calculation.
-/// * `marker_for_crc` - The marker bit for CRC calculation.
-/// * `ip_id_lsb_for_crc` - The IP-ID LSB value for CRC calculation.
+/// - `context_ssrc`: The SSRC from the context.
+/// - `sn_for_crc`: The sequence number for CRC calculation.
+/// - `ts_for_crc`: The timestamp for CRC calculation.
+/// - `marker_for_crc`: The marker bit for CRC calculation.
+/// - `ip_id_lsb_for_crc`: The IP-ID LSB value for CRC calculation.
 ///
 /// # Returns
 /// A fixed-size array containing the CRC input payload.

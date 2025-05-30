@@ -209,8 +209,8 @@ impl SimulatedChannel {
     /// - `packet_bytes`: The compressed packet from the compressor.
     ///
     /// # Returns
-    /// `Some(Vec<u8>)` containing the packet to be delivered to the decompressor,
-    /// or `None` if the packet is "lost".
+    /// - `Some(Vec<u8>)` containing the packet to be delivered to the decompressor,
+    /// - `None` if the packet is "lost".
     fn transmit(&mut self, packet_bytes: Vec<u8>) -> Option<Vec<u8>> {
         debug_assert!(!packet_bytes.is_empty());
         if self.packet_loss_probability > 0.0 && self.rng.random_bool(self.packet_loss_probability)

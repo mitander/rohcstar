@@ -101,10 +101,10 @@ impl Profile1CompressorContext {
     /// TS Stride related fields are initialized to a state indicating no stride detected.
     ///
     /// # Parameters
-    /// * `cid` - The Context Identifier (CID) for this flow.
-    /// * `ir_refresh_interval` - The packet interval for sending IR refresh packets. A value of 0
+    /// - `cid`: The Context Identifier (CID) for this flow.
+    /// - `ir_refresh_interval`: The packet interval for sending IR refresh packets. A value of 0
     ///   disables periodic refresh based on packet count, though IRs may still be sent for other reasons.
-    /// * `creation_time` - The `Instant` at which this context is being created, used for `last_accessed`.
+    /// - `creation_time`: The `Instant` at which this context is being created, used for `last_accessed`.
     pub fn new(cid: u16, ir_refresh_interval: u32, creation_time: Instant) -> Self {
         Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -144,7 +144,7 @@ impl Profile1CompressorContext {
     /// TS Stride detection state is also reset.
     ///
     /// # Parameters
-    /// * `headers` - The uncompressed `RtpUdpIpv4Headers` of the current packet.
+    /// - `headers`: The uncompressed `RtpUdpIpv4Headers` of the current packet.
     pub fn initialize_context_from_uncompressed_headers(&mut self, headers: &RtpUdpIpv4Headers) {
         self.ip_source = headers.ip_src;
         self.ip_destination = headers.ip_dst;
@@ -171,8 +171,8 @@ impl Profile1CompressorContext {
     /// Helper to get the CID for UO packet builders if it's a small CID (1-15).
     ///
     /// # Returns
-    /// `Some(u8)` with the CID if it's a small CID, otherwise `None`.
-    /// CID 0 is typically handled implicitly by not prepending an Add-CID octet.
+    /// - `Some(u8)` with the CID if it's a small CID
+    /// - `None` if not small CID.
     pub fn get_small_cid_for_packet(&self) -> Option<u8> {
         if self.cid > 0 && self.cid <= 15 {
             Some(self.cid as u8)
@@ -193,10 +193,11 @@ impl Profile1CompressorContext {
     /// packets, `ts_scaled_mode` is activated.
     ///
     /// # Parameters
-    /// * `current_packet_ts` - The timestamp of the packet currently being processed.
+    /// - `current_packet_ts`: The timestamp of the packet currently being processed.
     ///
     /// # Returns
-    /// `true` if TS scaled mode became active *during this specific update*, `false` otherwise.
+    /// - `true` if TS scaled mode became active during this specific update.
+    /// - `false` otherwise.
     pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
         if self.rtp_ssrc == 0 {
             // SSRC must be known to start stride detection
@@ -260,12 +261,11 @@ impl Profile1CompressorContext {
     /// sequence of N packets that established the stride.
     ///
     /// # Parameters
-    /// * `current_packet_ts` - The timestamp of the packet for which TS_SCALED is to be calculated.
+    /// - `current_packet_ts`: The timestamp of the packet for which TS_SCALED is to be calculated.
     ///
     /// # Returns
-    /// `Some(u8)` containing the TS_SCALED value if calculation is successful and
-    /// fits in 8 bits. `None` otherwise (e.g., stride not active, stride is zero,
-    /// current timestamp does not align with the established stride, or value overflows).
+    /// - `Some(u8)` containing the TS_SCALED value
+    /// - `None` if calculation fails or cannot fit in 8 bits.
     pub fn calculate_ts_scaled(&self, current_packet_ts: Timestamp) -> Option<u8> {
         if !self.ts_scaled_mode {
             return None;
@@ -437,7 +437,7 @@ impl Profile1DecompressorContext {
     /// in `NoContext` mode. TS Stride fields are initialized to indicate no active stride.
     ///
     /// # Parameters
-    /// * `cid` - The Context Identifier (CID) for this flow.
+    /// - `cid`: The Context Identifier (CID) for this flow.
     pub fn new(cid: u16) -> Self {
         Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -483,7 +483,7 @@ impl Profile1DecompressorContext {
     /// The `last_accessed` time is **not** updated by this method; the caller should handle that.
     ///
     /// # Parameters
-    /// * `ir_packet` - A reference to the parsed `IrPacket` data.
+    /// - `ir_packet`: A reference to the parsed `IrPacket` data.
     pub fn initialize_from_ir_packet(&mut self, ir_packet: &IrPacket) {
         debug_assert_eq!(
             ir_packet.profile_id, self.profile_id,
@@ -543,11 +543,11 @@ impl Profile1DecompressorContext {
     /// typically after an IR-DYN packet with TS_STRIDE was processed or from inference.
     ///
     /// # Parameters
-    /// * `ts_scaled_received` - The 8-bit TS_SCALED value from a UO-1-RTP packet.
+    /// - `ts_scaled_received`: The 8-bit TS_SCALED value from a UO-1-RTP packet.
     ///
     /// # Returns
-    /// `Some(Timestamp)` with the reconstructed timestamp if `ts_stride` is known.
-    /// `None` if `ts_stride` is `None` (meaning stride is not established).
+    /// - `Some(Timestamp)` with the reconstructed timestamp if `ts_stride` is known.
+    /// - `None` if `ts_stride` is `None` (meaning stride is not established).
     pub fn reconstruct_ts_from_scaled(&self, ts_scaled_received: u8) -> Option<Timestamp> {
         let stride_val = self.ts_stride?;
         debug_assert!(
@@ -575,7 +575,7 @@ impl Profile1DecompressorContext {
     /// (e.g., via an IR-DYN TS_STRIDE extension or by successfully decoding a UO-1-RTP packet).
     ///
     /// # Parameters
-    /// * `new_ts` - The timestamp of the most recently successfully decompressed packet.
+    /// - `new_ts`: The timestamp of the most recently successfully decompressed packet.
     pub fn infer_ts_stride_from_decompressed_ts(&mut self, new_ts: Timestamp) {
         if self.rtp_ssrc == 0 {
             // SSRC must be known from IR to start reliable inference.

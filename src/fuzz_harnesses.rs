@@ -25,7 +25,7 @@ use crate::traits::ProfileHandler;
 /// - Falls back to NoContext if setup fails
 ///
 /// # Parameters
-/// * `data` - Fuzzer-generated input treated as ROHC packet
+/// - `data`: Fuzzer-generated input treated as ROHC packet
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let p1_handler = Profile1Handler::new();
     let cid = 0u16;

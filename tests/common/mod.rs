@@ -43,7 +43,7 @@ pub fn create_default_test_engine() -> RohcEngine {
 /// allowing a specific IR refresh interval.
 ///
 /// # Parameters
-/// * `ir_refresh_interval` - The interval (in packets) for IR refreshes.
+/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
 pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEngine {
     RohcEngine::new(
         ir_refresh_interval,
@@ -55,9 +55,9 @@ pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEng
 /// Creates a RohcEngine with a controllable MockClock for time-sensitive tests.
 ///
 /// # Parameters
-/// * `ir_refresh_interval` - The interval (in packets) for IR refreshes.
-/// * `timeout` - The context timeout duration.
-/// * `initial_mock_time` - The starting time for the mock clock.
+/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
+/// - `timeout`: The context timeout duration.
+/// - `initial_mock_time`: The starting time for the mock clock.
 ///
 /// # Returns
 /// A tuple containing the `RohcEngine` and an `Arc<MockClock>`.
