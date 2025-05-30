@@ -419,6 +419,7 @@ mod tests {
     };
     use crate::profiles::profile1::packet_processor::{
         build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_sn_packet,
+        prepare_generic_uo_crc_input_payload,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
     use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
@@ -564,7 +565,7 @@ mod tests {
 
         // Fill rest of N2 window with successful dynamic updaters
         // This loop will likely only run once or a few times before transition to FC.
-        let mut packets_to_test_window_reset =
+        let packets_to_test_window_reset =
             P1_DECOMPRESSOR_SC_TO_NC_N2.saturating_sub(n_window_before_good_packets);
 
         for _iteration in 0..packets_to_test_window_reset {
@@ -581,7 +582,7 @@ mod tests {
                 cid: None,
                 ..Default::default()
             };
-            let crc_input_good = decompression_logic::build_generic_uo_crc_input(
+            let crc_input_good = prepare_generic_uo_crc_input_payload(
                 context.rtp_ssrc,
                 next_sn_good,
                 context.last_reconstructed_rtp_ts_full,
@@ -644,7 +645,7 @@ mod tests {
             marker: false,
             ..Default::default()
         };
-        let crc_input = decompression_logic::build_generic_uo_crc_input(
+        let crc_input = prepare_generic_uo_crc_input_payload(
             // Use function from module
             context.rtp_ssrc,
             target_sn,
@@ -748,7 +749,7 @@ mod tests {
         let next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
         let sn_lsb_good = crate::encodings::encode_lsb(next_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT)
             .unwrap() as u8;
-        let crc_input = decompression_logic::build_generic_uo_crc_input(
+        let crc_input = prepare_generic_uo_crc_input_payload(
             // Use function from module
             context.rtp_ssrc,
             next_sn,

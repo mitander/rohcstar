@@ -6,11 +6,11 @@
 //! the original uncompressed headers. State transition logic is primarily handled
 //! by the calling handler or a dedicated state machine module.
 
-use super::constants::*;
 use super::context::Profile1DecompressorContext;
 use super::packet_processor::{
     parse_profile1_ir_packet, parse_profile1_uo0_packet, parse_profile1_uo1_id_packet,
     parse_profile1_uo1_rtp_packet, parse_profile1_uo1_sn_packet, parse_profile1_uo1_ts_packet,
+    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
 };
 use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
 
@@ -98,7 +98,7 @@ pub(super) fn parse_and_reconstruct_uo0(
         context.p_sn,
     )? as u16;
 
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         decoded_sn,
         context.last_reconstructed_rtp_ts_full, // UO-0 uses TS from context
@@ -156,7 +156,7 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
         context.p_sn,
     )? as u16;
 
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         decoded_sn,
         context.last_reconstructed_rtp_ts_full, // UO-1-SN uses TS from context
@@ -232,7 +232,7 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
     )? as u32;
     let decoded_ts = Timestamp::new(decoded_ts_val);
 
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         reconstructed_sn,
         decoded_ts,                            // Current (decoded) TS for CRC
@@ -307,7 +307,7 @@ pub(super) fn parse_and_reconstruct_uo1_id(
         context.p_ip_id,
     )? as u16;
 
-    let crc_input_bytes = build_uo1_id_specific_crc_input(
+    let crc_input_bytes = prepare_uo1_id_specific_crc_input_payload(
         context.rtp_ssrc,
         reconstructed_sn,
         context.last_reconstructed_rtp_ts_full, // UO-1-ID uses TS from context
@@ -391,7 +391,7 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
     }
     context.infer_ts_stride_from_decompressed_ts(reconstructed_ts);
 
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         reconstructed_sn,
         reconstructed_ts,      // Current (reconstructed) TS for CRC
@@ -476,47 +476,12 @@ fn reconstruct_full_headers_from_context_and_dynamic(
     }
 }
 
-// --- CRC Input Builders (Helper functions used locally) ---
-
-/// Creates byte slice input for generic UO packet CRC calculation.
-pub(super) fn build_generic_uo_crc_input(
-    context_ssrc: u32,
-    sn_for_crc: u16,
-    ts_for_crc: Timestamp,
-    marker_for_crc: bool,
-) -> Vec<u8> {
-    let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES);
-    crc_input.extend_from_slice(&context_ssrc.to_be_bytes());
-    crc_input.extend_from_slice(&sn_for_crc.to_be_bytes());
-    crc_input.extend_from_slice(&ts_for_crc.to_be_bytes());
-    crc_input.push(if marker_for_crc { 0x01 } else { 0x00 });
-    debug_assert_eq!(crc_input.len(), P1_UO_CRC_INPUT_LENGTH_BYTES);
-    crc_input
-}
-
-/// Creates byte slice input specifically for UO-1-ID packet CRC calculation.
-fn build_uo1_id_specific_crc_input(
-    context_ssrc: u32,
-    sn_for_crc: u16,
-    ts_for_crc: Timestamp,
-    marker_for_crc: bool,
-    ip_id_lsb_for_crc: u8,
-) -> Vec<u8> {
-    let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES + 1);
-    crc_input.extend_from_slice(&context_ssrc.to_be_bytes());
-    crc_input.extend_from_slice(&sn_for_crc.to_be_bytes());
-    crc_input.extend_from_slice(&ts_for_crc.to_be_bytes());
-    crc_input.push(if marker_for_crc { 0x01 } else { 0x00 });
-    crc_input.push(ip_id_lsb_for_crc);
-    debug_assert_eq!(crc_input.len(), P1_UO_CRC_INPUT_LENGTH_BYTES + 1);
-    crc_input
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
     use crate::encodings::encode_lsb;
+    use crate::profiles::profile1::compression_logic::build_generic_uo_crc_input;
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
@@ -525,6 +490,7 @@ mod tests {
         build_profile1_uo1_rtp_packet, build_profile1_uo1_sn_packet, build_profile1_uo1_ts_packet,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
+    use crate::profiles::profile1::*;
 
     // Helper to create a basic decompressor context, common for UO tests
     fn setup_decomp_context_for_uo(
@@ -727,7 +693,7 @@ mod tests {
         let ip_id_lsb_val =
             encode_lsb(target_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT).unwrap() as u8;
 
-        let crc_input = build_uo1_id_specific_crc_input(
+        let crc_input = prepare_uo1_id_specific_crc_input_payload(
             ssrc,
             target_sn,
             Timestamp::new(3000),
@@ -766,7 +732,7 @@ mod tests {
             context.ts_offset.value() + (ts_scaled_val as u32 * context.ts_stride.unwrap());
         let target_marker = true;
 
-        let crc_input = build_generic_uo_crc_input(
+        let crc_input = prepare_generic_uo_crc_input_payload(
             ssrc,
             target_sn,
             Timestamp::new(target_ts_val),

@@ -219,17 +219,15 @@ pub fn build_profile1_ir_packet(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
-    let mut final_packet_bytes = Vec::with_capacity(32);
-    let mut crc_payload_for_calc = Vec::with_capacity(
-        1 + P1_STATIC_CHAIN_LENGTH_BYTES
-            + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
-            + if ir_data.ts_stride.is_some() {
-                P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
-            } else {
-                0
-            },
+    debug_assert_eq!(
+        ir_data.profile_id,
+        RohcProfile::RtpUdpIp,
+        "IR packet must be for Profile 1"
     );
 
+    let mut final_packet_bytes = Vec::with_capacity(32);
+
+    // Add-CID octet if needed
     if ir_data.cid > 0 && ir_data.cid <= 15 {
         final_packet_bytes
             .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid as u8 & ROHC_SMALL_CID_MASK));
@@ -243,8 +241,10 @@ pub fn build_profile1_ir_packet(
         });
     }
 
+    // Packet type octet
     final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
+    // Profile ID
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -257,17 +257,16 @@ pub fn build_profile1_ir_packet(
         });
     }
     final_packet_bytes.push(profile_u8);
-    crc_payload_for_calc.push(profile_u8);
 
+    // Static chain
     let static_chain_start_index_in_final = final_packet_bytes.len();
     final_packet_bytes.extend_from_slice(&ir_data.static_ip_src.octets());
     final_packet_bytes.extend_from_slice(&ir_data.static_ip_dst.octets());
     final_packet_bytes.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
     final_packet_bytes.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
     final_packet_bytes.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
-    crc_payload_for_calc
-        .extend_from_slice(&final_packet_bytes[static_chain_start_index_in_final..]);
 
+    // Dynamic chain
     let dynamic_chain_start_index_in_final = final_packet_bytes.len();
     final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
     final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
@@ -284,11 +283,40 @@ pub fn build_profile1_ir_packet(
     if let Some(stride_val) = ir_data.ts_stride {
         final_packet_bytes.extend_from_slice(&stride_val.to_be_bytes());
     }
-    crc_payload_for_calc
-        .extend_from_slice(&final_packet_bytes[dynamic_chain_start_index_in_final..]);
 
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload_for_calc);
+    // Calculate CRC on stack
+    let crc_payload_len = 1
+        + P1_STATIC_CHAIN_LENGTH_BYTES
+        + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
+        + if ir_data.ts_stride.is_some() {
+            P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+        } else {
+            0
+        };
+
+    debug_assert!(
+        crc_payload_len <= 32,
+        "CRC payload too large for stack buffer"
+    );
+
+    let mut crc_payload = [0u8; 32]; // Max: 1 + 16 + 7 + 4 = 28 bytes
+    crc_payload[0] = profile_u8;
+    crc_payload[1..1 + P1_STATIC_CHAIN_LENGTH_BYTES].copy_from_slice(
+        &final_packet_bytes[static_chain_start_index_in_final..dynamic_chain_start_index_in_final],
+    );
+    let dynamic_len = final_packet_bytes.len() - dynamic_chain_start_index_in_final;
+    crc_payload[1 + P1_STATIC_CHAIN_LENGTH_BYTES..1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_len]
+        .copy_from_slice(&final_packet_bytes[dynamic_chain_start_index_in_final..]);
+
+    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload[..crc_payload_len]);
     final_packet_bytes.push(calculated_crc8);
+
+    debug_assert!(
+        final_packet_bytes.len() >= 26,
+        "IR packet too short: {} bytes",
+        final_packet_bytes.len()
+    );
+
     Ok(final_packet_bytes)
 }
 
@@ -313,6 +341,8 @@ pub fn parse_profile1_ir_packet(
     cid_from_engine: u16,
     crc_calculators: &CrcCalculators,
 ) -> Result<IrPacket, RohcParsingError> {
+    debug_assert!(!core_packet_bytes.is_empty(), "IR packet cannot be empty");
+
     let mut current_offset_for_fields = 0;
 
     if core_packet_bytes.is_empty() {
@@ -339,7 +369,7 @@ pub fn parse_profile1_ir_packet(
     if d_bit_set {
         dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
         // Absolute index of RTP_Flags in core_packet_bytes:
-        // Type (1) + ProfileID (1) + Static (16) + SN (2) + TS (4) = 24th byte. Index is 24.
+        // Type (1) + ProfileID (1) + Static (16) + SN (2) + TS (4) = 24th byte. Index is 23.
         const RTP_FLAGS_ABSOLUTE_IDX: usize = 24;
 
         if core_packet_bytes.len() > RTP_FLAGS_ABSOLUTE_IDX {
@@ -487,6 +517,18 @@ pub fn parse_profile1_ir_packet(
 /// - `Ok(Vec<u8>)` containing the built UO-0 packet.
 /// - `Err(RohcBuildingError)` if field values are invalid for UO-0.
 pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
+    debug_assert!(
+        packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
+        "SN LSB value {} too large for {} bits",
+        packet_data.sn_lsb,
+        P1_UO0_SN_LSB_WIDTH_DEFAULT
+    );
+    debug_assert!(
+        packet_data.crc3 <= 0x07,
+        "CRC3 value {} too large",
+        packet_data.crc3
+    );
+
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "sn_lsb".to_string(),
@@ -519,6 +561,12 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
     let core_byte = (packet_data.sn_lsb << 3) | packet_data.crc3;
     final_packet.push(core_byte);
 
+    debug_assert!(
+        final_packet.len() <= 2,
+        "UO-0 packet too long: {} bytes",
+        final_packet.len()
+    );
+
     Ok(final_packet)
 }
 
@@ -535,6 +583,12 @@ pub fn parse_profile1_uo0_packet(
     core_packet_data: &[u8],
     cid_from_engine: Option<u8>,
 ) -> Result<Uo0Packet, RohcParsingError> {
+    debug_assert_eq!(
+        core_packet_data.len(),
+        1,
+        "UO-0 core packet must be exactly 1 byte"
+    );
+
     if core_packet_data.len() != 1 {
         return Err(RohcParsingError::InvalidFieldValue {
             field_name: "UO-0 Core Packet Length".to_string(),
@@ -557,6 +611,9 @@ pub fn parse_profile1_uo0_packet(
     let sn_lsb_val = (packet_byte >> 3) & ((1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) - 1);
     let crc3_val = packet_byte & 0x07;
 
+    debug_assert!(sn_lsb_val < 16, "SN LSB value {} out of range", sn_lsb_val);
+    debug_assert!(crc3_val <= 7, "CRC3 value {} out of range", crc3_val);
+
     Ok(Uo0Packet {
         cid: cid_from_engine,
         sn_lsb: sn_lsb_val,
@@ -573,6 +630,17 @@ pub fn parse_profile1_uo0_packet(
 /// - `Ok(Vec<u8>)` containing the built UO-1-SN packet.
 /// - `Err(RohcBuildingError)` if field values are invalid for UO-1-SN.
 pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+    debug_assert_eq!(
+        packet_data.num_sn_lsb_bits, P1_UO1_SN_LSB_WIDTH_DEFAULT,
+        "UO-1-SN requires {} LSB bits, got {}",
+        P1_UO1_SN_LSB_WIDTH_DEFAULT, packet_data.num_sn_lsb_bits
+    );
+    debug_assert!(
+        packet_data.sn_lsb <= 0xFF,
+        "SN LSB value {} too large for 8 bits",
+        packet_data.sn_lsb
+    );
+
     if packet_data.num_sn_lsb_bits != P1_UO1_SN_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "num_sn_lsb_bits".to_string(),
@@ -632,6 +700,8 @@ pub fn parse_profile1_uo1_sn_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_SN_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    debug_assert_eq!(expected_len, 3, "UO-1-SN should be 3 bytes");
+
     if core_packet_bytes.len() < expected_len {
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
@@ -688,6 +758,13 @@ pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
             description: "UO-1-TS requires timestamp LSB bit count".to_string(),
         }
     })?;
+
+    debug_assert_eq!(
+        num_ts_bits, P1_UO1_TS_LSB_WIDTH_DEFAULT,
+        "UO-1-TS requires {} LSB bits, got {}",
+        P1_UO1_TS_LSB_WIDTH_DEFAULT, num_ts_bits
+    );
+
     if num_ts_bits != P1_UO1_TS_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "num_ts_lsb_bits".to_string(),
@@ -740,6 +817,8 @@ pub fn parse_profile1_uo1_ts_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_TS_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    debug_assert_eq!(expected_len, 4, "UO-1-TS should be 4 bytes");
+
     if core_packet_bytes.len() < expected_len {
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
@@ -796,6 +875,17 @@ pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
         }
     })?;
 
+    debug_assert_eq!(
+        num_ip_id_bits, P1_UO1_IPID_LSB_WIDTH_DEFAULT,
+        "UO-1-ID requires {} LSB bits, got {}",
+        P1_UO1_IPID_LSB_WIDTH_DEFAULT, num_ip_id_bits
+    );
+    debug_assert!(
+        ip_id_lsb <= 0xFF,
+        "IP-ID LSB value {} too large for 8 bits",
+        ip_id_lsb
+    );
+
     if num_ip_id_bits != P1_UO1_IPID_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "num_ip_id_lsb_bits".to_string(),
@@ -849,6 +939,8 @@ pub fn parse_profile1_uo1_id_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_IPID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    debug_assert_eq!(expected_len, 3, "UO-1-ID should be 3 bytes");
+
     if core_packet_bytes.len() < expected_len {
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
@@ -901,6 +993,12 @@ pub fn build_profile1_uo1_rtp_packet(
                 description: "UO-1-RTP requires a TS_SCALED value.".to_string(),
             })?;
 
+    debug_assert!(
+        ts_scaled_val <= P1_TS_SCALED_MAX_VALUE as u8,
+        "TS_SCALED value {} too large",
+        ts_scaled_val
+    );
+
     let type_octet = P1_UO_1_RTP_DISCRIMINATOR_BASE
         | (if packet_data.marker {
             P1_UO_1_RTP_MARKER_BIT_MASK
@@ -944,6 +1042,8 @@ pub fn parse_profile1_uo1_rtp_packet(
     core_packet_bytes: &[u8],
 ) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 3;
+    debug_assert_eq!(expected_len, 3, "UO-1-RTP should be 3 bytes");
+
     if core_packet_bytes.len() < expected_len {
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
@@ -977,6 +1077,105 @@ pub fn parse_profile1_uo1_rtp_packet(
         ts_scaled: Some(ts_scaled_val),
         crc8: received_crc8,
     })
+}
+
+/// Prepares a generic UO packet CRC input payload on the stack.
+///
+/// The CRC input consists of:
+/// - SSRC (4 bytes)
+/// - SN (2 bytes)
+/// - TS (4 bytes)
+/// - Marker (1 byte)
+///   Total: 11 bytes
+///
+/// # Parameters
+/// * `context_ssrc` - The SSRC from the context.
+/// * `sn_for_crc` - The sequence number for CRC calculation.
+/// * `ts_for_crc` - The timestamp for CRC calculation.
+/// * `marker_for_crc` - The marker bit for CRC calculation.
+///
+/// # Returns
+/// A fixed-size array containing the CRC input payload.
+#[inline]
+pub(crate) fn prepare_generic_uo_crc_input_payload(
+    context_ssrc: u32,
+    sn_for_crc: u16,
+    ts_for_crc: Timestamp,
+    marker_for_crc: bool,
+) -> [u8; P1_UO_CRC_INPUT_LENGTH_BYTES] {
+    debug_assert_eq!(
+        P1_UO_CRC_INPUT_LENGTH_BYTES, 11,
+        "CRC input should be 11 bytes"
+    );
+
+    let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES];
+
+    // SSRC (4 bytes)
+    crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
+
+    // SN (2 bytes)
+    crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
+
+    // TS (4 bytes)
+    crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
+
+    // Marker (1 byte)
+    crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
+
+    crc_input
+}
+
+/// Prepares a UO-1-ID specific CRC input payload on the stack.
+///
+/// The CRC input consists of:
+/// - SSRC (4 bytes)
+/// - SN (2 bytes)
+/// - TS (4 bytes)
+/// - Marker (1 byte)
+/// - IP-ID LSB (1 byte)
+///   Total: 12 bytes
+///
+/// # Parameters
+/// * `context_ssrc` - The SSRC from the context.
+/// * `sn_for_crc` - The sequence number for CRC calculation.
+/// * `ts_for_crc` - The timestamp for CRC calculation.
+/// * `marker_for_crc` - The marker bit for CRC calculation.
+/// * `ip_id_lsb_for_crc` - The IP-ID LSB value for CRC calculation.
+///
+/// # Returns
+/// A fixed-size array containing the CRC input payload.
+#[inline]
+pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
+    context_ssrc: u32,
+    sn_for_crc: u16,
+    ts_for_crc: Timestamp,
+    marker_for_crc: bool,
+    ip_id_lsb_for_crc: u8,
+) -> [u8; P1_UO_CRC_INPUT_LENGTH_BYTES + 1] {
+    debug_assert_eq!(
+        P1_UO_CRC_INPUT_LENGTH_BYTES + 1,
+        12,
+        "CRC input should be 12 bytes"
+    );
+
+    let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES + 1];
+
+    // SSRC (4 bytes)
+    crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
+
+    // SN (2 bytes)
+    crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
+
+    // TS (4 bytes)
+    crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
+
+    // Marker (1 byte)
+    crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
+
+    // IP-ID LSB (1 byte)
+    crc_input[11] = ip_id_lsb_for_crc;
+
+    crc_input
 }
 
 #[cfg(test)]
@@ -1256,5 +1455,39 @@ mod tests {
             result,
             Err(RohcParsingError::InvalidPacketType { .. })
         ));
+    }
+
+    #[test]
+    fn test_generic_uo_crc_input_payload() {
+        let ssrc = 0x12345678u32;
+        let sn = 0xABCDu16;
+        let ts = Timestamp::new(0xDEADBEEF);
+        let marker = true;
+
+        let payload = prepare_generic_uo_crc_input_payload(ssrc, sn, ts, marker);
+
+        assert_eq!(payload.len(), 11);
+        assert_eq!(&payload[0..4], &ssrc.to_be_bytes());
+        assert_eq!(&payload[4..6], &sn.to_be_bytes());
+        assert_eq!(&payload[6..10], &ts.to_be_bytes());
+        assert_eq!(payload[10], 0x01);
+    }
+
+    #[test]
+    fn test_uo1_id_specific_crc_input_payload() {
+        let ssrc = 0x87654321u32;
+        let sn = 0x1234u16;
+        let ts = Timestamp::new(0xCAFEBABE);
+        let marker = false;
+        let ip_id_lsb = 0x42u8;
+
+        let payload = prepare_uo1_id_specific_crc_input_payload(ssrc, sn, ts, marker, ip_id_lsb);
+
+        assert_eq!(payload.len(), 12);
+        assert_eq!(&payload[0..4], &ssrc.to_be_bytes());
+        assert_eq!(&payload[4..6], &sn.to_be_bytes());
+        assert_eq!(&payload[6..10], &ts.to_be_bytes());
+        assert_eq!(payload[10], 0x00);
+        assert_eq!(payload[11], ip_id_lsb);
     }
 }
