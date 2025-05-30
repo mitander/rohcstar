@@ -29,3 +29,4 @@ pub use error::{RohcBuildingError, RohcError, RohcParsingError};
 pub use packet_defs::{GenericUncompressedHeaders, RohcProfile};
 pub use traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 pub mod fuzz_harnesses;
+pub use time::mock_clock::MockClock;

@@ -172,10 +172,9 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
         }));
     }
 
+    context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_marker = parsed_uo1.marker;
-    // TS remains unchanged from context
-    context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
 
     Ok(reconstruct_full_headers_from_context_and_dynamic(
         context,
@@ -248,10 +247,9 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
         }));
     }
 
+    context.infer_ts_stride_from_decompressed_ts(decoded_ts);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = decoded_ts;
-    // Marker remains unchanged from context
-    context.infer_ts_stride_from_decompressed_ts(decoded_ts);
 
     Ok(reconstruct_full_headers_from_context_and_dynamic(
         context,
@@ -324,10 +322,9 @@ pub(super) fn parse_and_reconstruct_uo1_id(
         }));
     }
 
+    context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_ip_id_full = decoded_ip_id;
-    // TS and Marker remain unchanged from context
-    context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
 
     Ok(reconstruct_full_headers_from_context_and_dynamic(
         context,
@@ -407,6 +404,13 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
         }));
     }
 
+    // If we successfully decode a UO-1-RTP, it implies the decompressor should
+    // now be in scaled mode if it wasn't already.
+    if context.ts_stride.is_some() && !context.ts_scaled_mode {
+        // Check before inference might change stride
+        context.ts_scaled_mode = true;
+    }
+    context.infer_ts_stride_from_decompressed_ts(reconstructed_ts);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = reconstructed_ts;
     context.last_reconstructed_rtp_marker = parsed_uo1_rtp.marker;

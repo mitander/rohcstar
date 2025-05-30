@@ -552,7 +552,8 @@ impl Profile1DecompressorContext {
         let stride_val = self.ts_stride?;
         debug_assert!(
             stride_val > 0,
-            "Stride must be positive for scaled TS reconstruction"
+            "Stride value must be positive for scaled TS reconstruction if Some. Stride: {}",
+            stride_val
         );
 
         let reconstructed_ts_val = self
@@ -883,24 +884,34 @@ mod tests {
     #[test]
     fn decompressor_reconstruct_ts_from_scaled_logic() {
         let mut decomp_ctx = Profile1DecompressorContext::new(1);
+
+        // Test case 1: Stride is None, should return None
+        decomp_ctx.ts_stride = None;
+        decomp_ctx.ts_offset = Timestamp::new(1000); // Offset doesn't matter if stride is None
+        assert_eq!(
+            decomp_ctx.reconstruct_ts_from_scaled(1),
+            None,
+            "Should be None if stride is None"
+        );
+
+        // Test case 2: Stride is Some, successful reconstruction
         decomp_ctx.ts_stride = Some(160);
         decomp_ctx.ts_offset = Timestamp::new(1000);
-
         assert_eq!(
             decomp_ctx.reconstruct_ts_from_scaled(0),
-            Some(Timestamp::new(1000))
+            Some(Timestamp::new(1000)), // offset + 0 * stride
+            "Reconstruction for ts_scaled = 0 failed"
         );
         assert_eq!(
             decomp_ctx.reconstruct_ts_from_scaled(1),
-            Some(Timestamp::new(1160))
+            Some(Timestamp::new(1160)), // offset + 1 * stride
+            "Reconstruction for ts_scaled = 1 failed"
         );
         assert_eq!(
-            decomp_ctx.reconstruct_ts_from_scaled(5),
-            Some(Timestamp::new(1800))
+            decomp_ctx.reconstruct_ts_from_scaled(3),
+            Some(Timestamp::new(1000 + 3 * 160)), // 1480
+            "Reconstruction for ts_scaled = 3 failed"
         );
-
-        decomp_ctx.ts_stride = None;
-        assert_eq!(decomp_ctx.reconstruct_ts_from_scaled(1), None);
     }
 
     #[test]
