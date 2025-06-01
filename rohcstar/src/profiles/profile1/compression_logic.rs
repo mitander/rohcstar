@@ -9,6 +9,7 @@ use super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::packet_processor::{
     build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_id_packet,
     build_profile1_uo1_rtp_packet, build_profile1_uo1_sn_packet, build_profile1_uo1_ts_packet,
+    prepare_generic_uo_crc_input_payload,
 };
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
@@ -301,7 +302,7 @@ fn build_uo0(
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcError> {
     let sn_lsb_val = encode_lsb(current_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT)? as u8;
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         current_sn,
         context.last_sent_rtp_ts_full,
@@ -324,7 +325,7 @@ fn build_uo1_ts(
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcError> {
     let ts_lsb_val = encode_lsb(current_ts.value() as u64, P1_UO1_TS_LSB_WIDTH_DEFAULT)? as u16;
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         current_sn,
         current_ts,
@@ -359,8 +360,12 @@ fn build_uo1_sn(
         context.last_sent_rtp_ts_full
     };
 
-    let crc_input_bytes =
-        build_generic_uo_crc_input(context.rtp_ssrc, current_sn, implicit_ts, current_marker);
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
+        context.rtp_ssrc,
+        current_sn,
+        implicit_ts,
+        current_marker,
+    );
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
     let uo1_sn_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -418,7 +423,7 @@ fn build_uo1_rtp(
         .ts_offset
         .wrapping_add(ts_scaled_val as u32 * stride);
 
-    let crc_input_bytes = build_generic_uo_crc_input(
+    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         current_sn,
         full_ts_for_crc,
@@ -434,24 +439,6 @@ fn build_uo1_rtp(
         ..Default::default()
     };
     build_profile1_uo1_rtp_packet(&uo1_rtp_data).map_err(RohcError::Building)
-}
-
-/// Creates byte slice input for generic UO packet CRC calculation.
-///
-/// Input format: SSRC (4B), SN (2B), TS (4B), Marker (1B) = 11 bytes total.
-pub(super) fn build_generic_uo_crc_input(
-    context_ssrc: u32,
-    sn_for_crc: u16,
-    ts_for_crc: Timestamp,
-    marker_for_crc: bool,
-) -> Vec<u8> {
-    let mut crc_input = Vec::with_capacity(P1_UO_CRC_INPUT_LENGTH_BYTES);
-    crc_input.extend_from_slice(&context_ssrc.to_be_bytes());
-    crc_input.extend_from_slice(&sn_for_crc.to_be_bytes());
-    crc_input.extend_from_slice(&ts_for_crc.to_be_bytes());
-    crc_input.push(if marker_for_crc { 0x01 } else { 0x00 });
-    debug_assert_eq!(crc_input.len(), P1_UO_CRC_INPUT_LENGTH_BYTES);
-    crc_input
 }
 
 /// Creates byte slice input specifically for UO-1-ID packet CRC calculation.

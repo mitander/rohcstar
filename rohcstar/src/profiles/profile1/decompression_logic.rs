@@ -537,7 +537,6 @@ mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
     use crate::encodings::encode_lsb;
-    use crate::profiles::profile1::compression_logic::build_generic_uo_crc_input;
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
@@ -595,7 +594,7 @@ mod tests {
         crc_calculators: &CrcCalculators,
     ) -> Vec<u8> {
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
-        let crc_input = build_generic_uo_crc_input(ssrc, target_sn, expected_ts, marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, marker);
         let crc3 = crc_calculators.calculate_rohc_crc3(&crc_input);
 
         let uo0_packet = Uo0Packet {
@@ -724,7 +723,8 @@ mod tests {
         let target_marker = true;
 
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input = build_generic_uo_crc_input(ssrc, target_sn, expected_ts, target_marker);
+        let crc_input =
+            prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, target_marker);
         let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
@@ -808,7 +808,7 @@ mod tests {
         let sn2 = 402;
         let ts2 = Timestamp::new(ts1.value() + ts_stride);
         let sn_lsb = encode_lsb(sn2 as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input = build_generic_uo_crc_input(ssrc, sn2, ts2, true);
+        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, sn2, ts2, true);
         let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
@@ -879,7 +879,7 @@ mod tests {
         let expected_ts = Timestamp::new(1000 + ts_stride);
 
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
-        let crc_input = build_generic_uo_crc_input(ssrc, target_sn, expected_ts, false);
+        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, false);
         let crc3 = crc_calculators.calculate_rohc_crc3(&crc_input);
 
         let uo0_packet_data = Uo0Packet {
@@ -912,7 +912,8 @@ mod tests {
         let target_marker = true;
 
         let sn_lsb_val = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input = build_generic_uo_crc_input(ssrc, target_sn, expected_ts, target_marker);
+        let crc_input =
+            prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, target_marker);
         let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
 
         let uo1_packet_data = Uo1Packet {
