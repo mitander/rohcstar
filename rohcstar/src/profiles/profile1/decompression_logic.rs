@@ -94,15 +94,28 @@ pub(super) fn parse_and_reconstruct_uo0(
     let decoded_sn = decode_lsb(
         parsed_uo0.sn_lsb as u64,
         context.last_reconstructed_rtp_sn_full as u64,
-        context.expected_lsb_sn_width, // Expected width for UO-0
+        context.expected_lsb_sn_width,
         context.p_sn,
     )? as u16;
+
+    let sn_delta = decoded_sn.wrapping_sub(context.last_reconstructed_rtp_sn_full);
+    let new_timestamp = if let Some(ts_stride) = context.ts_stride {
+        let ts_delta = sn_delta as u32 * ts_stride;
+        Timestamp::new(
+            context
+                .last_reconstructed_rtp_ts_full
+                .value()
+                .wrapping_add(ts_delta),
+        )
+    } else {
+        context.last_reconstructed_rtp_ts_full
+    };
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         decoded_sn,
-        context.last_reconstructed_rtp_ts_full, // UO-0 uses TS from context
-        context.last_reconstructed_rtp_marker,  // UO-0 uses Marker from context
+        new_timestamp,
+        context.last_reconstructed_rtp_marker,
     );
     let calculated_crc3 = crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
 
@@ -115,15 +128,15 @@ pub(super) fn parse_and_reconstruct_uo0(
     }
 
     context.last_reconstructed_rtp_sn_full = decoded_sn;
-    // TS and Marker remain unchanged from context for UO-0
-    context.infer_ts_stride_from_decompressed_ts(context.last_reconstructed_rtp_ts_full);
+    context.last_reconstructed_rtp_ts_full = new_timestamp;
+    context.infer_ts_stride_from_decompressed_ts(new_timestamp);
 
     Ok(reconstruct_full_headers_from_context_and_dynamic(
         context,
         decoded_sn,
-        context.last_reconstructed_rtp_ts_full,
+        new_timestamp,
         context.last_reconstructed_rtp_marker,
-        context.last_reconstructed_ip_id_full, // IP-ID not in UO-0
+        context.last_reconstructed_ip_id_full,
     ))
 }
 

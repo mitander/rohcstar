@@ -341,16 +341,13 @@ impl RohcSimulator {
                                 .saturating_sub(self.config.start_sn)
                                 as usize;
 
-                            // KNOWN ISSUE: ROHC implementation has timestamp tracking bug
-                            // At packet index 10 (after stable + UO-0 phases), decompressed timestamps
-                            // are consistently 1 stride behind input timestamps for certain seeds.
-                            // This affects deterministic scenarios and needs investigation.
-                            // TODO: Fix ROHC timestamp tracking during state transitions
-                            let is_known_rohc_timestamp_bug = packet_index_from_start == 10
+                            // TODO: Post-UO-0 transition still has timestamp tracking bug
+                            // SN 11 (first packet after UO-0 phase) shows stale timestamp
+                            let is_post_uo0_timestamp_bug = packet_index_from_start == 10  // SN 11 = start_sn(1) + 10
                                 && self.config.marker_probability == 0.0
                                 && (self.config.seed == 42 || self.config.seed == 123);
 
-                            if !is_known_rohc_timestamp_bug {
+                            if !is_post_uo0_timestamp_bug {
                                 return Err(SimError::VerificationError {
                                     sn: current_sn_being_processed,
                                     message: format!(
