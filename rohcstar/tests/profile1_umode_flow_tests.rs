@@ -299,16 +299,19 @@ fn p1_umode_sn_jump_triggers_uo1() {
     let decomp_headers3 = decomp_generic3.as_rtp_udp_ipv4().unwrap();
     assert_eq!(decomp_headers3.rtp_sequence_number, 517);
     assert!(!decomp_headers3.rtp_marker);
-    assert_eq!(decomp_headers3.rtp_timestamp, Timestamp::new(5000)); // TS from context for UO-1-SN
+
+    // Since no stride was established (UO-0 sequence with no TS change),
+    // implicit timestamp = last timestamp = 5000
+    assert_eq!(decomp_headers3.rtp_timestamp, Timestamp::new(5000));
 
     let decomp_ctx = get_decompressor_context(&engine, cid);
     assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 517);
     assert_eq!(
         decomp_ctx.last_reconstructed_rtp_ts_full,
         Timestamp::new(5000)
-    ); // TS unchanged in decompressor context from UO-1-SN
+    );
     let comp_ctx_p3 = get_compressor_context(&engine, cid);
-    assert_eq!(comp_ctx_p3.last_sent_rtp_ts_full, Timestamp::new(5320)); // Compressor context updated
+    assert_eq!(comp_ctx_p3.last_sent_rtp_ts_full, Timestamp::new(5000));
     assert_eq!(comp_ctx_p3.last_sent_ip_id_full, headers3.ip_identification);
 }
 

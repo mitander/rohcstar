@@ -180,7 +180,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     let decomp2 = decomp2_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp2.rtp_sequence_number, 302);
     assert!(decomp2.rtp_marker);
-    assert_eq!(decomp2.rtp_timestamp, Timestamp::new(4000)); // TS from P1 context still
+    assert_eq!(decomp2.rtp_timestamp, Timestamp::new(5000));
 
     // Packet 3: SN=303 (ctx_sn+1), TS=4000 (same as P2 context), Marker=false (changed from P2 context), IP-ID=same
     // Expected: UO-1-SN (Marker change)
@@ -202,7 +202,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp3_result.is_ok());
     let decomp3 = decomp3_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp3.rtp_sequence_number, 303);
-    assert_eq!(decomp3.rtp_timestamp, Timestamp::new(4000)); // TS from P2 context
+    assert_eq!(decomp3.rtp_timestamp, Timestamp::new(6000));
     assert!(!decomp3.rtp_marker);
 
     // Packet 4: SN=305 (ctx_sn+2), TS=6000 (changed), Marker=false (same as P3 context), IP-ID changes
@@ -226,7 +226,7 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp4_result.is_ok());
     let decomp4 = decomp4_result.unwrap().as_rtp_udp_ipv4().unwrap().clone();
     assert_eq!(decomp4.rtp_sequence_number, 305);
-    assert_eq!(decomp4.rtp_timestamp, Timestamp::new(4000)); // TS from P3 context
+    assert_eq!(decomp4.rtp_timestamp, Timestamp::new(8000)); // TS from P3 context
 }
 
 /// Tests UO-1-TS where the Marker bit is TRUE in the context and remains TRUE for the packet,

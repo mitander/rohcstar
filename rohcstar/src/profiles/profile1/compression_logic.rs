@@ -1,9 +1,8 @@
 //! ROHC (Robust Header Compression) Profile 1 (RTP/UDP/IP) compression logic.
 //!
-//! This module contains functions responsible for the compression-side
-//! processing of packets according to ROHC Profile 1. It includes logic for
-//! determining which ROHC packet type to generate (IR, UO-0, UO-1-* variants)
-//! and building those packets.
+//! This module handles the compression-side processing of packets according to ROHC Profile 1.
+//! It determines which ROHC packet type to generate (IR, UO-0, UO-1-* variants) and builds
+//! those packets based on packet changes and context state.
 
 use super::constants::*;
 use super::context::{Profile1CompressorContext, Profile1CompressorMode};
@@ -21,13 +20,9 @@ use crate::packet_defs::RohcProfile;
 
 /// Determines if an IR (Initialization/Refresh) packet must be sent by the compressor.
 ///
-/// An IR packet is forced if:
-/// - Compressor is in `InitializationAndRefresh` mode.
-/// - IR refresh interval is met.
-/// - SSRC change is detected.
-/// - TS_SCALED calculation indicates a problem requiring IR (e.g., misaligned TS, overflow).
-/// - Significant SN, TS, or IP-ID jump occurs that might exceed UO LSB encoding capabilities,
-///   potentially leading to ambiguity at the decompressor.
+/// An IR packet is forced when the compressor needs to reset state or when field changes
+/// would exceed the LSB encoding capabilities of UO packets, potentially causing
+/// decompressor ambiguity.
 ///
 /// # Parameters
 /// - `context`: Reference to the current `Profile1CompressorContext`.
@@ -41,25 +36,26 @@ pub(super) fn should_force_ir(
 ) -> bool {
     debug_assert_ne!(
         context.rtp_ssrc, 0,
-        "SSRC must be initialized in context before checking IR conditions"
+        "SSRC must be initialized before checking IR conditions"
     );
 
     if context.mode == Profile1CompressorMode::InitializationAndRefresh {
         return true;
     }
 
+    // Periodic IR refresh for reliability
     if context.ir_refresh_interval > 0
         && context.fo_packets_sent_since_ir >= context.ir_refresh_interval.saturating_sub(1)
     {
         return true;
     }
 
-    // SSRC change always forces IR (already handled by context.initialize_... in Profile1Handler::compress)
-    // This check is redundant if called after SSRC change handling, but kept for conceptual completeness.
+    // SSRC change forces new stream initialization
     if context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
         return true;
     }
 
+    // TS_SCALED mode failure indicates stride misalignment
     if context.ts_scaled_mode
         && context
             .calculate_ts_scaled(uncompressed_headers.rtp_timestamp)
@@ -68,11 +64,9 @@ pub(super) fn should_force_ir(
         return true;
     }
 
-    // Check for large jumps in SN, TS, IP-ID that are better handled by an IR
-    // rather than risking UO LSB encoding ambiguity or forcing a less optimal UO packet.
-    // The k-bit LSB window is 2^k. The unambiguous window is roughly half of that, 2^(k-1).
-    // So, max safe delta is 2^(k-1) - 1.
-    let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Max LSBs for UO-1 SN
+    // Check for large field jumps that exceed LSB encoding windows
+    // The k-bit LSB window is 2^k, unambiguous window is roughly 2^(k-1)
+    let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT;
     if sn_k > 0 && sn_k < 16 {
         let max_safe_sn_delta: u16 = (1u16 << (sn_k - 1)).saturating_sub(1);
         let current_sn = uncompressed_headers.rtp_sequence_number;
@@ -83,9 +77,9 @@ pub(super) fn should_force_ir(
         }
     }
 
-    let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT; // Max LSBs for UO-1 TS
+    // Only check TS jumps when not in scaled mode (scaled mode handles TS differently)
+    let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT;
     if !context.ts_scaled_mode && ts_k > 0 && ts_k < 32 {
-        // Only check large TS jump if not in scaled mode, as scaled mode handles TS differently.
         let max_safe_ts_delta: u32 = (1u32 << (ts_k - 1)).saturating_sub(1);
         let current_ts_val = uncompressed_headers.rtp_timestamp.value();
         let last_ts_val = context.last_sent_rtp_ts_full.value();
@@ -96,8 +90,9 @@ pub(super) fn should_force_ir(
         }
     }
 
+    // Check IP-ID jumps when it has changed
     if uncompressed_headers.ip_identification != context.last_sent_ip_id_full {
-        let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT; // Max LSBs for UO-1 IP-ID
+        let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
         if ipid_k > 0 && ipid_k < 16 {
             let max_safe_ipid_delta: u16 = (1u16 << (ipid_k - 1)).saturating_sub(1);
             let current_ip_id = uncompressed_headers.ip_identification;
@@ -113,10 +108,8 @@ pub(super) fn should_force_ir(
 
 /// Prepares and builds an IR or IR-DYN packet.
 ///
-/// This function assumes SSRC change detection and initial context setup have already
-/// been handled by the caller. It focuses on updating TS stride detection,
-/// determining if TS_STRIDE needs to be signaled, and then building the IR packet.
-/// After successful IR transmission, it updates compressor state (mode, counters, dynamic fields).
+/// This function handles TS stride detection and updates compressor state after successful
+/// IR transmission. It assumes SSRC change detection has already been handled by the caller.
 ///
 /// # Parameters
 /// - `context`: The mutable compressor context.
@@ -131,17 +124,20 @@ pub(super) fn compress_as_ir(
     uncompressed_headers: &RtpUdpIpv4Headers,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcError> {
-    // SSRC change or initial context setup should have been done before calling this.
     debug_assert_eq!(
         context.rtp_ssrc, uncompressed_headers.rtp_ssrc,
         "SSRC mismatch in compress_as_ir; context should have been initialized."
     );
     debug_assert_ne!(context.rtp_ssrc, 0, "Context SSRC must be non-zero.");
 
-    // Update stride detection by comparing current and previous packet TS.
-    // This must happen BEFORE last_sent_rtp_ts_full is updated.
-    let newly_activated_scaled_mode =
-        context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp);
+    // Only establish stride for IR if it was forced by stride misalignment
+    let newly_activated_scaled_mode = if context.ts_scaled_mode {
+        // Reset scaled mode and start detecting new stride
+        context.ts_scaled_mode = false;
+        context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp)
+    } else {
+        false
+    };
 
     let ir_packet_signals_ts_stride: Option<u32> = if context.ts_scaled_mode {
         context.ts_stride
@@ -151,8 +147,8 @@ pub(super) fn compress_as_ir(
 
     let ir_data = IrPacket {
         cid: context.cid,
-        profile_id: RohcProfile::RtpUdpIp, // Handler specific
-        crc8: 0,                           // Will be calculated by builder
+        profile_id: RohcProfile::RtpUdpIp,
+        crc8: 0,
         static_ip_src: context.ip_source,
         static_ip_dst: context.ip_destination,
         static_udp_src_port: context.udp_source_port,
@@ -167,6 +163,7 @@ pub(super) fn compress_as_ir(
     let rohc_packet_bytes =
         build_profile1_ir_packet(&ir_data, crc_calculators).map_err(RohcError::Building)?;
 
+    // Update context state after successful IR transmission
     context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
     context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
     context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
@@ -176,12 +173,7 @@ pub(super) fn compress_as_ir(
     context.fo_packets_sent_since_ir = 0;
     context.consecutive_fo_packets_sent = 0;
 
-    // If TS_STRIDE was signaled in this IR, the TS of THIS IR packet becomes the
-    // reference TS_Offset for both compressor and decompressor.
-    // If scaled mode was just activated and ts_stride is present, it implies
-    // ts_offset (set during stride detection based on PREVIOUS packet's TS) needs
-    // to be updated to THIS packet's TS to align with the decompressor, which uses the
-    // IR's TS as its ts_offset.
+    // Update ts_offset when establishing new stride
     if ir_packet_signals_ts_stride.is_some() || newly_activated_scaled_mode {
         context.ts_offset = uncompressed_headers.rtp_timestamp;
     }
@@ -191,9 +183,8 @@ pub(super) fn compress_as_ir(
 
 /// Handles compressor logic for sending UO (Unidirectional Optimistic) packets.
 ///
-/// Selects and builds the most appropriate UO packet type (UO-0, UO-1-SN, UO-1-TS,
-/// UO-1-ID, or UO-1-RTP) based on changes between the current uncompressed headers
-/// and the compressor context's state. Updates compressor state post-transmission.
+/// Selects the most appropriate UO packet type based on changes between current headers
+/// and compressor state. Priority order: UO-1-RTP > UO-0 > UO-1-TS > UO-1-ID > UO-1-SN.
 ///
 /// # Parameters
 /// - `context`: The mutable compressor context.
@@ -210,8 +201,7 @@ pub(super) fn compress_as_uo(
 ) -> Result<Vec<u8>, RohcError> {
     debug_assert_eq!(
         context.rtp_ssrc, uncompressed_headers.rtp_ssrc,
-        "SSRC mismatch in compress_as_uo; context SSRC {} != packet SSRC {}",
-        context.rtp_ssrc, uncompressed_headers.rtp_ssrc
+        "SSRC mismatch in compress_as_uo"
     );
     debug_assert_ne!(context.rtp_ssrc, 0, "Context SSRC must be non-zero.");
 
@@ -220,55 +210,78 @@ pub(super) fn compress_as_uo(
     let current_marker = uncompressed_headers.rtp_marker;
     let current_ip_id = uncompressed_headers.ip_identification;
 
-    // Update TS stride detection BEFORE last_sent_rtp_ts_full is updated.
-    let _ = context.update_ts_stride_detection(current_ts);
-
     let sn_diff = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
     let marker_changed = current_marker != context.last_sent_rtp_marker;
     let ts_changed = current_ts != context.last_sent_rtp_ts_full;
     let ip_id_changed = current_ip_id != context.last_sent_ip_id_full;
     let sn_incremented_by_one = sn_diff == 1;
 
-    // Packet selection logic based on RFC 3095 rules.
-    // Priority: UO-1-RTP > UO-0 > UO-1-TS > UO-1-ID > UO-1-SN (fallback)
-    // Each "if" block should try to build the specific packet type.
+    // Validate existing stride for packets that will use input TS explicitly
+    if let Some(existing_stride) = context.ts_stride {
+        let ts_diff = current_ts.wrapping_diff(context.last_sent_rtp_ts_full);
+        let will_use_input_ts =
+            !marker_changed && ts_changed && sn_incremented_by_one && !ip_id_changed;
 
-    let final_rohc_packet_bytes =
+        if will_use_input_ts && ts_diff > 0 && sn_diff > 0 && ts_diff % existing_stride != 0 {
+            // Stride broken - reset to normal mode
+            context.ts_stride = None;
+            context.ts_scaled_mode = false;
+            context.ts_stride_packets = 0;
+        }
+    }
+
+    // Pre-calculate implicit timestamp for UO-1-SN packets
+    let implicit_ts_for_uo1_sn = if let Some(ts_stride) = context.ts_stride {
+        let ts_delta = sn_diff as u32 * ts_stride;
+        Timestamp::new(context.last_sent_rtp_ts_full.value().wrapping_add(ts_delta))
+    } else {
+        context.last_sent_rtp_ts_full
+    };
+
+    // Packet selection logic based on RFC 3095 rules
+    let (final_rohc_packet_bytes, actual_ts_for_context) =
         if context.ts_scaled_mode && sn_incremented_by_one && !ip_id_changed {
-            // UO-1-RTP can be used if TS_Scaled mode is active, SN incrs by 1, IP-ID is same.
-            // Marker bit is carried in UO-1-RTP, so its change doesn't prevent UO-1-RTP.
+            // UO-1-RTP: TS_Scaled mode active, SN increments by 1, IP-ID unchanged
             if let Some(ts_scaled_val) = context.calculate_ts_scaled(current_ts) {
-                build_uo1_rtp(
+                let packet = build_uo1_rtp(
                     context,
                     current_sn,
                     ts_scaled_val,
                     current_marker,
                     crc_calculators,
-                )?
+                )?;
+                (packet, current_ts)
             } else {
-                // TS_SCALED calculation failed (misaligned, overflow), should have forced IR.
-                // Fallback to UO-1-SN is safest if IR wasn't forced.
-                build_uo1_sn(context, current_sn, current_marker, crc_calculators)?
+                // TS_SCALED calculation failed - fallback to UO-1-SN
+                let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
+                (packet, implicit_ts_for_uo1_sn)
             }
         } else if !marker_changed && sn_diff > 0 && sn_diff < 16 && !ts_changed && !ip_id_changed {
-            // Conditions for UO-0: Marker same, SN LSB encodable (1-15 diff), TS same, IP-ID same.
-            build_uo0(context, current_sn, crc_calculators)?
+            // UO-0: Marker same, SN encodable in 4 bits, TS same, IP-ID same
+            let packet = build_uo0(context, current_sn, crc_calculators)?;
+            (packet, context.last_sent_rtp_ts_full)
         } else if !marker_changed && ts_changed && sn_incremented_by_one && !ip_id_changed {
-            // Conditions for UO-1-TS: Marker same, TS changed, SN incr by 1, IP-ID same.
-            build_uo1_ts(context, current_sn, current_ts, crc_calculators)?
+            // UO-1-TS: Marker same, TS changed, SN increments by 1, IP-ID same
+            let _ = context.update_ts_stride_detection(current_ts);
+            let packet = build_uo1_ts(context, current_sn, current_ts, crc_calculators)?;
+            (packet, current_ts)
         } else if !marker_changed && ip_id_changed && sn_incremented_by_one && !ts_changed {
-            // Conditions for UO-1-ID: Marker same, IP-ID changed, SN incr by 1, TS same.
-            build_uo1_id(context, current_sn, current_ip_id, crc_calculators)?
+            // UO-1-ID: Marker same, IP-ID changed, SN increments by 1, TS same
+            let packet = build_uo1_id(context, current_sn, current_ip_id, crc_calculators)?;
+            (packet, context.last_sent_rtp_ts_full)
         } else {
-            // Fallback to UO-1-SN (handles SN jumps, marker changes not covered above).
-            build_uo1_sn(context, current_sn, current_marker, crc_calculators)?
+            // UO-1-SN: Fallback for SN jumps, marker changes, etc.
+            let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
+            (packet, implicit_ts_for_uo1_sn)
         };
 
+    // Update context with packet-specific timestamps
     context.last_sent_rtp_sn_full = current_sn;
-    context.last_sent_rtp_ts_full = current_ts;
+    context.last_sent_rtp_ts_full = actual_ts_for_context;
     context.last_sent_rtp_marker = current_marker;
     context.last_sent_ip_id_full = current_ip_id;
 
+    // Transition from First Order to Second Order mode
     if context.mode == Profile1CompressorMode::FirstOrder {
         context.consecutive_fo_packets_sent = context.consecutive_fo_packets_sent.saturating_add(1);
         if context.consecutive_fo_packets_sent >= P1_COMPRESSOR_FO_TO_SO_THRESHOLD {
@@ -281,8 +294,6 @@ pub(super) fn compress_as_uo(
     Ok(final_rohc_packet_bytes)
 }
 
-// --- Private UO Packet Building Helper Functions ---
-
 /// Builds a ROHC Profile 1 UO-0 packet.
 fn build_uo0(
     context: &mut Profile1CompressorContext,
@@ -293,8 +304,8 @@ fn build_uo0(
     let crc_input_bytes = build_generic_uo_crc_input(
         context.rtp_ssrc,
         current_sn,
-        context.last_sent_rtp_ts_full, // TS is unchanged for UO-0
-        context.last_sent_rtp_marker,  // Marker is unchanged for UO-0
+        context.last_sent_rtp_ts_full,
+        context.last_sent_rtp_marker,
     );
     let crc3_val = crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
     let uo0_data = Uo0Packet {
@@ -302,7 +313,6 @@ fn build_uo0(
         sn_lsb: sn_lsb_val,
         crc3: crc3_val,
     };
-    // context.current_lsb_sn_width might be updated if it can vary for UO-0.
     build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
 }
 
@@ -317,19 +327,18 @@ fn build_uo1_ts(
     let crc_input_bytes = build_generic_uo_crc_input(
         context.rtp_ssrc,
         current_sn,
-        current_ts,                   // Current (changed) TS for CRC
-        context.last_sent_rtp_marker, // Marker is unchanged for UO-1-TS
+        current_ts,
+        context.last_sent_rtp_marker,
     );
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
     let uo1_ts_packet_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
-        marker: false, // Implied unchanged from context for UO-1-TS packet type encoding
+        marker: false,
         ts_lsb: Some(ts_lsb_val),
         num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
         crc8: calculated_crc8,
         ..Default::default()
     };
-    // context.current_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT; // If it could vary
     build_profile1_uo1_ts_packet(&uo1_ts_packet_data).map_err(RohcError::Building)
 }
 
@@ -341,12 +350,17 @@ fn build_uo1_sn(
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcError> {
     let sn_lsb_val = encode_lsb(current_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT)? as u16;
-    let crc_input_bytes = build_generic_uo_crc_input(
-        context.rtp_ssrc,
-        current_sn,
-        context.last_sent_rtp_ts_full, // TS is unchanged from context for UO-1-SN
-        current_marker,                // Current (possibly changed) marker for CRC
-    );
+
+    let sn_delta = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
+    let implicit_ts = if let Some(ts_stride) = context.ts_stride {
+        let ts_delta = sn_delta as u32 * ts_stride;
+        Timestamp::new(context.last_sent_rtp_ts_full.value().wrapping_add(ts_delta))
+    } else {
+        context.last_sent_rtp_ts_full
+    };
+
+    let crc_input_bytes =
+        build_generic_uo_crc_input(context.rtp_ssrc, current_sn, implicit_ts, current_marker);
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
     let uo1_sn_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -356,7 +370,6 @@ fn build_uo1_sn(
         crc8: calculated_crc8,
         ..Default::default()
     };
-    // context.current_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT; // If it could vary
     build_profile1_uo1_sn_packet(&uo1_sn_data).map_err(RohcError::Building)
 }
 
@@ -372,9 +385,9 @@ fn build_uo1_id(
     let crc_input_bytes = build_uo1_id_specific_crc_input(
         context.rtp_ssrc,
         current_sn,
-        context.last_sent_rtp_ts_full, // TS is unchanged for UO-1-ID
-        context.last_sent_rtp_marker,  // Marker is unchanged for UO-1-ID
-        ip_id_lsb_for_packet_field,    // IP-ID LSB included in CRC
+        context.last_sent_rtp_ts_full,
+        context.last_sent_rtp_marker,
+        ip_id_lsb_for_packet_field,
     );
     let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
     let uo1_id_packet_data = Uo1Packet {
@@ -389,7 +402,7 @@ fn build_uo1_id(
 
 /// Builds a ROHC Profile 1 UO-1-RTP packet.
 fn build_uo1_rtp(
-    context: &Profile1CompressorContext, // Immutable borrow is fine here
+    context: &Profile1CompressorContext,
     current_sn: u16,
     ts_scaled_val: u8,
     current_marker: bool,
@@ -400,7 +413,7 @@ fn build_uo1_rtp(
     })?;
     debug_assert!(stride > 0, "TS Stride must be positive to build UO-1-RTP");
 
-    // Reconstruct the full TS value that corresponds to this TS_SCALED for CRC calculation.
+    // Reconstruct full TS value for CRC calculation
     let full_ts_for_crc = context
         .ts_offset
         .wrapping_add(ts_scaled_val as u32 * stride);
@@ -423,10 +436,9 @@ fn build_uo1_rtp(
     build_profile1_uo1_rtp_packet(&uo1_rtp_data).map_err(RohcError::Building)
 }
 
-// --- Generic CRC Input Builders ---
-
-/// Creates byte slice input for generic UO packet CRC calculation (UO-0, UO-1-SN, UO-1-TS, UO-1-RTP).
-/// Input is: SSRC (4B), SN (2B), TS (4B), Marker (1B) = 11 bytes total.
+/// Creates byte slice input for generic UO packet CRC calculation.
+///
+/// Input format: SSRC (4B), SN (2B), TS (4B), Marker (1B) = 11 bytes total.
 pub(super) fn build_generic_uo_crc_input(
     context_ssrc: u32,
     sn_for_crc: u16,
@@ -443,7 +455,8 @@ pub(super) fn build_generic_uo_crc_input(
 }
 
 /// Creates byte slice input specifically for UO-1-ID packet CRC calculation.
-/// Input: SSRC (4B), SN (2B), TS (4B), Marker (1B), IP-ID_LSB (1B) = 12 bytes total.
+///
+/// Input format: SSRC (4B), SN (2B), TS (4B), Marker (1B), IP-ID_LSB (1B) = 12 bytes total.
 fn build_uo1_id_specific_crc_input(
     context_ssrc: u32,
     sn_for_crc: u16,
