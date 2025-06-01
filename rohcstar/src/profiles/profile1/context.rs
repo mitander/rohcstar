@@ -614,6 +614,7 @@ impl Profile1DecompressorContext {
                 // If a stride was previously inferred
                 self.ts_stride = None; // Stride broken
                 self.ts_offset = Timestamp::new(0); // Reset offset
+                self.ts_scaled_mode = false;
             }
         }
     }

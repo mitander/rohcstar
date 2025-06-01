@@ -1,0 +1,16 @@
+[package]
+name = "rohcstar-sim"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rohcstar = { path = "../rohcstar" }
+rand = { version = "0.9", features = ["std_rng"] }
+clap = { version = "4.5", features = ["derive", "cargo"] }
+rayon = "1.10"
+ctrlc = { version = "3.4", features = ["termination"] }
+num_cpus = "1.17.0"
+
+[[bin]]
+name = "rohcstar-sim"
+path = "src/main.rs"
