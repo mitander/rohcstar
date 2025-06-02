@@ -606,7 +606,7 @@ fn p1_uo1_rtp_after_ir_with_ts_stride_succeeds() {
 }
 
 #[test]
-fn single_uo_packet_after_ir_type_check() {
+fn p1_umode_uo1ts_selection_after_ir() {
     let mut engine = create_test_engine_with_system_clock(50);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))

@@ -327,3 +327,53 @@ fn p1_uo1_ts_with_add_cid() {
     assert_eq!(decompressed.rtp_timestamp, Timestamp::new(7500));
     assert!(!decompressed.rtp_marker);
 }
+
+/// Tests that UO-1-TS is selected when RTP Timestamp changes significantly, SN increments by one,
+/// and Marker remains unchanged from the context.
+#[test]
+fn p1_uo1_ts_is_used_when_ts_changes_marker_sn_ok_for_uo1ts() {
+    let mut engine = create_test_engine_with_system_clock(100);
+    engine
+        .register_profile_handler(Box::new(Profile1Handler::new()))
+        .unwrap();
+    let cid = 0u16;
+    let ssrc = 0x4B5C6D;
+
+    let initial_sn = 400;
+    let initial_ts_val: u32 = 5000;
+    let initial_marker = false;
+    let ir_headers_for_context =
+        create_rtp_headers(initial_sn, initial_ts_val, initial_marker, ssrc);
+    establish_ir_context(
+        &mut engine,
+        cid,
+        ir_headers_for_context.rtp_sequence_number,
+        ir_headers_for_context.rtp_timestamp.value(),
+        ir_headers_for_context.rtp_marker,
+        ssrc,
+    );
+
+    let next_sn = initial_sn + 1; // SN increments by one
+    let next_ts_val: u32 = initial_ts_val + 500; // TS changes significantly
+    let mut headers_ts_change = create_rtp_headers(next_sn, next_ts_val, initial_marker, ssrc); // Marker same
+    headers_ts_change.ip_identification = ir_headers_for_context.ip_identification; // IP-ID same
+    let generic_ts_change = GenericUncompressedHeaders::RtpUdpIpv4(headers_ts_change.clone());
+
+    let compressed_packet = engine
+        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_ts_change)
+        .unwrap();
+
+    // Expect UO-1-TS (4 bytes for CID 0: Type + TS_LSB(2) + CRC8)
+    assert_eq!(compressed_packet.len(), 4);
+    assert_eq!(compressed_packet[0], P1_UO_1_TS_DISCRIMINATOR);
+
+    let decomp_headers = engine
+        .decompress(&compressed_packet)
+        .unwrap()
+        .as_rtp_udp_ipv4()
+        .unwrap()
+        .clone();
+    assert_eq!(decomp_headers.rtp_sequence_number, next_sn);
+    assert_eq!(decomp_headers.rtp_marker, initial_marker);
+    assert_eq!(decomp_headers.rtp_timestamp, Timestamp::new(next_ts_val)); // TS reconstructed
+}

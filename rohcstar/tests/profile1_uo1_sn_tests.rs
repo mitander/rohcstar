@@ -18,8 +18,30 @@ use rohcstar::profiles::profile1::{
     Profile1Handler,
 };
 
-/// Helper to establish a TS stride in the compressor after an IR.
-/// Sends one UO-1-TS packet.
+/// Establishes a TS stride in the compressor context after an initial IR packet.
+///
+/// This helper function first sends an IR packet based on `base_sn`, `base_ts_val`,
+/// and `base_marker` to initialize the context. Then, it sends a UO-1-TS packet
+/// with `SN = base_sn + 1` and `TS = base_ts_val + stride_to_establish`.
+/// The `base_ip_id` is used for the IP-ID field of the UO-1-TS packet.
+/// After this sequence, the compressor context associated with `cid` should have
+/// `ts_stride` set to `stride_to_establish`, and its last sent SN/TS/Marker updated
+/// according to the UO-1-TS packet.
+///
+/// # Parameters
+/// - `engine`: Mutable reference to the `RohcEngine`.
+/// - `cid`: Context ID for the ROHC flow.
+/// - `ssrc`: SSRC for the RTP flow.
+/// - `base_sn`: RTP sequence number for the initial IR packet.
+/// - `base_ts_val`: RTP timestamp value for the initial IR packet.
+/// - `base_marker`: RTP marker bit for the initial IR packet.
+/// - `base_ip_id`: IP Identification value used for the subsequent UO-1-TS packet.
+/// - `stride_to_establish`: The desired RTP timestamp stride to be established.
+///
+/// # Panics
+/// Panics if compression or decompression of the internal setup packets fails,
+/// or if assertions about packet types/lengths fail internally.
+#[allow(clippy::too_many_arguments)]
 fn establish_stride_after_ir(
     engine: &mut rohcstar::engine::RohcEngine,
     cid: u16,
