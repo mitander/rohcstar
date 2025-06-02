@@ -1,6 +1,6 @@
 # Rohcstar Design Document
 
-**Last Updated:** May 27, 2025
+**Last Updated:** June 3, 2025
 
 ## 1. Introduction & Vision
 
@@ -74,10 +74,10 @@ Rohcstar's architecture is centered around a few key components:
 
 3.  **Compressor & Decompressor Contexts:**
     *   Stateful objects (e.g., `Profile1CompressorContext`) that store all necessary information for a single compression/decompression flow (per CID).
-    *   Include static fields (IPs, ports, SSRC) and dynamic fields (last SN, TS, IP-ID, LSB parameters, operational mode).
+    *   Include static fields (IPs, ports, SSRC) and dynamic fields (last SN, TS, IP-ID, LSB parameters, operational mode, TS Stride info).
 
-4.  **`ContextManager` (or `ContextStore`):**
-    *   Manages the storage, retrieval, and lifecycle (including timeouts - *MVP TODO*) of all active contexts.
+4.  **`ContextManager`:**
+    *   Manages the storage, retrieval, and lifecycle (including timeouts) of all active contexts.
     *   Currently uses `HashMap`, with plans for optimized storage (e.g., array for small CIDs, hybrid model).
 
 5.  **Packet Processing Modules:**
@@ -85,38 +85,39 @@ Rohcstar's architecture is centered around a few key components:
     *   **`profiles::profileX::packet_types.rs`:** Structs representing ROHC-specific packet formats (e.g., `IrPacket`, `Uo0Packet`).
     *   **`profiles::profileX::packet_processor.rs`:** Low-level functions for parsing and building ROHC packets and uncompressed headers.
     *   **`encodings.rs`:** Core encoding schemes like W-LSB.
-    *   **`crc.rs`:** ROHC-specific CRC-3 and CRC-8 calculations.
+    *   **`crc.rs`:** ROHC-specific CRC-3 and CRC-8 calculations, including `CrcCalculators` for reuse.
 
 ## 3. Profile 1 (RTP/UDP/IP) U-Mode Implementation (MVP Focus)
 
 ### 3.1. Context (`profiles::profile1::context.rs`)
 
-*   **`Profile1CompressorContext`:** Tracks last sent SN, TS, Marker, IP-ID, SSRC, static IPs/ports, current LSB widths, `p` offsets, IR refresh counters, and operational mode (IR, FO, SO).
-*   **`Profile1DecompressorContext`:** Tracks last reconstructed SN, TS, Marker, IP-ID, SSRC, static IPs/ports, expected LSB widths, `p` offsets, operational mode (NC, SC, FC, SO), and state transition counters (CRC failures, success streaks, confidence levels).
+*   **`Profile1CompressorContext`:** Tracks last sent SN, TS, Marker, IP-ID, SSRC, static IPs/ports, current LSB widths, `p` offsets, IR refresh counters, TS Stride/Scaled mode parameters, and operational mode (IR, FO, SO).
+*   **`Profile1DecompressorContext`:** Tracks last reconstructed SN, TS, Marker, IP-ID, SSRC, static IPs/ports, expected LSB widths, `p` offsets, operational mode (NC, SC, FC, SO), TS Stride/Scaled mode parameters, and state transition counters (CRC failures, success streaks, confidence levels).
 
 ### 3.2. Packet Types & Processing
 
 *   **IR (Initialization/Refresh):**
     *   Used for context establishment and refresh.
-    *   Carries static chain (IPs, ports, SSRC) and optional dynamic chain (SN, TS, Marker).
+    *   Carries static chain (IPs, ports, SSRC) and optional dynamic chain (SN, TS, Marker, TS_STRIDE extension).
     *   CRC-8 protected.
     *   Handled by `build_profile1_ir_packet` and `parse_profile1_ir_packet`.
 *   **UO-0 (Optimistic Type 0):**
     *   Highly compressed (1 byte for CID 0).
     *   Carries 4 LSBs of SN and 3-bit CRC.
-    *   TS, Marker, IP-ID are implicit from context.
+    *   TS is implicitly reconstructed (potentially using context's TS stride), Marker, and IP-ID are implicit from context.
     *   Handled by `build_profile1_uo0_packet` and `parse_profile1_uo0_packet`.
 *   **UO-1 (Optimistic Type 1):**
     *   More robust updates. CRC-8 protected.
-    *   **UO-1-SN:** Carries LSBs of SN (typically 8 bits) and current Marker bit. TS implicit.
+    *   **UO-1-SN:** Carries LSBs of SN (typically 8 bits) and current Marker bit. TS is implicitly reconstructed (potentially using context's TS stride).
     *   **UO-1-TS:** Carries LSBs of TS (typically 16 bits). SN is implicit (SN_ref + 1). Marker implicit.
-    *   **UO-1-ID:** Carries LSBs of IP-ID (typically 8 bits). SN is implicit (SN_ref + 1). TS, Marker implicit.
+    *   **UO-1-ID:** Carries LSBs of IP-ID (typically 8 bits). SN is implicit (SN_ref + 1). TS, Marker implicit (TS potentially using context's TS stride).
+    *   **UO-1-RTP:** Carries TS_SCALED and current Marker bit. SN is implicit (SN_ref + 1). Relies on established TS stride.
     *   Handled by `build_profile1_uo1_*_packet` and `parse_profile1_uo1_*_packet` variants.
 
 ### 3.3. State Machines (RFC 3095, Section 5.3)
 
 *   **Compressor (U-mode):** IR → FO → SO
-    *   **IR (Initialization & Refresh):** Sends IR/IR-DYN. Triggered by: new flow, SSRC change, refresh interval, significant context desync (LSB insufficiency - *MVP TODO*).
+    *   **IR (Initialization & Refresh):** Sends IR/IR-DYN. Triggered by: new flow, SSRC change, refresh interval, significant context desync (e.g., LSB insufficiency).
     *   **FO (First Order):** Sends UO-0, UO-1 packets. Transitions to SO after a number of successful FO packets.
     *   **SO (Second Order):** Sends optimized UO packets. Maintains high confidence.
 *   **Decompressor (U-mode):** NC → SC → FC → SO (and fallbacks)
@@ -128,25 +129,40 @@ Rohcstar's architecture is centered around a few key components:
 ## 4. Key Algorithms
 
 *   **W-LSB (Window-based Least Significant Bits):** (RFC 3095, Sec 4.5) Used for encoding/decoding SN, TS, IP-ID. Implemented in `src/encodings.rs`.
-*   **CRC-3/ROHC & CRC-8/ROHC:** (RFC 3095, Sec 5.9) For packet integrity. Implemented in `src/crc.rs`.
+*   **CRC-3/ROHC & CRC-8/ROHC:** (RFC 3095, Sec 5.9) For packet integrity. Implemented in `src/crc.rs` (with `CrcCalculators` for reuse).
 
-## 5. Future Architectural Enhancements (Post-MVP)
+## 5. Immediate Enhancements & Future Architectural Goals
 
-*   **Type Safety:** Introduce newtypes for `ContextId`, `SequenceNumber`, `Timestamp`, etc.
+This section outlines both immediate priorities currently underway and longer-term architectural vision.
+
+### 5.1. Immediate Priorities
+*   **Enhanced Type Safety:** Introduce newtypes for critical identifiers like `ContextId`, `SequenceNumber` (Note: `Timestamp` is already implemented).
 *   **Performance Optimizations:**
-    *   CRC calculator reuse.
-    *   Buffer pooling for packet `Vec<u8>`s.
-    *   Optimized header parsing (currently a bottleneck).
-*   **Engine Decomposition:** Split `RohcEngine` into `PacketFramer`, `ProfileDispatcher`, `ContextStore`.
-*   **Context Storage Optimization:** Hybrid array/HashMap `ContextStore`.
-*   **Error Handling:** Richer `ErrorContext` in `RohcError`.
-*   **Configuration Management:** Central `RohcConfig`.
-*   **Observability:** Optional metrics collection.
+    *   Explore advanced buffer pooling strategies for packet `Vec<u8>`s.
+    *   Benchmark and refine CRC calculation paths (reuse is in place, further optimization may be possible).
+*   **Formalize Conventions:** Ensure `NAMING_CONVENTIONS.md` is comprehensive and strictly followed.
+*   **Expand Test Coverage:** Continue to enhance unit, integration, and fuzz testing, especially for state transitions and error recovery paths.
+
+### 5.2. Post-MVP / Future Enhancements
+*   **Performance:**
+    *   Further optimize header parsing pathways.
+*   **Engine Architecture:**
+    *   Consider further `RohcEngine` decomposition into logical units like `PacketFramer`, `ProfileDispatcher` if complexity warrants.
+*   **Context Storage:**
+    *   Optimize `ContextManager` with hybrid array/HashMap storage based on CID ranges.
+*   **Error Handling:**
+    *   Introduce richer `ErrorContext` within `RohcError` for improved diagnostics.
+*   **Configuration:**
+    *   Develop a central `RohcConfig` mechanism for engine and profile tuning.
+*   **Observability:**
+    *   Integrate optional metrics collection for performance monitoring and operational insights.
 
 ## 6. Testing Strategy
 
 *   **Unit Tests:** (`#[cfg(test)] mod tests`) for individual functions and components.
 *   **Integration Tests:** (`tests/` directory) for end-to-end flows and component interactions for Profile 1 U-mode.
-*   **Property-Based Tests:** For encoding/decoding logic (`proptest`).
-*   **Fuzz Testing:** (External tool: Drifter) for decompressor robustness and state machine validation. `src/fuzz_harnesses.rs` provides integration points.
-*   **Deterministic Simulations:** For validating complex state transitions under specific sequences.
+*   **Property-Based Tests:** For encoding/decoding logic (e.g., using `proptest`).
+*   **Deterministic Simulations (`rohcstar-sim`):** Custom simulator in the `rohcstar-sim` crate for validating complex state transitions, different packet sequences, and channel conditions (loss).
+*   **Fuzz Testing:**
+    *   **Harnesses:** `src/fuzz_harnesses.rs` provides integration points for fuzzing specific components, primarily the decompressor.
+    *   **External Fuzzers (e.g., Drifter):** Planned deeper integration with stateful network protocol fuzzers like Drifter for advanced robustness and security testing.

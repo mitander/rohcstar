@@ -19,13 +19,20 @@
 
 ## Current Status
 
-*   **Profile 0x0001 (RTP/UDP/IP) U-mode:**
-    *   [✓] IR, UO-0, UO-1-SN, UO-1-TS packet compression/decompression.
-    *   [✓] UO-1-ID packet compression/decompression (CRC logic under review).
-    *   [✓] Basic NC, SC, FC decompressor state transitions.
-    *   [✓] SO decompressor state logic partially implemented.
-    *   [✓] Context timeout handling in progress.
-    *   [✓] Basic TS_STRIDE support (compressor detection, UO-1-RTP, IR-DYN signaling).
+*   **Profile 0x0001 (RTP/UDP/IP) Unidirectional Mode:**
+    *   [✓] Full compression and decompression support for all packet types:
+        *   IR (Initialization and Refresh)
+        *   IR-DYN (Dynamic chain, including TS_STRIDE signaling)
+        *   UO-0 (Smallest UO packet)
+        *   UO-1-SN (Sequence Number)
+        *   UO-1-TS (Timestamp)
+        *   UO-1-ID (IP Identification)
+        *   UO-1-RTP (Scaled Timestamp)
+    *   [✓] Robust decompressor state machine (NC, SC, FC, SO transitions).
+    *   [✓] TS_STRIDE detection and handling for efficient timestamp compression.
+    *   [✓] Context management with CID handling and activity-based timeouts.
+    *   [✓] Comprehensive test suite covering core functionality and edge cases.
+    *   [✓] Basic fuzzing harness integrated for robustness testing.
 
 ## Core Features
 
