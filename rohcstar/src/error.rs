@@ -154,7 +154,6 @@ pub enum RohcError {
     ProfileSpecific { profile_id: u8, description: String },
 }
 
-// Test module remains unchanged.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::constants::{
-    ROHC_GENERIC_IR_D_BIT_MASK, ROHC_GENERIC_IR_PACKET_TYPE_BASE, ROHC_SMALL_CID_MASK,
+    DEFAULT_IR_REFRESH_INTERVAL, ROHC_GENERIC_IR_D_BIT_MASK, ROHC_GENERIC_IR_PACKET_TYPE_BASE,
+    ROHC_SMALL_CID_MASK,
 };
 use crate::context_manager::ContextManager;
 use crate::error::{RohcError, RohcParsingError};
@@ -333,7 +334,7 @@ impl RohcEngine {
 impl Default for RohcEngine {
     fn default() -> Self {
         Self::new(
-            crate::constants::DEFAULT_IR_REFRESH_INTERVAL,
+            DEFAULT_IR_REFRESH_INTERVAL,
             Duration::from_secs(60 * 5), // Default context timeout: 5 minutes
             Arc::new(SystemClock),
         )

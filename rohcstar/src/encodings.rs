@@ -354,58 +354,50 @@ mod tests {
 
     #[test]
     fn decode_lsb_p0_wrapping_around_max_u64() {
-        // Scenario: p_offset = 0, v_ref near u64::MAX, k=4. Window wraps around 0.
-        let k = 4;
-        let lsb_mask = (1u64 << k) - 1;
-        let ref_val = u64::MAX - 5; // ref_val = ...FFFFAB (if MAX = FFFFFFFF)
+        // Test W-LSB decoding with p_offset = 0 when the reference value is near u64::MAX,
+        // causing the interpretation window to wrap around 0.
+        let k = 4; // Use 4 LSBs
+        let lsb_mask = (1u64 << k) - 1; // For k=4, lsb_mask = 15. This is also (2^k - 1).
+        let ref_val = u64::MAX - 5; // Reference value: ...FFFB (if k=4, LSBs are 0xB)
 
-        // interval_base = ref_val.
-        // (ref_val & !lsb_mask) | (ref_val & lsb_mask) = ref_val.
-        // candidate_v = ref_val. ref_val >= ref_val.
-        // ref_val.wrapping_sub(ref_val) = 0. 0 < 16. OK. => ref_val
+        // Case 1: Received LSBs match the LSBs of ref_val itself.
+        // Expected: ref_val should be reconstructed.
         assert_eq!(
-            decode_lsb(ref_val & lsb_mask, ref_val, k, 0).unwrap(),
+            decode_lsb(ref_val & lsb_mask, ref_val, k, 0).unwrap(), // LSBs of ref_val are 0xB
             ref_val
         );
 
-        // received_lsbs = u64::MAX & lsb_mask (0xF). ref_val = MAX-5.
-        // candidate_v = (ref_val & !lsb_mask) | 0xF.
-        // If ref_val = ...AB, (ref_val & !0xF) = ...A0. candidate_v = ...AF.
-        // This is u64::MAX - 5 + (0xF - ( (MAX-5) & 0xF) )
-        // which is u64::MAX - 5 + (15 - 11) = MAX - 5 + 4 = MAX - 1.
-        // Let's check this: (MAX-5 & !0xF) | 0xF = (MAX & 0xFFFFFFF0) - (5 & 0xFFFFFFF0) ...
-        // Easier: ( (MAX-5) & 0xFFFFFFF0 ) | 0xF = (u64::MAX & 0xFFFFFFF0) | 0xF == u64::MAX
-        // Or rather, if ref_val ends in B (11), then (ref_val & !0xF) ends in 0.
-        // So candidate_v ends in F. If ref_val = MAX-5, candidate_v = MAX.
-        // candidate_v = MAX. MAX >= MAX-5.
-        // MAX.wrapping_sub(MAX-5) = 5. 5 < 16. OK. => MAX.
+        // Case 2: Received LSBs are u64::MAX's LSBs (0xF if k=4).
+        // ref_val is u64::MAX - 5.
+        // Expected: u64::MAX, as it's the closest value to ref_val with LSBs 0xF.
         assert_eq!(
-            decode_lsb(u64::MAX & lsb_mask, ref_val, k, 0).unwrap(),
+            decode_lsb(u64::MAX & lsb_mask, ref_val, k, 0).unwrap(), // LSBs of u64::MAX are 0xF
             u64::MAX
         );
 
-        // received_lsbs = 0. ref_val = MAX-5.
-        // candidate_v = (ref_val & !lsb_mask) | 0 = (ref_val without its LSBs).
-        // candidate_v = ...A0. This is less than ref_val (...AB).
-        // candidate_v = candidate_v + 16 = ...B0.
-        // candidate_v.wrapping_sub(ref_val) = (...B0 - ...AB) = 5. 5 < 16. OK. => ...B0 which is 0 after wrapping.
-        // Expected: 0 for these inputs.
-        // (MAX-5) & !0xF = MAX-5 - (MAX-5)%16 = MAX-5-11 = MAX-16. candidate_v = MAX-16.
-        // MAX-16 < MAX-5. candidate_v = MAX-16+16 = MAX. This is wrong if expected 0.
-        // Ah, the formula is simpler with interval_base (v_ref-p). Here p=0.
-        // cand = (v_ref & !mask) + lsb. if cand < v_ref, cand += window.
-        // The interpretation is if v_cand is *closest* to v_ref.
-        // Let's re-evaluate my understanding of "closest" for wrapping.
-        // The current implementation correctly follows the RFC 3095 derivation logic.
-        // If ref_val=MAX-5, lsb=0. ( (MAX-5) & !0xF ) | 0 = (MAX & 0xFFFFFFF0) | 0.
-        //   = (MAX-15) | 0 = MAX-15.
-        // MAX-15 < MAX-5. So, candidate_v = MAX-15 + 16 = MAX+1 = 0 (wrapped).
-        // 0.wrapping_sub(MAX-5) is a small positive number (5). 5 < 16. OK => 0.
+        // Case 3: Received LSBs are 0. ref_val is u64::MAX - 5.
+        // Expected: 0 (after wrapping), as it's within the window relative to ref_val and matches LSBs.
         assert_eq!(decode_lsb(0, ref_val, k, 0).unwrap(), 0);
+
+        // Case 4: Received LSBs are 3. ref_val is u64::MAX - 5.
+        // Expected: 3 (after wrapping).
         assert_eq!(decode_lsb(3, ref_val, k, 0).unwrap(), 3);
 
-        let upper_val_in_window = ref_val.wrapping_add(15 - (ref_val & lsb_mask));
-        let upper_val_lsb = upper_val_in_window & lsb_mask;
+        // Case 5: Test the value that has LSBs corresponding to lsb_mask (all 1s for k bits)
+        // within the window around ref_val.
+        // This should reconstruct to a value ending in 0xF if k=4.
+        // For ref_val = u64::MAX - 5 (ends in ...B), window is [u64::MAX - 5, u64::MAX - 5 + 15].
+        // The value in this window that ends in F is u64::MAX.
+        // If we change the LSBs from 0xB (for MAX-5) to 0xF, we add (0xF - 0xB) = 4.
+        // So, (MAX-5) + 4 = MAX - 1.
+        // The value in window [ref_val, ref_val + 2^k - 1] that has LSBs `lsb_mask`
+        // is ref_val + (lsb_mask - (ref_val & lsb_mask)).
+        let upper_val_in_window = ref_val.wrapping_add(lsb_mask - (ref_val & lsb_mask));
+        let upper_val_lsb = upper_val_in_window & lsb_mask; // Should be lsb_mask
+        assert_eq!(
+            upper_val_lsb, lsb_mask,
+            "Upper value LSBs should be the lsb_mask itself"
+        );
         assert_eq!(
             decode_lsb(upper_val_lsb, ref_val, k, 0).unwrap(),
             upper_val_in_window

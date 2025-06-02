@@ -780,7 +780,7 @@ mod tests {
         let uo0_data_bad_crc = Uo0Packet {
             crc3: 0x07,
             sn_lsb: 0x0F,
-            cid: None, // <- this was missing, I added it for several tests
+            cid: None,
         }; // Likely invalid combination
         let uo0_bytes_bad = build_profile1_uo0_packet(&uo0_data_bad_crc).unwrap();
         let _ = process_packet_in_so_mode(
