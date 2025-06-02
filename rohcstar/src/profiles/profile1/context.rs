@@ -200,14 +200,10 @@ impl Profile1CompressorContext {
     /// - `false` otherwise.
     pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
         if self.rtp_ssrc == 0 {
-            // SSRC must be known to start stride detection
-            return false;
+            return false; // SSRC must be known.
         }
+        // If it's the very first packet after SSRC init, no prior TS to diff against.
         if self.last_sent_rtp_ts_full.value() == 0 && self.ts_stride_packets == 0 {
-            // If it's the very first packet for this SSRC (last_sent_ts_full is 0 from init,
-            // and ts_stride_packets is 0), we can't calculate a diff yet.
-            // The 'last_sent_rtp_ts_full' will be updated with current_packet_ts after this call,
-            // and the *next* packet will allow for diff calculation.
             return false;
         }
 
@@ -216,33 +212,42 @@ impl Profile1CompressorContext {
 
         match self.ts_stride {
             None => {
+                // No stride currently suspected.
                 if ts_diff > 0 {
+                    // A positive difference is a potential new stride. Assume sn_delta=1 for initial detection.
                     self.ts_stride = Some(ts_diff);
-                    self.ts_offset = self.last_sent_rtp_ts_full;
+                    self.ts_offset = self.last_sent_rtp_ts_full; // Base TS for this potential stride.
                     self.ts_stride_packets = 1;
                     self.ts_scaled_mode = false;
                 }
             }
-            Some(current_established_stride) => {
-                if ts_diff > 0
-                    && current_established_stride > 0
-                    && ts_diff % current_established_stride == 0
+            Some(current_established_unit_stride) => {
+                // A unit stride is currently established or suspected.
+                if current_established_unit_stride > 0
+                    && ts_diff > 0
+                    && (ts_diff % current_established_unit_stride == 0)
                 {
+                    // The current packet's TS difference is a positive multiple of the established unit stride.
+                    // This means the TS is advancing consistently with the established unit stride.
+                    // This handles sn_delta=1 (where ts_diff == current_established_unit_stride)
+                    // and sn_delta > 1 (where ts_diff = sn_delta * current_established_unit_stride).
                     self.ts_stride_packets = self.ts_stride_packets.saturating_add(1);
 
                     if !self.ts_scaled_mode
                         && self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
                     {
+                        // Threshold met: activate scaled mode. ts_offset remains from initial detection.
                         self.ts_scaled_mode = true;
                         newly_activated_scaled_mode = true;
                     }
                 } else {
+                    // Stride is broken (ts_diff is not a positive multiple of current_established_unit_stride, or stride was 0).
                     self.ts_stride = None;
                     self.ts_offset = Timestamp::new(0);
                     self.ts_stride_packets = 0;
                     self.ts_scaled_mode = false;
 
-                    // Attempt to start new stride detection if current ts_diff is positive
+                    // Attempt to detect a new stride starting from this packet, assuming sn_delta=1.
                     if ts_diff > 0 {
                         self.ts_stride = Some(ts_diff);
                         self.ts_offset = self.last_sent_rtp_ts_full;
@@ -586,69 +591,60 @@ impl Profile1DecompressorContext {
 
         let last_sn = self.last_reconstructed_rtp_sn_full;
         let last_ts = self.last_reconstructed_rtp_ts_full;
+        let mut stride_broken = false;
 
-        if last_sn == new_sn {
-            if new_ts != last_ts && self.ts_stride.is_some() {
-                self.ts_stride = None;
-                self.ts_offset = Timestamp::new(0);
-                self.ts_scaled_mode = false;
+        if new_sn == last_sn {
+            if new_ts != last_ts {
+                // SN same, TS changed: breaks stride.
+                stride_broken = true;
             }
-            return;
-        }
-
-        let sn_delta = new_sn.wrapping_sub(last_sn);
-        let ts_diff_raw = new_ts.0.wrapping_sub(last_ts.0);
-
-        let logically_advanced_ts = if new_ts.0 >= last_ts.0 {
-            ts_diff_raw > 0
+            // If SN and TS are same, stride state is maintained.
         } else {
-            // Heuristic for positive wrap-around small enough to be a stride
-            ts_diff_raw < (u32::MAX / 2) && ts_diff_raw > 0
-        };
+            // SN changed.
+            let sn_delta = new_sn.wrapping_sub(last_sn);
+            let ts_diff = new_ts.wrapping_diff(last_ts);
 
-        if sn_delta > 0 && logically_advanced_ts {
-            let sn_delta_u32 = sn_delta as u32;
-            if ts_diff_raw == 0 {
-                if self.ts_stride.is_some() {
-                    self.ts_stride = None;
-                    self.ts_offset = Timestamp::new(0);
-                    self.ts_scaled_mode = false;
-                }
-                return;
-            }
+            // Check for logical forward advancement of SN and TS.
+            let sn_advanced_logically = sn_delta > 0 && sn_delta < 0x8000; // Avoid large reverse wraps.
+            let ts_advanced_logically = ts_diff > 0 && ts_diff < (u32::MAX / 2); // Avoid large reverse wraps.
 
-            let potential_unit_stride = ts_diff_raw / sn_delta_u32;
-
-            if ts_diff_raw % sn_delta_u32 == 0 && potential_unit_stride > 0 {
-                // Clean division & positive unit stride
-                if self.ts_stride.is_none() {
-                    self.ts_stride = Some(potential_unit_stride);
-                    self.ts_offset = last_ts;
-                } else if self.ts_stride == Some(potential_unit_stride) {
-                    // Consistent
-                } else {
-                    // Stride value changed
-                    self.ts_stride = Some(potential_unit_stride);
-                    self.ts_offset = last_ts;
-                    if self.ts_scaled_mode {
-                        self.ts_scaled_mode = false;
+            if sn_advanced_logically && ts_advanced_logically {
+                if ts_diff % (sn_delta as u32) == 0 {
+                    // Check for clean division.
+                    let potential_stride = ts_diff / (sn_delta as u32);
+                    if potential_stride > 0 {
+                        if self.ts_stride != Some(potential_stride) {
+                            // Stride is newly detected or has changed value.
+                            self.ts_stride = Some(potential_stride);
+                            self.ts_offset = last_ts; // Pin offset to the TS before this new stride segment.
+                            // If scaled_mode was on and stride changes, it's no longer valid for that old stride.
+                            if self.ts_scaled_mode {
+                                self.ts_scaled_mode = false;
+                            }
+                        }
+                        // If stride is consistent (self.ts_stride == Some(potential_stride)), ts_offset remains.
+                    } else {
+                        // Unit stride calculated to 0, invalid.
+                        stride_broken = true;
                     }
+                } else {
+                    // Not a clean division, stride is broken.
+                    stride_broken = true;
                 }
             } else {
-                // Not a clean division for unit stride or unit stride is 0
-                if self.ts_stride.is_some() {
-                    self.ts_stride = None;
-                    self.ts_offset = Timestamp::new(0);
-                    self.ts_scaled_mode = false;
-                }
+                // SN or TS did not advance logically.
+                stride_broken = true;
             }
-        } else {
-            // SN did not advance positively, or TS did not advance logically
-            if self.ts_stride.is_some() {
-                self.ts_stride = None;
-                self.ts_offset = Timestamp::new(0);
-                self.ts_scaled_mode = false;
-            }
+        }
+
+        if stride_broken {
+            self.ts_stride = None;
+            self.ts_offset = Timestamp::new(0); // Reset offset if stride is broken/None.
+            self.ts_scaled_mode = false;
+        }
+        // Ensure scaled_mode is false if stride is None (could be set None by IR for example).
+        if self.ts_stride.is_none() && self.ts_scaled_mode {
+            self.ts_scaled_mode = false;
         }
     }
 }
@@ -782,7 +778,7 @@ mod tests {
         // Packet 3 (ts_diff = 160) -> Threshold met, scaled_mode activates
         assert!(comp_ctx.update_ts_stride_detection(Timestamp::new(1480))); // Returns true
         assert_eq!(comp_ctx.ts_stride, Some(160));
-        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000));
+        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000)); // ts_offset remains from initial stride detection
         assert_eq!(comp_ctx.ts_stride_packets, 3);
         assert!(comp_ctx.ts_scaled_mode); // Now active
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1480);
@@ -823,7 +819,7 @@ mod tests {
 
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1650)), None);
 
-        let ts_before_offset = Timestamp::new(900);
+        let ts_before_offset = Timestamp::new(900); // Not aligned with offset + N*stride
         assert_eq!(comp_ctx.calculate_ts_scaled(ts_before_offset), None);
 
         comp_ctx.ts_scaled_mode = false;
@@ -869,8 +865,6 @@ mod tests {
         ctx.ts_stride = initial_stride;
         ctx.ts_offset = Timestamp::new(initial_offset_ts);
         ctx.ts_scaled_mode = false;
-        // If an initial stride is provided, and offset is default 0, set offset to initial_ts
-        // to simulate that this initial_ts was the TS of the packet *before* stride was detected.
         if initial_stride.is_some() && initial_offset_ts == 0 && initial_ts != 0 {
             ctx.ts_offset = Timestamp::new(initial_ts);
         }
@@ -882,58 +876,53 @@ mod tests {
         let mut ctx = test_decomp_ctx(100, 1000, None, 0);
         ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
         assert_eq!(ctx.ts_stride, Some(160));
-        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset is prev packet's TS
     }
 
     #[test]
     fn infer_ts_stride_initial_detection_sn_delta_gt_1() {
         let mut ctx = test_decomp_ctx(100, 1000, None, 0);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1800), 105);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1800), 105); // delta_sn=5, delta_ts=800, unit_stride=160
         assert_eq!(ctx.ts_stride, Some(160));
         assert_eq!(ctx.ts_offset, Timestamp::new(1000));
     }
 
     #[test]
     fn infer_ts_stride_consistent_stride_sn_delta_1() {
-        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000); // initial_offset_ts = 1000 matches last_ts
         ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
         assert_eq!(ctx.ts_stride, Some(160));
-        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset updated to last_ts (which was 1000)
     }
 
     #[test]
     fn infer_ts_stride_consistent_stride_sn_delta_gt_1() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1480), 103);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1480), 103); // delta_sn=3, delta_ts=480, unit_stride=160
         assert_eq!(ctx.ts_stride, Some(160));
-        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset updated to last_ts
     }
 
     #[test]
     fn infer_ts_stride_changed_stride_sn_delta_1() {
-        // Assuming stricter logic: if unit stride changes, old stride is broken (None)
-        // or if lenient logic: new stride is adopted.
-        // The provided fixed infer_ts_stride adopts the new one.
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101);
-        assert_eq!(ctx.ts_stride, Some(80)); // Adopts new stride 80
-        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset updates to last_ts
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101); // New unit_stride=80
+        assert_eq!(ctx.ts_stride, Some(80));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset updated to last_ts
     }
 
     #[test]
     fn infer_ts_stride_changed_stride_sn_delta_gt_1() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
         ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 102); // unit stride = 80
-        assert_eq!(ctx.ts_stride, Some(80)); // Adopts new stride 80
+        assert_eq!(ctx.ts_stride, Some(80));
         assert_eq!(ctx.ts_offset, Timestamp::new(1000));
     }
 
     #[test]
     fn infer_ts_stride_calculates_new_unit_stride_if_consistent() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1170), 102);
-        // ts_diff = 170, sn_delta = 2. potential_unit_stride = 85. 170 % 2 == 0.
-        // Current logic will adopt Some(85).
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1170), 102); // unit_stride=85
         assert_eq!(
             ctx.ts_stride,
             Some(85),
@@ -946,13 +935,12 @@ mod tests {
     #[test]
     fn infer_ts_stride_broken_if_ts_not_cleanly_divisible_by_sn_delta() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1171), 102);
-        // ts_diff = 171, sn_delta = 2. 171 % 2 != 0.
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1171), 102); // 171 % 2 != 0
         assert_eq!(
             ctx.ts_stride, None,
             "Stride should be None if TS change is not a clean multiple of SN change for unit stride"
         );
-        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+        assert_eq!(ctx.ts_offset, Timestamp::new(0)); // Offset reset when stride becomes None
         assert!(!ctx.ts_scaled_mode);
     }
 
@@ -992,23 +980,23 @@ mod tests {
     #[test]
     fn infer_ts_stride_no_change_in_sn_or_ts() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1000), 100);
-        assert_eq!(ctx.ts_stride, Some(160));
-        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1000), 100); // No change
+        assert_eq!(ctx.ts_stride, Some(160)); // Stride remains
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // ts_offset remains what it was
     }
 
     #[test]
     fn infer_ts_stride_ignored_if_scaled_mode_and_stride_known() {
         let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
         ctx.ts_scaled_mode = true;
-        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101);
-        assert_eq!(ctx.ts_stride, Some(160));
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101); // This would normally change stride to 80
+        assert_eq!(ctx.ts_stride, Some(160)); // But it's ignored
         assert_eq!(ctx.ts_offset, Timestamp::new(1000));
     }
 
     #[test]
     fn infer_ts_stride_ssrc_zero_no_inference() {
-        let mut ctx = Profile1DecompressorContext::new(0);
+        let mut ctx = Profile1DecompressorContext::new(0); // ssrc is 0
         ctx.last_reconstructed_rtp_sn_full = 100;
         ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
         ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
@@ -1071,8 +1059,8 @@ mod tests {
             P1_UO0_SN_LSB_WIDTH_DEFAULT
         );
         assert_eq!(decomp_ctx.ts_stride, None);
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000));
-        assert!(!decomp_ctx.ts_scaled_mode);
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000)); // ts_offset becomes dyn_rtp_timestamp from IR
+        assert!(!decomp_ctx.ts_scaled_mode); // ts_scaled_mode is false if ir_packet.ts_stride is None
     }
 
     #[test]
@@ -1094,8 +1082,8 @@ mod tests {
         };
         decomp_ctx.initialize_from_ir_packet(&ir_data_with_stride);
         assert_eq!(decomp_ctx.ts_stride, Some(160));
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(5000));
-        assert!(decomp_ctx.ts_scaled_mode);
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(5000)); // ts_offset is dyn_rtp_timestamp from IR
+        assert!(decomp_ctx.ts_scaled_mode); // ts_scaled_mode true because ir_packet.ts_stride is Some
     }
 
     #[test]

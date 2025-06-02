@@ -329,7 +329,7 @@ fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> 
 
 /// Selects the most appropriate UO packet type and builds it.
 /// Returns the packet bytes and the RTP timestamp value that was effectively transmitted or implied.
-#[allow(clippy::too_many_arguments)] // Arguments are necessary for this specific decision logic.
+#[allow(clippy::too_many_arguments)]
 fn select_and_build_uo_packet(
     context: &mut Profile1CompressorContext,
     current_sn: u16,
@@ -371,22 +371,22 @@ fn select_and_build_uo_packet(
 
     // Try UO-0 for minimal changes: Marker unchanged, SN increments within UO-0 window, IP-ID unchanged.
     if !marker_changed && sn_delta > 0 && sn_delta < 16 && !ip_id_changed {
-        if let Some(implicit_ts_val) = implicit_ts_if_stride_set {
-            if implicit_ts_val == current_ts {
-                // TS follows stride pattern, UO-0 is suitable.
-                let packet = build_uo0(context, current_sn, current_ts, crc_calculators)?;
-                return Ok((packet, current_ts));
+        let ts_matches_stride_pattern = implicit_ts_if_stride_set == Some(current_ts);
+        let ts_is_unchanged_from_context = current_ts == context.last_sent_rtp_ts_full;
+
+        if ts_matches_stride_pattern || ts_is_unchanged_from_context {
+            if ts_matches_stride_pattern && context.ts_stride.is_some() && !context.ts_scaled_mode {
+                // If UO-0 chosen because TS matches stride, update detection state.
+                // This aids transition to scaled_mode.
+                let _ = context.update_ts_stride_detection(current_ts);
             }
-        }
-        if !ts_changed {
-            // TS is unchanged, UO-0 is suitable.
-            let packet = build_uo0(
-                context,
-                current_sn,
-                context.last_sent_rtp_ts_full, // Use context's last TS for CRC
-                crc_calculators,
-            )?;
-            return Ok((packet, context.last_sent_rtp_ts_full)); // Actual TS was unchanged
+            let ts_to_use_for_uo0_crc = if ts_matches_stride_pattern {
+                current_ts
+            } else {
+                context.last_sent_rtp_ts_full
+            };
+            let packet = build_uo0(context, current_sn, ts_to_use_for_uo0_crc, crc_calculators)?;
+            return Ok((packet, ts_to_use_for_uo0_crc));
         }
     }
 
@@ -398,19 +398,38 @@ fn select_and_build_uo_packet(
         return Ok((packet, current_ts));
     }
 
-    // Try UO-1-ID: Marker unchanged, IP-ID changed, SN increments by 1, TS unchanged.
-    if !marker_changed && ip_id_changed && sn_delta == 1 && !ts_changed {
+    // Try UO-1-ID: Effective TS for UO-1-ID is based on context's last TS, potentially advanced by stride.
+    let ts_for_uo1_id_check = implicit_ts_if_stride_set.unwrap_or(context.last_sent_rtp_ts_full);
+    if !marker_changed && ip_id_changed && sn_delta == 1 && (current_ts == ts_for_uo1_id_check) {
+        if context.ts_stride.is_some()
+            && current_ts
+                == implicit_ts_if_stride_set
+                    .unwrap_or(Timestamp::new(current_ts.value().wrapping_add(1)))
+            && !context.ts_scaled_mode
+        {
+            // TS matches stride, ensure stride detection state is updated.
+            let _ = context.update_ts_stride_detection(current_ts);
+        }
         let packet = build_uo1_id(context, current_sn, current_ip_id, crc_calculators)?;
-        return Ok((packet, context.last_sent_rtp_ts_full)); // TS was unchanged
+        return Ok((packet, ts_for_uo1_id_check));
     }
 
-    // Fallback to UO-1-SN if TS stride is established.
-    // This handles cases like marker changes, larger SN jumps, or combined changes
-    // where a specific UO-1 type for TS or IP-ID isn't applicable.
+    // Use UO-1-SN as fallback
     if context.ts_stride.is_some() {
-        let implicit_ts_for_sn = implicit_ts_if_stride_set.unwrap_or(context.last_sent_rtp_ts_full);
+        let implicit_ts_for_sn_fallback = match implicit_ts_if_stride_set {
+            Some(ts) => ts,
+            None => {
+                // This implies sn_delta might not have been positive when implicit_ts_if_stride_set was calculated,
+                // or stride got broken. If stride is still Some now, recalculate with current_sn_delta.
+                let current_sn_delta_for_fallback =
+                    current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
+                Timestamp::new(context.last_sent_rtp_ts_full.value().wrapping_add(
+                    current_sn_delta_for_fallback as u32 * context.ts_stride.unwrap_or(0),
+                ))
+            }
+        };
         let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
-        return Ok((packet, implicit_ts_for_sn));
+        return Ok((packet, implicit_ts_for_sn_fallback));
     }
 
     // If no suitable UO packet type is found and no stride is established for UO-1-SN fallback.

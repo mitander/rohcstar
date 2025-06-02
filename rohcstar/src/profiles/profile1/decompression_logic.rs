@@ -525,7 +525,7 @@ fn calculate_reconstructed_ts_implicit(
                     .wrapping_add(sn_delta as u32 * stride),
             )
         } else {
-            context.last_reconstructed_rtp_ts_full
+            context.last_reconstructed_rtp_ts_full // Uses previous TS if delta isn't strictly positive
         }
     } else {
         context.last_reconstructed_rtp_ts_full
@@ -558,11 +558,10 @@ mod tests {
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
     use crate::profiles::profile1::packet_processor::{
-        build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_id_packet,
-        build_profile1_uo1_sn_packet,
+        build_profile1_uo0_packet, build_profile1_uo1_id_packet, build_profile1_uo1_sn_packet,
     };
-    use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-    use crate::profiles::profile1::*; // For constants like P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY
+    use crate::profiles::profile1::packet_types::{Uo0Packet, Uo1Packet};
+    use crate::profiles::profile1::*;
 
     fn create_test_context(
         sn: u16,
@@ -841,52 +840,53 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let ssrc = 0x77777777;
         let mut context = create_test_context(100, 1000, false, 10, ssrc);
+        context.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
 
         let target_sn = 101u16;
-        let sn_lsb = encode_lsb(target_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
+        let sn_lsb = encode_lsb(target_sn as u64, context.expected_lsb_sn_width).unwrap() as u8;
 
-        // Determine the TS the decompressor will use for CRC calculation
-        let ts_for_crc_calc = if let Some(stride) = context.ts_stride {
-            Timestamp::new(context.last_reconstructed_rtp_ts_full.value().wrapping_add(
-                target_sn.wrapping_sub(context.last_reconstructed_rtp_sn_full) as u32 * stride,
-            ))
-        } else {
-            context.last_reconstructed_rtp_ts_full
-        };
+        // Calculate the TS the decompressor WILL use for its internal CRC check
+        let ts_decompressor_will_use = calculate_reconstructed_ts_implicit(&context, target_sn);
 
-        // Calculate the correct CRC for this SN and context state
         let correct_crc_input = prepare_generic_uo_crc_input_payload(
             ssrc,
             target_sn,
-            ts_for_crc_calc,
+            ts_decompressor_will_use, // Decompressor's basis for CRC check
             context.last_reconstructed_rtp_marker,
         );
         let correct_crc3 = crc_calculators.calculate_rohc_crc3(&correct_crc_input);
 
-        // Ensure wrong_crc3 is actually different
-        let wrong_crc3 = (correct_crc3 + 1) & 0x07; // Guarantees it's different and still 3-bit
+        // Ensure wrong_crc3 is actually different and still 3-bit
+        let wrong_crc3_in_packet = (correct_crc3 + 1) & 0x07;
 
         let uo0_packet_with_bad_crc = Uo0Packet {
             cid: None,
             sn_lsb,
-            crc3: wrong_crc3,
+            crc3: wrong_crc3_in_packet,
         };
         let uo0_bytes_bad_crc = build_profile1_uo0_packet(&uo0_packet_with_bad_crc).unwrap();
 
         let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
         assert!(
             result.is_err(),
-            "Decompression should fail due to CRC mismatch"
+            "Decompression should fail due to CRC mismatch, got: {:?}",
+            result.ok()
         );
 
         if let Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected,
-            calculated,
+            expected,   // This is the CRC from the packet
+            calculated, // This is what the decompressor calculated
             crc_type,
         })) = result
         {
-            assert_eq!(expected, wrong_crc3);
-            assert_eq!(calculated, correct_crc3);
+            assert_eq!(
+                expected, wrong_crc3_in_packet,
+                "Expected CRC from packet mismatch"
+            );
+            assert_eq!(
+                calculated, correct_crc3,
+                "Decompressor calculated CRC mismatch"
+            );
             assert_eq!(crc_type, "CRC3-UO0");
         } else {
             panic!("Expected CrcMismatch error, got {:?}", result);
@@ -993,43 +993,38 @@ mod tests {
     #[test]
     fn p1_ir_packet_profile_mismatch() {
         let crc_calculators = CrcCalculators::new();
-        let mut context = Profile1DecompressorContext::new(0);
+        let mut context = Profile1DecompressorContext::new(0); // Fresh context for parsing
 
-        let wrong_profile = RohcProfile::Uncompressed; // 0x00
+        let wrong_profile_id = RohcProfile::UdpIp; // Profile 0x02, different from P1 (0x01)
 
-        let mut ir_payload_content = Vec::new();
-        ir_payload_content.push(u8::from(wrong_profile));
-        ir_payload_content.extend_from_slice(&[0u8; P1_STATIC_CHAIN_LENGTH_BYTES]);
-        // For IR-STATIC, CRC is over Profile ID + Static Chain only.
-        let crc = crc_calculators.calculate_rohc_crc8(&ir_payload_content);
+        // Construct a minimal but complete IR-STATIC packet
+        let mut ir_packet_payload_for_crc = Vec::new();
+        ir_packet_payload_for_crc.push(u8::from(wrong_profile_id)); // The differing profile ID
+        ir_packet_payload_for_crc.extend_from_slice(&[0u8; P1_STATIC_CHAIN_LENGTH_BYTES]); // Dummy static chain
+
+        let crc_over_payload = crc_calculators.calculate_rohc_crc8(&ir_packet_payload_for_crc);
 
         let mut full_ir_static_packet_bytes = Vec::new();
-        full_ir_static_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY); // Type
-        full_ir_static_packet_bytes.extend_from_slice(&ir_payload_content); // Profile + Static
-        full_ir_static_packet_bytes.push(crc); // CRC
-
-        assert_eq!(
-            full_ir_static_packet_bytes.len(),
-            1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + 1,
-            "Constructed IR-STATIC packet length is incorrect."
-        );
+        full_ir_static_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY); // Type: IR-STATIC (D=0)
+        full_ir_static_packet_bytes.extend_from_slice(&ir_packet_payload_for_crc); // Profile ID + Static Chain
+        full_ir_static_packet_bytes.push(crc_over_payload); // Calculated CRC
 
         let result = parse_and_reconstruct_ir(
             &mut context,
-            &full_ir_static_packet_bytes,
+            &full_ir_static_packet_bytes, // Pass the full packet including type octet
             &crc_calculators,
             RohcProfile::RtpUdpIp, // Handler expects RtpUdpIp
         );
 
         assert!(
             result.is_err(),
-            "Expected error due to profile mismatch, got Ok: {:?}",
+            "Expected error for profile mismatch, got Ok: {:?}",
             result.ok()
         );
         if let Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(id))) = result {
             assert_eq!(
                 id,
-                u8::from(wrong_profile),
+                u8::from(wrong_profile_id),
                 "Mismatch in reported wrong profile ID"
             );
         } else {
@@ -1055,7 +1050,7 @@ mod tests {
         // Verify context was updated
         assert_eq!(context.last_reconstructed_rtp_sn_full, target_sn);
         assert_eq!(context.last_reconstructed_rtp_ts_full, expected_ts);
-        assert_eq!(context.last_reconstructed_rtp_marker, false);
+        assert!(!context.last_reconstructed_rtp_marker);
     }
 
     #[test]
