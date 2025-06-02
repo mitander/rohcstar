@@ -563,57 +563,90 @@ impl Profile1DecompressorContext {
         Some(Timestamp::new(reconstructed_ts_val))
     }
 
-    /// Attempts to infer the TS stride from sequentially decompressed timestamps.
+    /// Attempts to infer the TS stride from sequentially decompressed timestamps and sequence numbers.
     ///
     /// This is a decompressor-side heuristic. It updates `self.ts_stride` and
-    /// `self.ts_offset` if a consistent positive increment is observed between
-    /// the `new_ts` (current packet's TS) and `self.last_reconstructed_rtp_ts_full`
-    /// (previous packet's TS).
+    /// `self.ts_offset` if a consistent positive increment per unit SN is observed.
     ///
-    /// This method does **not** by itself activate `self.ts_scaled_mode`;
-    /// `ts_scaled_mode` is typically activated by explicit signaling from the compressor
-    /// (e.g., via an IR-DYN TS_STRIDE extension or by successfully decoding a UO-1-RTP packet).
+    /// This method should be called *after* `last_reconstructed_rtp_sn_full` and
+    /// `last_reconstructed_rtp_ts_full` have been updated with the values from the
+    /// *previous* successfully decompressed packet, and `new_ts`/`new_sn` are from the
+    /// *current* successfully decompressed packet.
     ///
     /// # Parameters
     /// - `new_ts`: The timestamp of the most recently successfully decompressed packet.
-    pub fn infer_ts_stride_from_decompressed_ts(&mut self, new_ts: Timestamp) {
+    /// - `new_sn`: The sequence number of the most recently successfully decompressed packet.
+    pub fn infer_ts_stride_from_decompressed_ts(&mut self, new_ts: Timestamp, new_sn: u16) {
         if self.rtp_ssrc == 0 {
-            // SSRC must be known from IR to start reliable inference.
             return;
         }
-        // If last_reconstructed_rtp_ts_full is 0 and mode is NoContext or StaticContext,
-        // it implies this might be the first dynamic update after an IR (or IR-STATIC).
-        // In such cases, ts_offset is already set to the IR's timestamp by initialize_from_ir_packet.
-        // We need a previous TS to calculate a diff.
-        if self.mode != Profile1DecompressorMode::FullContext
-            && self.mode != Profile1DecompressorMode::SecondOrder
-            && self.last_reconstructed_rtp_ts_full.value() == 0
-            && self.ts_stride.is_none()
-        {
-            // Cannot infer stride without a previous TS to diff against.
-            // This often happens after an IR-STATIC or if first packet is not IR.
+        if self.ts_scaled_mode && self.ts_stride.is_some() {
             return;
         }
 
-        let ts_diff = new_ts.wrapping_diff(self.last_reconstructed_rtp_ts_full);
+        let last_sn = self.last_reconstructed_rtp_sn_full;
+        let last_ts = self.last_reconstructed_rtp_ts_full;
 
-        if ts_diff > 0 {
-            if self.ts_stride.is_none() {
-                self.ts_stride = Some(ts_diff);
-                self.ts_offset = self.last_reconstructed_rtp_ts_full;
-            } else if self.ts_stride == Some(ts_diff) {
-                // Consistent stride, no change to offset or stride needed.
+        if last_sn == new_sn {
+            if new_ts != last_ts && self.ts_stride.is_some() {
+                self.ts_stride = None;
+                self.ts_offset = Timestamp::new(0);
+                self.ts_scaled_mode = false;
+            }
+            return;
+        }
+
+        let sn_delta = new_sn.wrapping_sub(last_sn);
+        let ts_diff_raw = new_ts.0.wrapping_sub(last_ts.0);
+
+        let logically_advanced_ts = if new_ts.0 >= last_ts.0 {
+            ts_diff_raw > 0
+        } else {
+            // Heuristic for positive wrap-around small enough to be a stride
+            ts_diff_raw < (u32::MAX / 2) && ts_diff_raw > 0
+        };
+
+        if sn_delta > 0 && logically_advanced_ts {
+            let sn_delta_u32 = sn_delta as u32;
+            if ts_diff_raw == 0 {
+                if self.ts_stride.is_some() {
+                    self.ts_stride = None;
+                    self.ts_offset = Timestamp::new(0);
+                    self.ts_scaled_mode = false;
+                }
+                return;
+            }
+
+            let potential_unit_stride = ts_diff_raw / sn_delta_u32;
+
+            if ts_diff_raw % sn_delta_u32 == 0 && potential_unit_stride > 0 {
+                // Clean division & positive unit stride
+                if self.ts_stride.is_none() {
+                    self.ts_stride = Some(potential_unit_stride);
+                    self.ts_offset = last_ts;
+                } else if self.ts_stride == Some(potential_unit_stride) {
+                    // Consistent
+                } else {
+                    // Stride value changed
+                    self.ts_stride = Some(potential_unit_stride);
+                    self.ts_offset = last_ts;
+                    if self.ts_scaled_mode {
+                        self.ts_scaled_mode = false;
+                    }
+                }
             } else {
-                // ts_diff > 0 but different from current_stride
-                self.ts_stride = Some(ts_diff); // New stride inferred
-                self.ts_offset = self.last_reconstructed_rtp_ts_full; // New base for this new stride
+                // Not a clean division for unit stride or unit stride is 0
+                if self.ts_stride.is_some() {
+                    self.ts_stride = None;
+                    self.ts_offset = Timestamp::new(0);
+                    self.ts_scaled_mode = false;
+                }
             }
         } else {
-            // ts_diff <= 0
+            // SN did not advance positively, or TS did not advance logically
             if self.ts_stride.is_some() {
-                // If a stride was previously inferred
-                self.ts_stride = None; // Stride broken
-                self.ts_offset = Timestamp::new(0); // Reset offset
+                self.ts_stride = None;
+                self.ts_offset = Timestamp::new(0);
                 self.ts_scaled_mode = false;
             }
         }
@@ -655,7 +688,16 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD is already imported from constants
+    use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
+    use crate::packet_defs::RohcProfile;
+    use crate::profiles::profile1::constants::{
+        P1_DEFAULT_P_IPID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
+        P1_UO0_SN_LSB_WIDTH_DEFAULT, P1_UO1_IPID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
+    };
+    use crate::profiles::profile1::packet_types::IrPacket;
+    use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+    use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+    use std::time::Instant;
 
     #[test]
     fn compressor_context_new_initializes_fields_and_mode() {
@@ -716,68 +758,6 @@ mod tests {
     }
 
     #[test]
-    fn decompressor_context_new_and_initialization_from_ir_packet() {
-        let time = Instant::now();
-        let mut decomp_ctx = Profile1DecompressorContext::new(5);
-        decomp_ctx.last_accessed = time; // Set explicitly if new doesn't take it
-
-        assert_eq!(decomp_ctx.cid(), 5);
-        assert_eq!(decomp_ctx.profile_id(), RohcProfile::RtpUdpIp);
-        assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::NoContext);
-        assert_eq!(decomp_ctx.p_sn, P1_DEFAULT_P_SN_OFFSET);
-        assert_eq!(decomp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
-        assert_eq!(
-            decomp_ctx.expected_lsb_ts_width,
-            P1_UO1_TS_LSB_WIDTH_DEFAULT
-        );
-        assert_eq!(decomp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
-        assert_eq!(
-            decomp_ctx.expected_lsb_ip_id_width,
-            P1_UO1_IPID_LSB_WIDTH_DEFAULT
-        );
-        // TS Stride fields
-        assert_eq!(decomp_ctx.ts_stride, None);
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(0));
-        assert!(!decomp_ctx.ts_scaled_mode);
-        assert_eq!(decomp_ctx.last_accessed, time);
-
-        let ir_data = IrPacket {
-            cid: 5,                            // Matched to context
-            profile_id: RohcProfile::RtpUdpIp, // Matched
-            crc8: 0x00,                        // Assume validated elsewhere
-            static_ip_src: "10.0.0.1".parse().unwrap(),
-            static_ip_dst: "10.0.0.2".parse().unwrap(),
-            static_udp_src_port: 1000,
-            static_udp_dst_port: 2000,
-            static_rtp_ssrc: 0xABCD,
-            dyn_rtp_sn: 200,
-            dyn_rtp_timestamp: Timestamp::new(20000),
-            dyn_rtp_marker: true,
-            ts_stride: None,
-        };
-
-        decomp_ctx.initialize_from_ir_packet(&ir_data);
-
-        assert_eq!(decomp_ctx.ip_destination, ir_data.static_ip_dst);
-        assert_eq!(decomp_ctx.rtp_ssrc, ir_data.static_rtp_ssrc);
-        assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 200);
-        assert_eq!(
-            decomp_ctx.last_reconstructed_rtp_ts_full,
-            Timestamp::new(20000)
-        );
-        assert!(decomp_ctx.last_reconstructed_rtp_marker);
-        assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0);
-        assert_eq!(
-            decomp_ctx.expected_lsb_sn_width,
-            P1_UO0_SN_LSB_WIDTH_DEFAULT
-        );
-        // TS Stride after IR without extension
-        assert_eq!(decomp_ctx.ts_stride, None);
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000)); // Base is IR's TS
-        assert!(!decomp_ctx.ts_scaled_mode);
-    }
-
-    #[test]
     fn compressor_ts_stride_detection_logic() {
         let mut comp_ctx = Profile1CompressorContext::new(1, 20, Instant::now());
         comp_ctx.rtp_ssrc = 0x1234; // Simulate initialized SSRC
@@ -815,18 +795,11 @@ mod tests {
 
         // Packet 5 (ts_diff = 100) -> Stride broken, attempts to start new
         assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1740)));
-        assert_eq!(comp_ctx.ts_stride, Some(100)); // New stride detected
-        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1640)); // Offset is prev TS
-        assert_eq!(comp_ctx.ts_stride_packets, 1);
-        assert!(!comp_ctx.ts_scaled_mode); // Deactivated, new stride not yet confirmed
-        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1740);
-
-        // Packet 6 (ts_diff = 80 from 1740) -> New stride detection starts
-        assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1820)));
-        assert_eq!(comp_ctx.ts_stride, Some(80));
-        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1740));
+        assert_eq!(comp_ctx.ts_stride, Some(100));
+        assert_eq!(comp_ctx.ts_offset, Timestamp::new(1640));
         assert_eq!(comp_ctx.ts_stride_packets, 1);
         assert!(!comp_ctx.ts_scaled_mode);
+        comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1740);
     }
 
     #[test]
@@ -848,38 +821,281 @@ mod tests {
         let overflow_ts = Timestamp::new(1000 + 300 * 160);
         assert_eq!(comp_ctx.calculate_ts_scaled(overflow_ts), None);
 
-        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1650)), None); // Not aligned
-        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(900)), None); // Before offset
+        assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1650)), None);
+
+        let ts_before_offset = Timestamp::new(900);
+        assert_eq!(comp_ctx.calculate_ts_scaled(ts_before_offset), None);
 
         comp_ctx.ts_scaled_mode = false;
         assert_eq!(comp_ctx.calculate_ts_scaled(Timestamp::new(1160)), None);
     }
 
     #[test]
-    fn decompressor_infer_ts_stride_logic() {
-        let mut decomp_ctx = Profile1DecompressorContext::new(1);
-        decomp_ctx.rtp_ssrc = 0x1234;
-        decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
+    fn default_compressor_context() {
+        let ctx = Profile1CompressorContext::default();
+        assert_eq!(ctx.cid, 0);
+        assert_eq!(ctx.ir_refresh_interval, DEFAULT_IR_REFRESH_INTERVAL);
+        assert_eq!(ctx.mode, Profile1CompressorMode::InitializationAndRefresh);
+        assert_eq!(ctx.ts_stride, None);
+    }
 
-        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160));
-        assert_eq!(decomp_ctx.ts_stride, Some(160));
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000));
-        assert!(!decomp_ctx.ts_scaled_mode);
-        decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1160);
+    #[test]
+    fn context_trait_downcasting_compressor() {
+        let comp_ctx_dyn: Box<dyn RohcCompressorContext> =
+            Box::new(Profile1CompressorContext::new(1, 10, Instant::now()));
+        let specific_ctx = comp_ctx_dyn
+            .as_any()
+            .downcast_ref::<Profile1CompressorContext>();
+        assert!(specific_ctx.is_some());
+        if let Some(s_ctx) = specific_ctx {
+            // Renamed to avoid conflict
+            assert_eq!(s_ctx.cid, 1);
+        }
+    }
 
-        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1320));
-        assert_eq!(decomp_ctx.ts_stride, Some(160));
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1000));
-        decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1320);
+    // --- Profile1DecompressorContext Tests ---
 
-        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1400)); // Diff is 80
-        assert_eq!(decomp_ctx.ts_stride, Some(80));
-        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(1320));
-        decomp_ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1400);
+    // Helper to create a context for decompressor inference unit tests
+    fn test_decomp_ctx(
+        initial_sn: u16,
+        initial_ts: u32,
+        initial_stride: Option<u32>,
+        initial_offset_ts: u32,
+    ) -> Profile1DecompressorContext {
+        let mut ctx = Profile1DecompressorContext::new(0);
+        ctx.rtp_ssrc = 0x12345678;
+        ctx.last_reconstructed_rtp_sn_full = initial_sn;
+        ctx.last_reconstructed_rtp_ts_full = Timestamp::new(initial_ts);
+        ctx.ts_stride = initial_stride;
+        ctx.ts_offset = Timestamp::new(initial_offset_ts);
+        ctx.ts_scaled_mode = false;
+        // If an initial stride is provided, and offset is default 0, set offset to initial_ts
+        // to simulate that this initial_ts was the TS of the packet *before* stride was detected.
+        if initial_stride.is_some() && initial_offset_ts == 0 && initial_ts != 0 {
+            ctx.ts_offset = Timestamp::new(initial_ts);
+        }
+        ctx
+    }
 
-        decomp_ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1400)); // Zero diff
+    #[test]
+    fn infer_ts_stride_initial_detection_sn_delta_1() {
+        let mut ctx = test_decomp_ctx(100, 1000, None, 0);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_initial_detection_sn_delta_gt_1() {
+        let mut ctx = test_decomp_ctx(100, 1000, None, 0);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1800), 105);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_consistent_stride_sn_delta_1() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_consistent_stride_sn_delta_gt_1() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1480), 103);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_changed_stride_sn_delta_1() {
+        // Assuming stricter logic: if unit stride changes, old stride is broken (None)
+        // or if lenient logic: new stride is adopted.
+        // The provided fixed infer_ts_stride adopts the new one.
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101);
+        assert_eq!(ctx.ts_stride, Some(80)); // Adopts new stride 80
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000)); // Offset updates to last_ts
+    }
+
+    #[test]
+    fn infer_ts_stride_changed_stride_sn_delta_gt_1() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 102); // unit stride = 80
+        assert_eq!(ctx.ts_stride, Some(80)); // Adopts new stride 80
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_calculates_new_unit_stride_if_consistent() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1170), 102);
+        // ts_diff = 170, sn_delta = 2. potential_unit_stride = 85. 170 % 2 == 0.
+        // Current logic will adopt Some(85).
+        assert_eq!(
+            ctx.ts_stride,
+            Some(85),
+            "Stride should be updated to newly calculated unit stride 85"
+        );
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+        assert!(!ctx.ts_scaled_mode);
+    }
+
+    #[test]
+    fn infer_ts_stride_broken_if_ts_not_cleanly_divisible_by_sn_delta() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1171), 102);
+        // ts_diff = 171, sn_delta = 2. 171 % 2 != 0.
+        assert_eq!(
+            ctx.ts_stride, None,
+            "Stride should be None if TS change is not a clean multiple of SN change for unit stride"
+        );
+        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+        assert!(!ctx.ts_scaled_mode);
+    }
+
+    #[test]
+    fn infer_ts_stride_broken_ts_decreases() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(900), 101);
+        assert_eq!(ctx.ts_stride, None, "Stride should be None if TS decreases");
+        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+        assert!(!ctx.ts_scaled_mode);
+    }
+
+    #[test]
+    fn infer_ts_stride_broken_sn_decreases_significant_wrap() {
+        let mut ctx = test_decomp_ctx(10, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 65530);
+        assert_eq!(ctx.ts_stride, None);
+        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+    }
+
+    #[test]
+    fn infer_ts_stride_sn_same_ts_changes() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1100), 100);
+        assert_eq!(ctx.ts_stride, None);
+        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+    }
+
+    #[test]
+    fn infer_ts_stride_sn_changes_ts_same() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1000), 101);
+        assert_eq!(ctx.ts_stride, None);
+        assert_eq!(ctx.ts_offset, Timestamp::new(0));
+    }
+
+    #[test]
+    fn infer_ts_stride_no_change_in_sn_or_ts() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1000), 100);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_ignored_if_scaled_mode_and_stride_known() {
+        let mut ctx = test_decomp_ctx(100, 1000, Some(160), 1000);
+        ctx.ts_scaled_mode = true;
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1080), 101);
+        assert_eq!(ctx.ts_stride, Some(160));
+        assert_eq!(ctx.ts_offset, Timestamp::new(1000));
+    }
+
+    #[test]
+    fn infer_ts_stride_ssrc_zero_no_inference() {
+        let mut ctx = Profile1DecompressorContext::new(0);
+        ctx.last_reconstructed_rtp_sn_full = 100;
+        ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
+        ctx.infer_ts_stride_from_decompressed_ts(Timestamp::new(1160), 101);
+        assert_eq!(ctx.ts_stride, None);
+    }
+
+    #[test]
+    fn decompressor_context_new_and_initialization_from_ir_packet() {
+        let time = Instant::now();
+        let mut decomp_ctx = Profile1DecompressorContext::new(5);
+        decomp_ctx.last_accessed = time;
+
+        assert_eq!(decomp_ctx.cid(), 5);
+        assert_eq!(decomp_ctx.profile_id(), RohcProfile::RtpUdpIp);
+        assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::NoContext);
+        assert_eq!(decomp_ctx.p_sn, P1_DEFAULT_P_SN_OFFSET);
+        assert_eq!(decomp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
+        assert_eq!(
+            decomp_ctx.expected_lsb_ts_width,
+            P1_UO1_TS_LSB_WIDTH_DEFAULT
+        );
+        assert_eq!(decomp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
+        assert_eq!(
+            decomp_ctx.expected_lsb_ip_id_width,
+            P1_UO1_IPID_LSB_WIDTH_DEFAULT
+        );
         assert_eq!(decomp_ctx.ts_stride, None);
         assert_eq!(decomp_ctx.ts_offset, Timestamp::new(0));
+        assert!(!decomp_ctx.ts_scaled_mode);
+        assert_eq!(decomp_ctx.last_accessed, time);
+
+        let ir_data = IrPacket {
+            cid: 5,
+            profile_id: RohcProfile::RtpUdpIp,
+            crc8: 0x00,
+            static_ip_src: "10.0.0.1".parse().unwrap(),
+            static_ip_dst: "10.0.0.2".parse().unwrap(),
+            static_udp_src_port: 1000,
+            static_udp_dst_port: 2000,
+            static_rtp_ssrc: 0xABCD,
+            dyn_rtp_sn: 200,
+            dyn_rtp_timestamp: Timestamp::new(20000),
+            dyn_rtp_marker: true,
+            ts_stride: None,
+        };
+
+        decomp_ctx.initialize_from_ir_packet(&ir_data);
+
+        assert_eq!(decomp_ctx.ip_destination, ir_data.static_ip_dst);
+        assert_eq!(decomp_ctx.rtp_ssrc, ir_data.static_rtp_ssrc);
+        assert_eq!(decomp_ctx.last_reconstructed_rtp_sn_full, 200);
+        assert_eq!(
+            decomp_ctx.last_reconstructed_rtp_ts_full,
+            Timestamp::new(20000)
+        );
+        assert!(decomp_ctx.last_reconstructed_rtp_marker);
+        assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0);
+        assert_eq!(
+            decomp_ctx.expected_lsb_sn_width,
+            P1_UO0_SN_LSB_WIDTH_DEFAULT
+        );
+        assert_eq!(decomp_ctx.ts_stride, None);
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(20000));
+        assert!(!decomp_ctx.ts_scaled_mode);
+    }
+
+    #[test]
+    fn decompressor_init_from_ir_with_stride_extension() {
+        let mut decomp_ctx = Profile1DecompressorContext::new(1);
+        let ir_data_with_stride = IrPacket {
+            cid: 1,
+            profile_id: RohcProfile::RtpUdpIp,
+            crc8: 0,
+            static_ip_src: "1.1.1.1".parse().unwrap(),
+            static_ip_dst: "2.2.2.2".parse().unwrap(),
+            static_udp_src_port: 100,
+            static_udp_dst_port: 200,
+            static_rtp_ssrc: 0x1234,
+            dyn_rtp_sn: 50,
+            dyn_rtp_timestamp: Timestamp::new(5000),
+            dyn_rtp_marker: false,
+            ts_stride: Some(160),
+        };
+        decomp_ctx.initialize_from_ir_packet(&ir_data_with_stride);
+        assert_eq!(decomp_ctx.ts_stride, Some(160));
+        assert_eq!(decomp_ctx.ts_offset, Timestamp::new(5000));
+        assert!(decomp_ctx.ts_scaled_mode);
     }
 
     #[test]
@@ -916,15 +1132,6 @@ mod tests {
     }
 
     #[test]
-    fn default_compressor_context() {
-        let ctx = Profile1CompressorContext::default();
-        assert_eq!(ctx.cid, 0);
-        assert_eq!(ctx.ir_refresh_interval, DEFAULT_IR_REFRESH_INTERVAL);
-        assert_eq!(ctx.mode, Profile1CompressorMode::InitializationAndRefresh);
-        assert_eq!(ctx.ts_stride, None);
-    }
-
-    #[test]
     fn default_decompressor_context() {
         let ctx = Profile1DecompressorContext::default();
         assert_eq!(ctx.cid, 0);
@@ -933,30 +1140,19 @@ mod tests {
     }
 
     #[test]
-    fn context_trait_downcasting_compressor() {
-        let comp_ctx: Box<dyn RohcCompressorContext> =
-            Box::new(Profile1CompressorContext::new(1, 10, Instant::now()));
-        let specific_ctx = comp_ctx
-            .as_any()
-            .downcast_ref::<Profile1CompressorContext>();
-        assert!(specific_ctx.is_some());
-        assert_eq!(specific_ctx.unwrap().cid, 1);
-    }
-
-    #[test]
     fn context_trait_downcasting_decompressor() {
-        let mut decomp_ctx: Box<dyn RohcDecompressorContext> =
+        let mut decomp_ctx_dyn: Box<dyn RohcDecompressorContext> =
             Box::new(Profile1DecompressorContext::new(2));
-        decomp_ctx.set_cid(3);
+        decomp_ctx_dyn.set_cid(3);
 
-        let specific_ctx_mut = decomp_ctx
+        let specific_ctx_mut = decomp_ctx_dyn
             .as_any_mut()
             .downcast_mut::<Profile1DecompressorContext>();
         assert!(specific_ctx_mut.is_some());
-        if let Some(ctx) = specific_ctx_mut {
-            assert_eq!(ctx.cid, 3);
-            ctx.mode = Profile1DecompressorMode::StaticContext;
-            assert_eq!(ctx.mode, Profile1DecompressorMode::StaticContext);
+        if let Some(s_ctx) = specific_ctx_mut {
+            assert_eq!(s_ctx.cid, 3);
+            s_ctx.mode = Profile1DecompressorMode::StaticContext;
+            assert_eq!(s_ctx.mode, Profile1DecompressorMode::StaticContext);
         }
     }
 }

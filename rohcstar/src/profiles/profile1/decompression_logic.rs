@@ -131,7 +131,7 @@ pub(super) fn parse_and_reconstruct_uo0(
     }
 
     // Infer stride before updating context state
-    context.infer_ts_stride_from_decompressed_ts(new_timestamp);
+    context.infer_ts_stride_from_decompressed_ts(new_timestamp, decoded_sn);
 
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
@@ -207,7 +207,7 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
         }));
     }
 
-    context.infer_ts_stride_from_decompressed_ts(new_timestamp);
+    context.infer_ts_stride_from_decompressed_ts(new_timestamp, decoded_sn);
 
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
@@ -287,7 +287,7 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
         }));
     }
 
-    context.infer_ts_stride_from_decompressed_ts(decoded_ts);
+    context.infer_ts_stride_from_decompressed_ts(decoded_ts, reconstructed_sn);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = decoded_ts;
 
@@ -379,7 +379,7 @@ pub(super) fn parse_and_reconstruct_uo1_id(
         }));
     }
 
-    context.infer_ts_stride_from_decompressed_ts(new_timestamp);
+    context.infer_ts_stride_from_decompressed_ts(new_timestamp, reconstructed_sn);
 
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
@@ -462,7 +462,7 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
         context.ts_scaled_mode = true;
     }
 
-    context.infer_ts_stride_from_decompressed_ts(reconstructed_ts);
+    context.infer_ts_stride_from_decompressed_ts(reconstructed_ts, reconstructed_sn);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = reconstructed_ts;
     context.last_reconstructed_rtp_marker = parsed_uo1_rtp.marker;

@@ -7,7 +7,7 @@
 mod common;
 use common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    get_decompressor_context,
+    get_compressor_context, get_decompressor_context,
 };
 
 use rohcstar::error::{RohcError, RohcParsingError};
@@ -15,8 +15,8 @@ use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::Profile1DecompressorMode;
 use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{
-    P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, P1_UO_1_SN_PACKET_TYPE_PREFIX,
-    P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
+    P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, P1_UO_1_SN_MARKER_BIT_MASK,
+    P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
 
 /// Tests UO-0 SN compression and decompression across the 65535 -> 0 sequence number wraparound,
@@ -183,21 +183,77 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     let ip_id_from_new_ir_context = new_ir_headers_for_context.ip_identification;
 
-    // SN jump that should not be UO-0 (115 + 16 = 131)
-    let sn_outside_window = new_ir_sn + 16;
-    let headers_outside_window_uncompressed = create_rtp_headers(
-        sn_outside_window,
-        new_ir_base_ts_val + 30, // Also change TS to make it clearly not UO-0
+    // Send a UO-1-TS packet to establish a stride in the compressor
+    // Compressor context after IR: SN=115, TS=2100, Marker=false, IP-ID=ip_id_from_new_ir_context
+    let sn_for_stride_establish = new_ir_sn.wrapping_add(1); // 116
+    let ts_for_stride_establish = new_ir_base_ts_val.wrapping_add(160); // 2100 + 160 = 2260 (Arbitrary stride)
+    let headers_for_stride = create_rtp_headers(
+        sn_for_stride_establish,
+        ts_for_stride_establish,
         initial_marker,
         ssrc,
     )
-    .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1)); // And IP-ID
+    .with_ip_id(ip_id_from_new_ir_context);
+    let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
+    let compressed_stride_packet =
+        engine // This should be UO-1-TS
+            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+            .unwrap();
+    assert_eq!(
+        compressed_stride_packet.len(),
+        4,
+        "Stride establishment packet should be UO-1-TS"
+    );
+    assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
+
+    let _ = engine.decompress(&compressed_stride_packet).unwrap();
+
+    // Verify compressor context now has a stride and updated TS/SN
+    let comp_ctx_check = get_compressor_context(&engine, cid);
+    assert!(
+        comp_ctx_check.ts_stride.is_some(),
+        "Compressor ts_stride was not established"
+    );
+    assert_eq!(
+        comp_ctx_check.last_sent_rtp_sn_full,
+        sn_for_stride_establish
+    );
+    assert_eq!(
+        comp_ctx_check.last_sent_rtp_ts_full,
+        Timestamp::new(ts_for_stride_establish)
+    );
+    let established_stride = comp_ctx_check.ts_stride.unwrap();
+
+    // SN jump that should not be UO-0.
+    // Context: SN=116, TS=2260, Marker=false, IP-ID=ip_id_from_new_ir_context, Stride=160
+    // Target packet: SN = 116 + 16 = 132.
+    let sn_outside_window = sn_for_stride_establish.wrapping_add(16);
+
+    // TS changes significantly (not UO-0), IP-ID changes (not UO-0/UO-1-TS)
+    // This combination should lead to UO-1-SN.
+    let actual_ts_for_packet_outside_window = ts_for_stride_establish
+        .wrapping_add(established_stride * 16)
+        .wrapping_add(30);
+
+    let headers_outside_window_uncompressed = create_rtp_headers(
+        sn_outside_window,
+        actual_ts_for_packet_outside_window,
+        initial_marker,
+        ssrc,
+    )
+    .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1)); // IP-ID also changes
+
     let generic_outside_window =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window_uncompressed.clone());
     let compressed_outside_window = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_outside_window)
         .unwrap();
     assert_eq!(compressed_outside_window.len(), 3); // Expect UO-1-SN
+    assert_eq!(
+        compressed_outside_window[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
+        P1_UO_1_SN_PACKET_TYPE_PREFIX
+    );
+
     let decomp_outside_window = engine
         .decompress(&compressed_outside_window)
         .unwrap()
@@ -205,10 +261,13 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .unwrap()
         .clone();
     assert_eq!(decomp_outside_window.rtp_sequence_number, sn_outside_window);
+
+    // UO-1-SN uses implicit TS based on its context's last_sent_ts and the established stride
+    let expected_ts_for_decomp_uo1_sn =
+        Timestamp::new(ts_for_stride_establish.wrapping_add(16 * established_stride));
     assert_eq!(
-        // UO-1-SN uses TS from context
         decomp_outside_window.rtp_timestamp,
-        Timestamp::new(new_ir_base_ts_val)
+        expected_ts_for_decomp_uo1_sn
     );
     assert_eq!(decomp_outside_window.ip_identification, 0); // IP-ID not in UO-1-SN
 }
@@ -283,7 +342,10 @@ fn p1_uo0_not_used_when_marker_changes() {
     let cid = 0u16;
     let ssrc = 0x1A2B3C;
 
-    let ir_headers = create_rtp_headers(300, 4000, false, ssrc); // Initial marker is false
+    let ir_sn = 300;
+    let ir_ts_val: u32 = 4000;
+    let ir_marker = false; // Initial marker is false
+    let ir_headers = create_rtp_headers(ir_sn, ir_ts_val, ir_marker, ssrc);
     establish_ir_context(
         &mut engine,
         cid,
@@ -293,9 +355,40 @@ fn p1_uo0_not_used_when_marker_changes() {
         ssrc,
     );
 
-    // Next packet: SN+1, TS changes slightly, Marker changes to true
-    let mut headers_marker_change = create_rtp_headers(301, 4010, true, ssrc);
-    headers_marker_change.ip_identification = ir_headers.ip_identification; // Keep IP-ID same
+    // Send a UO-1-TS to establish stride.
+    // Compressor context after IR: SN=300, TS=4000, Marker=false
+    let sn_for_stride = ir_sn.wrapping_add(1); // 301
+    let ts_for_stride = ir_ts_val.wrapping_add(160); // 4160 (Arbitrary stride)
+    let headers_for_stride = create_rtp_headers(sn_for_stride, ts_for_stride, ir_marker, ssrc) // marker still false
+        .with_ip_id(ir_headers.ip_identification);
+    let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
+    let compressed_stride_packet = engine
+        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+        .unwrap(); // Should be UO-1-TS
+    assert_eq!(compressed_stride_packet.len(), 4);
+    assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
+
+    let _ = engine.decompress(&compressed_stride_packet).unwrap();
+
+    // Compressor context now has:
+    // last_sent_rtp_sn_full = 301
+    // last_sent_rtp_ts_full = Timestamp(4160)
+    // last_sent_rtp_marker = false
+    // ts_stride = Some(160)
+
+    // Next packet: SN+1 from *new* context (301->302). Marker changes to true.
+    // TS in this packet is not critical for UO-1-SN selection if marker changes,
+    // but it will be used for context update IF an IR is forced.
+    // For UO-1-SN, implicit TS (4160 + 160 = 4320) will be used by compressor for CRC & context.
+    let sn_for_marker_change = sn_for_stride.wrapping_add(1); // 302
+    let ts_val_for_marker_change_packet = ts_for_stride.wrapping_add(160); // 4320
+    let mut headers_marker_change = create_rtp_headers(
+        sn_for_marker_change,
+        ts_val_for_marker_change_packet,
+        true,
+        ssrc,
+    ); // Marker true
+    headers_marker_change.ip_identification = ir_headers.ip_identification;
     let generic_marker_change =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_marker_change.clone());
 
@@ -309,6 +402,7 @@ fn p1_uo0_not_used_when_marker_changes() {
         compressed_packet[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
     );
+    assert_ne!(compressed_packet[0] & P1_UO_1_SN_MARKER_BIT_MASK, 0); // Marker bit is set
 
     let decomp_headers = engine
         .decompress(&compressed_packet)
@@ -316,9 +410,12 @@ fn p1_uo0_not_used_when_marker_changes() {
         .as_rtp_udp_ipv4()
         .unwrap()
         .clone();
-    assert_eq!(decomp_headers.rtp_sequence_number, 301);
-    assert!(decomp_headers.rtp_marker); // Marker bit correctly reconstructed
-    assert_eq!(decomp_headers.rtp_timestamp, Timestamp::new(4000)); // TS from context for UO-1-SN
+    assert_eq!(decomp_headers.rtp_sequence_number, sn_for_marker_change); // 302
+    assert!(decomp_headers.rtp_marker); // Marker bit correctly reconstructed (true)
+    assert_eq!(
+        decomp_headers.rtp_timestamp,
+        Timestamp::new(ts_val_for_marker_change_packet)
+    ); // TS implicitly updated to 4320
 }
 
 /// Tests that UO-1-TS is selected when RTP Timestamp changes significantly, SN increments by one,

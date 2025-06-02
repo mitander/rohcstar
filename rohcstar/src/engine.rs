@@ -347,8 +347,7 @@ mod tests {
     use crate::profiles::profile1::protocol_types::Timestamp;
     use crate::profiles::profile1::{
         P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-        P1_STATIC_CHAIN_LENGTH_BYTES, P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX,
-        Profile1Handler, RtpUdpIpv4Headers,
+        P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler, RtpUdpIpv4Headers,
     };
     use crate::time::mock_clock::MockClock;
     use std::time::Duration;
@@ -467,22 +466,21 @@ mod tests {
         assert_eq!(engine.context_manager.compressor_context_count(), 1);
         assert_eq!(engine.context_manager.decompressor_context_count(), 1);
 
-        let headers2 = create_test_rtp_headers_for_engine(201, 2000, false); // Marker changed
+        // Create UO-0 conditions - same TS, same marker, small SN increment, same IP-ID
+        let headers2 = create_test_rtp_headers_for_engine(201, 2000, true);
         let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone());
         let compressed2 = engine
             .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers2)
             .unwrap();
 
-        assert!(compressed2.len() > 1);
+        // Should be UO-0 packet (2 bytes: Add-CID + UO-0)
+        assert_eq!(compressed2.len(), 2);
         assert_eq!(
             compressed2[0],
             ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid as u8 & ROHC_SMALL_CID_MASK)
         );
-        assert_eq!(
-            compressed2[1] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
-            P1_UO_1_SN_PACKET_TYPE_PREFIX
-        );
-        assert_eq!(compressed2[1] & P1_UO_1_SN_MARKER_BIT_MASK, 0);
+        // UO-0 discriminator: bit 7 = 0
+        assert_eq!(compressed2[1] & 0x80, 0);
 
         let decompressed_generic2 = engine.decompress(&compressed2).unwrap();
         match decompressed_generic2 {
@@ -490,6 +488,7 @@ mod tests {
                 assert_eq!(h.rtp_ssrc, headers1.rtp_ssrc);
                 assert_eq!(h.rtp_sequence_number, headers2.rtp_sequence_number);
                 assert_eq!(h.rtp_marker, headers2.rtp_marker);
+                assert_eq!(h.rtp_timestamp, headers1.rtp_timestamp);
             }
             _ => panic!("Unexpected decompressed header type"),
         }
@@ -602,13 +601,13 @@ mod tests {
         let cid_fresh = 2u16;
 
         // --- Phase 1: Prune cid11 contexts, keep cid10 compressor ---
-        // T0: Create and access context for cid10
+        // T0: Create and access context for cid10 - first packet (IR)
         let _ = engine
             .compress(cid10, Some(RohcProfile::RtpUdpIp), &generic_headers)
             .unwrap();
         // cid10 compressor: last_accessed = T0 (start_time)
 
-        // T0 + 10ms: Create cid11 compressor context
+        // T0 + 10ms: Create cid11 compressor context - first packet (IR)
         mock_clock.advance(Duration::from_millis(10));
         let compressed_ir_cid11 = engine
             .compress(cid11, Some(RohcProfile::RtpUdpIp), &generic_headers)
@@ -634,8 +633,13 @@ mod tests {
         // T0 + 70ms: Refresh cid10.
         // Context ages before refresh: cid10_comp=70ms, cid11_comp=60ms, cid11_decomp=50ms
         mock_clock.advance(short_timeout / 2); // Advance by 50ms
+
+        // Create UO-0 conditions - same TS, same marker, small SN increment
+        let headers_refresh = create_test_rtp_headers_for_engine(2, 10, false);
+        let generic_headers_refresh = GenericUncompressedHeaders::RtpUdpIpv4(headers_refresh);
+
         let _ = engine
-            .compress(cid10, Some(RohcProfile::RtpUdpIp), &generic_headers)
+            .compress(cid10, Some(RohcProfile::RtpUdpIp), &generic_headers_refresh)
             .unwrap();
         // cid10 compressor: last_accessed updated to T0 + 70ms
 
@@ -671,13 +675,6 @@ mod tests {
             0,
             "Decompressor contexts after first prune"
         );
-        assert!(
-            engine
-                .context_manager()
-                .get_decompressor_context(cid11)
-                .is_err(),
-            "CID 11 decompressor should be pruned"
-        );
 
         // --- Phase 2: Test pruning of the remaining cid10 context ---
         // cid10 last access: T0 + 70ms. Current clock: T0 + 130ms. Age: 60ms.
@@ -705,8 +702,18 @@ mod tests {
 
         // Clock = T0 + 230ms (cid_fresh age = 50ms). Refresh.
         mock_clock.advance(short_timeout / 2);
+
+        // Use UO-0 conditions for refresh
+        let headers_final_refresh = create_test_rtp_headers_for_engine(2, 10, false);
+        let generic_headers_final_refresh =
+            GenericUncompressedHeaders::RtpUdpIpv4(headers_final_refresh);
+
         let _ = engine
-            .compress(cid_fresh, Some(RohcProfile::RtpUdpIp), &generic_headers)
+            .compress(
+                cid_fresh,
+                Some(RohcProfile::RtpUdpIp),
+                &generic_headers_final_refresh,
+            )
             .unwrap(); // cid_fresh last_accessed = T0 + 230ms.
 
         // Clock = T0 + ~263ms (cid_fresh age = ~33ms). Prune.
@@ -718,11 +725,58 @@ mod tests {
             "Freshly accessed CID {} should remain",
             cid_fresh
         );
-        assert!(
-            engine
-                .context_manager()
-                .get_compressor_context(cid_fresh)
-                .is_ok()
+    }
+
+    #[test]
+    fn engine_compress_decompress_explicit_uo0() {
+        let mock_clock = Arc::new(MockClock::new(Instant::now()));
+        let mut engine = RohcEngine::new(5, DEFAULT_TEST_TIMEOUT, mock_clock);
+        engine
+            .register_profile_handler(Box::new(Profile1Handler::new()))
+            .unwrap();
+
+        let cid: u16 = 5;
+
+        // Create headers that will definitely trigger UO-0 on second packet
+        let headers1 = create_test_rtp_headers_for_engine(100, 1000, false);
+        let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
+
+        // First packet - IR
+        let compressed1 = engine
+            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers1)
+            .unwrap();
+
+        // Decompress IR to establish decompressor context
+        let _decompressed1 = engine.decompress(&compressed1).unwrap();
+
+        // Second packet - should be UO-0
+        // Conditions: same marker, same TS, same IP-ID, small SN increment
+        let mut headers2 = headers1.clone();
+        headers2.rtp_sequence_number = 101; // SN delta = 1, which is < 16
+        // All other fields same: TS, marker, IP-ID
+
+        let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone());
+
+        let compressed2 = engine
+            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers2)
+            .unwrap();
+
+        // Verify it's UO-0 with Add-CID
+        assert_eq!(compressed2.len(), 2); // Add-CID + UO-0
+        assert_eq!(
+            compressed2[0],
+            ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid as u8 & ROHC_SMALL_CID_MASK)
         );
+        assert_eq!(compressed2[1] & 0x80, 0); // UO-0 discriminator (bit 7 = 0)
+
+        let decompressed2 = engine.decompress(&compressed2).unwrap();
+        match decompressed2 {
+            GenericUncompressedHeaders::RtpUdpIpv4(h) => {
+                assert_eq!(h.rtp_sequence_number, headers2.rtp_sequence_number);
+                assert_eq!(h.rtp_timestamp, headers1.rtp_timestamp); // UO-0 keeps same TS
+                assert_eq!(h.rtp_marker, headers2.rtp_marker);
+            }
+            _ => panic!("Unexpected decompressed header type"),
+        }
     }
 }

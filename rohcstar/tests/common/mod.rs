@@ -82,58 +82,136 @@ pub fn create_test_engine_with_mock_clock(
 /// - `initial_ts`: Initial RTP timestamp for context establishment. This will be the
 ///   `ts_offset` in the compressor after the stride is detected using this as a base.
 /// - `stride`: The desired RTP timestamp stride to establish.
-pub fn establish_ts_stride_context(
-    engine: &mut RohcEngine,
+pub fn establish_ts_stride_context_for_uo1_rtp(
+    engine: &mut rohcstar::engine::RohcEngine,
     cid: u16,
     ssrc: u32,
-    initial_sn: u16,
-    initial_ts_for_first_ir: u32,
+    final_ir_sn_val: u16,
+    final_ir_ts_val: u32,
     stride: u32,
 ) {
-    let mut current_sn = initial_sn;
-    let mut current_ts = initial_ts_for_first_ir;
-    let mut last_known_ip_id;
+    // 1. Send an initial IR. Its TS will be the *initial* ts_offset for stride detection.
+    let initial_setup_sn = final_ir_sn_val.wrapping_sub(1); // SN of packet *before* the final IR
+    let initial_setup_ts_val = final_ir_ts_val.wrapping_sub(stride); // TS of packet *before* the final IR
 
-    establish_ir_context(engine, cid, current_sn, current_ts, false, ssrc);
-    last_known_ip_id = get_compressor_context(engine, cid).last_sent_ip_id_full;
+    establish_ir_context(
+        engine,
+        cid,
+        initial_setup_sn,
+        initial_setup_ts_val,
+        false,
+        ssrc,
+    );
+    let ip_id_for_final_ir = get_ip_id_established_by_ir(initial_setup_sn, ssrc).wrapping_add(1);
 
-    for _i in 0..P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD {
-        current_sn = current_sn.wrapping_add(1);
-        current_ts = current_ts.wrapping_add(stride);
-        let headers =
-            create_rtp_headers(current_sn, current_ts, false, ssrc).with_ip_id(last_known_ip_id);
-        let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
-        // We only care about updating the compressor's internal state here.
-        let _ = engine
-            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers)
-            .unwrap();
-        last_known_ip_id = get_compressor_context(engine, cid).last_sent_ip_id_full;
-    }
-
-    // Force a new IR. Since compressor is in ts_scaled_mode, this IR will carry ts_stride.
-    // The TS of THIS IR will become the new ts_offset for BOTH compressor and decompressor.
-    current_sn = current_sn.wrapping_add(1);
-    current_ts = current_ts.wrapping_add(stride);
-
-    let headers_final_ir =
-        create_rtp_headers(current_sn, current_ts, false, ssrc).with_ip_id(last_known_ip_id);
-    let generic_final_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_final_ir);
-
-    // Force compressor into IR mode for this packet
-    let comp_ctx_dyn = engine
+    // 2. Directly manipulate compressor context to simulate that stride has been
+    //    detected and scaled mode is active. This bypasses sending UO packets for setup,
+    //    avoiding the UO-0 vs UO-1-TS selection problem.
+    let comp_ctx_dyn_setup = engine
         .context_manager_mut()
         .get_compressor_context_mut(cid)
         .unwrap();
-    let comp_ctx = comp_ctx_dyn
+    let comp_ctx_concrete_setup = comp_ctx_dyn_setup
         .as_any_mut()
-        .downcast_mut::<Profile1CompressorContext>()
+        .downcast_mut::<rohcstar::profiles::profile1::context::Profile1CompressorContext>()
         .unwrap();
-    comp_ctx.mode = Profile1CompressorMode::InitializationAndRefresh;
+
+    comp_ctx_concrete_setup.ts_stride = Some(stride);
+    // ts_offset should be the TS of the packet *before* stride detection starts.
+    // Here, it's the TS of the 'initial_setup_sn' IR.
+    comp_ctx_concrete_setup.ts_offset = Timestamp::new(initial_setup_ts_val);
+    comp_ctx_concrete_setup.ts_stride_packets = P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD;
+    comp_ctx_concrete_setup.ts_scaled_mode = true;
+    // Ensure last sent fields are from the initial_setup_sn IR
+    comp_ctx_concrete_setup.last_sent_rtp_sn_full = initial_setup_sn;
+    comp_ctx_concrete_setup.last_sent_rtp_ts_full = Timestamp::new(initial_setup_ts_val);
+
+    // 3. Send the definitive IR packet. Since ts_scaled_mode and ts_stride are now set
+    //    in the compressor, this IR will signal TS_STRIDE. Its dynamic TS will become
+    //    the new TS_OFFSET for both compressor and decompressor.
+    let headers_final_ir = create_rtp_headers(final_ir_sn_val, final_ir_ts_val, false, ssrc)
+        .with_ip_id(ip_id_for_final_ir);
+
+    // Get context again to force IR mode (as above may have been just before FO->SO transition)
+    let comp_ctx_dyn_final_ir = engine
+        .context_manager_mut()
+        .get_compressor_context_mut(cid)
+        .unwrap();
+    let comp_ctx_concrete_final_ir = comp_ctx_dyn_final_ir
+        .as_any_mut()
+        .downcast_mut::<rohcstar::profiles::profile1::context::Profile1CompressorContext>()
+        .unwrap();
+    comp_ctx_concrete_final_ir.mode =
+        rohcstar::profiles::profile1::context::Profile1CompressorMode::InitializationAndRefresh;
+    // These should persist from step 2, but ensure they are set for the IR logic
+    assert!(
+        comp_ctx_concrete_final_ir.ts_scaled_mode,
+        "Helper: ts_scaled_mode not true before final IR build"
+    );
+    assert_eq!(
+        comp_ctx_concrete_final_ir.ts_stride,
+        Some(stride),
+        "Helper: ts_stride not Some(stride) before final IR build"
+    );
 
     let compressed_final_ir = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_final_ir)
+        .compress(
+            cid,
+            Some(RohcProfile::RtpUdpIp),
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers_final_ir),
+        )
         .unwrap();
+    assert!(
+        compressed_final_ir.len() > 4,
+        "Final setup IR packet too short (len {})",
+        compressed_final_ir.len()
+    );
+    let type_byte_idx = if cid != 0 && cid <= 15 { 1 } else { 0 };
+    if !compressed_final_ir.is_empty() {
+        assert_eq!(
+            compressed_final_ir[type_byte_idx], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
+            "Final setup IR should be IR-DYN"
+        );
+    }
     let _ = engine.decompress(&compressed_final_ir).unwrap();
+
+    // Verify alignment post final IR
+    let comp_ctx_final_check = get_compressor_context(engine, cid);
+    let decomp_ctx_final_check = get_decompressor_context(engine, cid);
+
+    assert_eq!(
+        comp_ctx_final_check.ts_offset,
+        Timestamp::new(final_ir_ts_val),
+        "FINAL C: ts_offset. Got {}, expected {}",
+        comp_ctx_final_check.ts_offset.value(),
+        final_ir_ts_val
+    );
+    assert!(
+        comp_ctx_final_check.ts_scaled_mode,
+        "FINAL C: ts_scaled_mode."
+    );
+    assert_eq!(
+        comp_ctx_final_check.ts_stride,
+        Some(stride),
+        "FINAL C: ts_stride."
+    );
+
+    assert_eq!(
+        decomp_ctx_final_check.ts_offset,
+        Timestamp::new(final_ir_ts_val),
+        "FINAL D: ts_offset. Got {}, expected {}",
+        decomp_ctx_final_check.ts_offset.value(),
+        final_ir_ts_val
+    );
+    assert!(
+        decomp_ctx_final_check.ts_scaled_mode,
+        "FINAL D: ts_scaled_mode."
+    );
+    assert_eq!(
+        decomp_ctx_final_check.ts_stride,
+        Some(stride),
+        "FINAL D: ts_stride."
+    );
 }
 
 /// Creates RTP/UDP/IPv4 headers with customizable fields.
@@ -165,7 +243,7 @@ pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts_val: u32, marker: bool) -> RtpU
         rtp_sequence_number: sn,
         rtp_timestamp: Timestamp::new(ts_val),
         rtp_marker: marker,
-        ip_identification: sn.wrapping_add(0x1234),
+        ip_identification: 0x1234,
         ..Default::default()
     }
 }
