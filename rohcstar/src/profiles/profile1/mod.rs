@@ -6,8 +6,8 @@
 //!
 //! Key components:
 //! - `handler`: Implements the `ProfileHandler` trait for Profile 1.
-//! - `compression_logic`: Contains functions for Profile 1 compression decisions and packet building.
-//! - `decompression_logic`: Contains functions for Profile 1 ROHC packet parsing and header reconstruction.
+//! - `compressor`: Contains functions for Profile 1 compression decisions and packet building.
+//! - `decompressor`: Contains functions for Profile 1 ROHC packet parsing and header reconstruction.
 //! - `state_machine`: Handles decompressor state transitions for Profile 1.
 //! - `context`: Defines `Profile1CompressorContext` and `Profile1DecompressorContext`.
 //! - `discriminator`: Defines `Profile1PacketType` for structured packet type identification.
@@ -16,10 +16,10 @@
 //! - `protocol_types`: Defines `RtpUdpIpv4Headers`.
 //! - `constants`: Holds constants specific to Profile 1 operations.
 
-pub mod compression_logic;
+pub mod compressor;
 pub mod constants;
 pub mod context;
-pub mod decompression_logic;
+pub mod decompressor;
 pub mod discriminator;
 pub mod handler;
 pub mod packet_processor;

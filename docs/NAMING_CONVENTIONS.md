@@ -70,5 +70,5 @@ Test function names should clearly describe the feature or unit of logic being t
 *   **Unit Tests (within modules `#[cfg(test)] mod tests { ... }`):**
     *   Pattern: `<function_or_logic_unit>_<scenario_description>` or `<feature>_<scenario_description>`
     *   The name should be descriptive enough to understand the test's purpose without requiring prefixes like `test_` or `unit_`.
-    *   Example (for `compression_logic::should_force_ir`): `should_force_ir_on_ssrc_change`, `should_force_ir_when_refresh_interval_met`.
+    *   Example (for `compressor::should_force_ir`): `should_force_ir_on_ssrc_change`, `should_force_ir_when_refresh_interval_met`.
     *   Example (for a specific packet parsing function): `parse_uo0_packet_with_valid_crc_succeeds`.

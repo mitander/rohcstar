@@ -2,12 +2,12 @@
 //!
 //! This module implements the state transitions (NoContext, StaticContext, FullContext, SecondOrder)
 //! for the ROHC Profile 1 decompressor, as defined in RFC 3095, Section 5.3.
-//! It works in conjunction with `decompression_logic.rs` which handles packet parsing
+//! It works in conjunction with `decompressor.rs` which handles packet parsing
 //! and header reconstruction.
 
 use super::constants::*;
 use super::context::{Profile1DecompressorContext, Profile1DecompressorMode};
-use super::decompression_logic;
+use super::decompressor;
 use super::discriminator::Profile1PacketType;
 use super::protocol_types::RtpUdpIpv4Headers;
 
@@ -107,8 +107,7 @@ pub(super) fn process_ir_packet(
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
-    match decompression_logic::parse_ir(context, packet_bytes, crc_calculators, handler_profile_id)
-    {
+    match decompressor::parse_ir(context, packet_bytes, crc_calculators, handler_profile_id) {
         Ok(reconstructed_rtp_headers) => {
             context.mode = Profile1DecompressorMode::FullContext;
             context.consecutive_crc_failures_in_fc = 0;
@@ -157,20 +156,18 @@ pub(super) fn process_uo_packet_in_fc_mode(
     );
 
     let outcome: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
-        Profile1PacketType::Uo0 => {
-            decompression_logic::parse_uo0(context, packet_bytes, crc_calculators)
-        }
+        Profile1PacketType::Uo0 => decompressor::parse_uo0(context, packet_bytes, crc_calculators),
         Profile1PacketType::Uo1Sn { .. } => {
-            decompression_logic::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Ts => {
-            decompression_logic::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompression_logic::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompression_logic::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Unknown(val) => {
             return Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
@@ -213,16 +210,16 @@ pub(super) fn process_packet_in_sc_mode(
 
     let parse_reconstruct_result: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
         Profile1PacketType::Uo1Ts => {
-            decompression_logic::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompression_logic::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Sn { .. } => {
-            decompression_logic::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompression_logic::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo0 => {
             // UO-0 is not a dynamic updater. Receiving it in SC is an invalid sequence.
@@ -299,20 +296,18 @@ pub(super) fn process_packet_in_so_mode(
     );
 
     let parse_reconstruct_result: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
-        Profile1PacketType::Uo0 => {
-            decompression_logic::parse_uo0(context, packet_bytes, crc_calculators)
-        }
+        Profile1PacketType::Uo0 => decompressor::parse_uo0(context, packet_bytes, crc_calculators),
         Profile1PacketType::Uo1Sn { .. } => {
-            decompression_logic::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Ts => {
-            decompression_logic::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompression_logic::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompression_logic::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Unknown(val) => {
             return Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {

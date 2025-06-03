@@ -3,12 +3,12 @@
 //! This module provides the concrete implementation of the `ProfileHandler` trait
 //! for ROHC Profile 1. It orchestrates the compression and decompression of
 //! RTP/UDP/IPv4 packet headers according to the rules specified in RFC 3095,
-//! delegating specific logic to submodules like `compression_logic`,
-//! `decompression_logic`, and `state_machine`.
+//! delegating specific logic to submodules like `compressor`,
+//! `decompressor`, and `state_machine`.
 
 use std::time::Instant;
 
-use super::compression_logic;
+use super::compressor;
 use super::context::{
     Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
 };
@@ -149,10 +149,10 @@ impl ProfileHandler for Profile1Handler {
             "Context SSRC should be initialized at this point."
         );
 
-        let result = if compression_logic::should_force_ir(context, uncompressed_headers) {
-            compression_logic::compress_as_ir(context, uncompressed_headers, &self.crc_calculators)
+        let result = if compressor::should_force_ir(context, uncompressed_headers) {
+            compressor::compress_as_ir(context, uncompressed_headers, &self.crc_calculators)
         } else {
-            compression_logic::compress_as_uo(context, uncompressed_headers, &self.crc_calculators)
+            compressor::compress_as_uo(context, uncompressed_headers, &self.crc_calculators)
         };
 
         if result.is_ok() {
@@ -275,7 +275,7 @@ mod tests {
     use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
 
     #[test]
-    fn handler_calls_compression_logic_for_ir() {
+    fn handler_calls_compressor_for_ir() {
         let handler = Profile1Handler::new();
         let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
         let comp_ctx = comp_ctx_dyn
