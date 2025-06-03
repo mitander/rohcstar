@@ -9,12 +9,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROHCSTAR_DIR="$REPO_ROOT/rohcstar"
 
-# Default thresholds (nanoseconds) - fail if performance is significantly worse
-COMPRESS_FIRST_THRESHOLD=500    # Currently ~263ns, allow up to 500ns
-COMPRESS_SUBSEQUENT_THRESHOLD=200   # Currently ~116ns, allow up to 200ns
-DECOMPRESS_IR_THRESHOLD=500     # Currently ~292ns, allow up to 500ns
-DECOMPRESS_UO_THRESHOLD=100     # Currently ~55ns, allow up to 100ns
-ROUNDTRIP_THRESHOLD=800         # Currently ~520ns, allow up to 800ns
+# Environment-aware performance thresholds (nanoseconds)
+if [[ "${GITHUB_ACTIONS}" == "true" ]]; then
+    # GitHub Actions runner thresholds (more lenient for x86_64 runners)
+    COMPRESS_FIRST_THRESHOLD=450        # ~389ns + margin
+    COMPRESS_SUBSEQUENT_THRESHOLD=200   # ~154ns + margin
+    DECOMPRESS_IR_THRESHOLD=600         # ~533ns + margin
+    DECOMPRESS_UO_THRESHOLD=100         # ~70ns + margin
+    ROUNDTRIP_THRESHOLD=850             # ~769ns + margin
+else
+    # Local development thresholds (tighter for faster hardware)
+    COMPRESS_FIRST_THRESHOLD=350        # ~304ns + margin
+    COMPRESS_SUBSEQUENT_THRESHOLD=150   # ~116ns + margin
+    DECOMPRESS_IR_THRESHOLD=300         # ~255ns + margin
+    DECOMPRESS_UO_THRESHOLD=80          # ~55ns + margin
+    ROUNDTRIP_THRESHOLD=600             # ~521ns + margin
+fi
 
 # Parse threshold factor argument
 THRESHOLD_FACTOR=1
