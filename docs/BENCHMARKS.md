@@ -1,7 +1,5 @@
 # Rohcstar Benchmarks
 
-**Last Updated:** December 2024
-
 ## 1. Overview
 
 The benchmark suite measures performance of critical ROHC operations using the Criterion framework. Benchmarks cover packet parsing, LSB operations, CRC calculations, compression/decompression pipelines, context management, and throughput scenarios.
@@ -46,7 +44,7 @@ The repository includes performance regression detection scripts designed for CI
 # Manual comprehensive check (~9 seconds)
 ./scripts/bench-regression-check.sh
 
-# Quick development check (~4.5 seconds, compression only)  
+# Quick development check (~4.5 seconds, compression only)
 ./scripts/quick-perf-check.sh
 
 # Check with relaxed thresholds (2x normal)
@@ -64,7 +62,7 @@ Performance checks are designed to run in CI/CD pipelines rather than git hooks 
 ### Performance Thresholds
 **Full regression check** (scripts/bench-regression-check.sh):
 - Compress first packet: 500ns
-- Compress subsequent packet: 200ns  
+- Compress subsequent packet: 200ns
 - Decompress IR packet: 500ns
 - Decompress UO packet: 100ns
 - Full roundtrip: 800ns

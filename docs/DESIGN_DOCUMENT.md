@@ -1,7 +1,5 @@
 # Rohcstar Design Document
 
-**Last Updated:** June 3, 2025
-
 ## 1. Introduction & Vision
 
 Rohcstar is a modern, memory-safe, and high-performance Rust implementation of the Robust Header Compression (ROHC) framework (RFC 3095 and related standards).
