@@ -712,7 +712,7 @@ fn bench_concurrent_contexts(c: &mut Criterion) {
             },
             |mut engine| {
                 // Test lookup performance by accessing random contexts
-                for i in 0..20 {
+                for i in 0u16..20 {
                     let cid = (i * 7) % 16; // Pseudo-random access pattern within CID limit
                     let mut headers = base_headers.clone();
                     headers.rtp_sequence_number = headers.rtp_sequence_number.wrapping_add(100 + i);
@@ -727,7 +727,7 @@ fn bench_concurrent_contexts(c: &mut Criterion) {
 
                     // This should use existing context (lookup performance)
                     let _compressed = engine.compress(
-                        black_box(cid as u16),
+                        black_box(cid),
                         None, // No profile hint - should use existing context
                         black_box(&generic),
                     );
