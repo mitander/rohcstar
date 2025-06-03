@@ -90,7 +90,6 @@ jobs:
       run: |
         chmod +x scripts/bench-regression-check.sh
         ./scripts/bench-regression-check.sh
-      working-directory: rohcstar
 
   simulation:
     name: Deterministic Simulation
@@ -125,7 +124,7 @@ jobs:
 
     - name: Upload simulation logs on failure
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: simulation-logs
         path: rohcstar-sim/rohc_sim_failures.log

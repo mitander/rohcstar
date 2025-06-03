@@ -45,7 +45,7 @@ jobs:
 
     - name: Upload simulation results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: extended-simulation-results
         path: rohcstar-sim/rohc_sim_failures.log
@@ -81,7 +81,7 @@ jobs:
         ./scripts/run_benchmarks.sh --full --html
 
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: benchmark-results-${{ github.sha }}
         path: rohcstar/target/criterion/
