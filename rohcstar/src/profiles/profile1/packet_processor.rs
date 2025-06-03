@@ -232,12 +232,11 @@ pub fn build_profile1_ir_packet(
         "IR packet must be for Profile 1"
     );
 
-    let mut final_packet_bytes = Vec::with_capacity(32);
+    let mut packet = Vec::with_capacity(32);
 
     // Add-CID octet if needed
     if ir_data.cid > 0 && ir_data.cid <= 15 {
-        final_packet_bytes
-            .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid as u8 & ROHC_SMALL_CID_MASK));
+        packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid as u8 & ROHC_SMALL_CID_MASK));
     } else if ir_data.cid > 15 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "CID".to_string(),
@@ -249,7 +248,7 @@ pub fn build_profile1_ir_packet(
     }
 
     // Packet type octet
-    final_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+    packet.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
     // Profile ID
     let profile_u8: u8 = ir_data.profile_id.into();
@@ -263,20 +262,20 @@ pub fn build_profile1_ir_packet(
             ),
         });
     }
-    final_packet_bytes.push(profile_u8);
+    packet.push(profile_u8);
 
     // Static chain
-    let static_chain_start_index_in_final = final_packet_bytes.len();
-    final_packet_bytes.extend_from_slice(&ir_data.static_ip_src.octets());
-    final_packet_bytes.extend_from_slice(&ir_data.static_ip_dst.octets());
-    final_packet_bytes.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
-    final_packet_bytes.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
-    final_packet_bytes.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+    let static_chain_start_index_in_final = packet.len();
+    packet.extend_from_slice(&ir_data.static_ip_src.octets());
+    packet.extend_from_slice(&ir_data.static_ip_dst.octets());
+    packet.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
+    packet.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
+    packet.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
 
     // Dynamic chain
-    let dynamic_chain_start_index_in_final = final_packet_bytes.len();
-    final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
-    final_packet_bytes.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+    let dynamic_chain_start_index_in_final = packet.len();
+    packet.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
+    packet.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
 
     let mut rtp_flags_octet = 0u8;
     if ir_data.dyn_rtp_marker {
@@ -285,10 +284,10 @@ pub fn build_profile1_ir_packet(
     if ir_data.ts_stride.is_some() {
         rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK;
     }
-    final_packet_bytes.push(rtp_flags_octet);
+    packet.push(rtp_flags_octet);
 
     if let Some(stride_val) = ir_data.ts_stride {
-        final_packet_bytes.extend_from_slice(&stride_val.to_be_bytes());
+        packet.extend_from_slice(&stride_val.to_be_bytes());
     }
 
     let crc_payload_len = 1
@@ -308,22 +307,22 @@ pub fn build_profile1_ir_packet(
     let mut crc_payload = [0u8; 32]; // Max: 1 + 16 + 7 + 4 = 28 bytes
     crc_payload[0] = profile_u8;
     crc_payload[1..1 + P1_STATIC_CHAIN_LENGTH_BYTES].copy_from_slice(
-        &final_packet_bytes[static_chain_start_index_in_final..dynamic_chain_start_index_in_final],
+        &packet[static_chain_start_index_in_final..dynamic_chain_start_index_in_final],
     );
-    let dynamic_len = final_packet_bytes.len() - dynamic_chain_start_index_in_final;
+    let dynamic_len = packet.len() - dynamic_chain_start_index_in_final;
     crc_payload[1 + P1_STATIC_CHAIN_LENGTH_BYTES..1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_len]
-        .copy_from_slice(&final_packet_bytes[dynamic_chain_start_index_in_final..]);
+        .copy_from_slice(&packet[dynamic_chain_start_index_in_final..]);
 
     let calculated_crc8 = crc_calculators.crc8(&crc_payload[..crc_payload_len]);
-    final_packet_bytes.push(calculated_crc8);
+    packet.push(calculated_crc8);
 
     debug_assert!(
-        final_packet_bytes.len() >= 26,
+        packet.len() >= 26,
         "IR packet too short: {} bytes",
-        final_packet_bytes.len()
+        packet.len()
     );
 
-    Ok(final_packet_bytes)
+    Ok(packet)
 }
 
 /// Parses a ROHC Profile 1 IR (Initialization/Refresh) packet.

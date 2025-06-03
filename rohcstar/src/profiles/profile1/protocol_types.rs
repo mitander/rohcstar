@@ -191,7 +191,7 @@ impl RtpUdpIpv4Headers {
     ///
     /// # Returns
     /// `true` if CSRC count is valid, `false` otherwise.
-    pub fn validate_csrc_count(&self) -> bool {
+    pub fn is_csrc_count_valid(&self) -> bool {
         self.rtp_csrc_count as usize == self.rtp_csrc_list.len()
             && self.rtp_csrc_count <= RTP_MAX_CSRC_COUNT
     }
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(headers.ip_protocol, IP_PROTOCOL_UDP);
         assert_eq!(headers.rtp_version, RTP_VERSION);
         assert!(headers.ip_src.is_unspecified());
-        assert!(headers.validate_csrc_count());
+        assert!(headers.is_csrc_count_valid());
         assert_eq!(headers.rtp_timestamp, Timestamp::new(0));
     }
 
@@ -277,28 +277,28 @@ mod tests {
         assert_eq!(headers.rtp_sequence_number, 100);
         assert_eq!(headers.rtp_timestamp, Timestamp::new(10000));
         assert!(headers.rtp_marker);
-        assert!(headers.validate_csrc_count());
+        assert!(headers.is_csrc_count_valid());
     }
 
     #[test]
     fn validate_csrc_count_logic() {
         let mut headers = RtpUdpIpv4Headers::default();
-        assert!(headers.validate_csrc_count());
+        assert!(headers.is_csrc_count_valid());
 
         headers.rtp_csrc_list.push(1);
         headers.rtp_csrc_count = 0; // Mismatch
-        assert!(!headers.validate_csrc_count());
+        assert!(!headers.is_csrc_count_valid());
 
         headers.rtp_csrc_count = 1; // Match
-        assert!(headers.validate_csrc_count());
+        assert!(headers.is_csrc_count_valid());
 
         headers.rtp_csrc_count = RTP_MAX_CSRC_COUNT + 1; // Too many
         headers.rtp_csrc_list = vec![0; (RTP_MAX_CSRC_COUNT + 1) as usize];
-        assert!(!headers.validate_csrc_count());
+        assert!(!headers.is_csrc_count_valid());
 
         headers.rtp_csrc_count = RTP_MAX_CSRC_COUNT;
         headers.rtp_csrc_list = vec![0; RTP_MAX_CSRC_COUNT as usize];
-        assert!(headers.validate_csrc_count());
+        assert!(headers.is_csrc_count_valid());
     }
 
     #[test]

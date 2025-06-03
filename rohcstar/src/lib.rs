@@ -36,11 +36,11 @@
 //!
 //! // Compress packets (example with actual headers)
 //! # /*
-//! let uncompressed_headers = GenericUncompressedHeaders::RtpUdpIpv4(rtp_udp_ip_headers);
+//! let headers = GenericUncompressedHeaders::RtpUdpIpv4(rtp_udp_ip_headers);
 //! let compressed_packet = engine.compress(
 //!     0,                                    // Context ID
 //!     Some(RohcProfile::RtpUdpIp),         // Profile hint for new contexts
-//!     &uncompressed_headers,
+//!     &headers,
 //! )?;
 //!
 //! // Decompress packets

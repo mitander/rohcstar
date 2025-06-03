@@ -169,7 +169,7 @@ impl ProfileHandler for Profile1Handler {
     ///
     /// # Parameters
     /// - `context_dyn`: Mutable reference to the Profile 1 decompressor context
-    /// - `packet_bytes`: ROHC packet data to decompress
+    /// - `packet`: ROHC packet data to decompress
     ///
     /// # Returns
     /// The reconstructed uncompressed headers.
@@ -181,7 +181,7 @@ impl ProfileHandler for Profile1Handler {
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
-        packet_bytes: &[u8],
+        packet: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError> {
         let context = context_dyn
             .as_any_mut()
@@ -190,7 +190,7 @@ impl ProfileHandler for Profile1Handler {
                 RohcError::Internal("P1Handler::decompress: Incorrect context type.".to_string())
             })?;
 
-        if packet_bytes.is_empty() {
+        if packet.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
@@ -198,7 +198,7 @@ impl ProfileHandler for Profile1Handler {
             }));
         }
 
-        let first_byte = packet_bytes[0];
+        let first_byte = packet[0];
         let discriminated_type = Profile1PacketType::from_first_byte(first_byte);
 
         let result = match context.mode {
@@ -206,7 +206,7 @@ impl ProfileHandler for Profile1Handler {
                 if discriminated_type.is_ir() {
                     state_machine::process_ir_packet(
                         context,
-                        packet_bytes,
+                        packet,
                         &self.crc_calculators,
                         self.profile_id(),
                     )
@@ -221,7 +221,7 @@ impl ProfileHandler for Profile1Handler {
                 if discriminated_type.is_ir() {
                     return state_machine::process_ir_packet(
                         context,
-                        packet_bytes,
+                        packet,
                         &self.crc_calculators,
                         self.profile_id(),
                     );
@@ -231,7 +231,7 @@ impl ProfileHandler for Profile1Handler {
                     Profile1DecompressorMode::FullContext => {
                         state_machine::process_uo_packet_in_fc_mode(
                             context,
-                            packet_bytes,
+                            packet,
                             discriminated_type,
                             &self.crc_calculators,
                         )
@@ -239,7 +239,7 @@ impl ProfileHandler for Profile1Handler {
                     Profile1DecompressorMode::StaticContext => {
                         state_machine::process_packet_in_sc_mode(
                             context,
-                            packet_bytes,
+                            packet,
                             discriminated_type,
                             &self.crc_calculators,
                         )
@@ -247,7 +247,7 @@ impl ProfileHandler for Profile1Handler {
                     Profile1DecompressorMode::SecondOrder => {
                         state_machine::process_packet_in_so_mode(
                             context,
-                            packet_bytes,
+                            packet,
                             discriminated_type,
                             &self.crc_calculators,
                         )

@@ -116,7 +116,7 @@ impl RohcEngine {
     /// # Parameters
     /// - `cid`: The Context ID for the flow.
     /// - `profile_id_hint`: Optional `RohcProfile` hint for new context creation.
-    /// - `uncompressed_headers`: The `GenericUncompressedHeaders` to compress.
+    /// - `headers`: The `GenericUncompressedHeaders` to compress.
     ///
     /// # Returns
     /// The ROHC-compressed packet as a byte vector.
@@ -129,7 +129,7 @@ impl RohcEngine {
         &mut self,
         cid: u16,
         profile_id_hint: Option<RohcProfile>,
-        uncompressed_headers: &GenericUncompressedHeaders,
+        headers: &GenericUncompressedHeaders,
     ) -> Result<Vec<u8>, RohcError> {
         match self.context_manager.get_compressor_context_mut(cid) {
             Ok(context_box) => {
@@ -140,7 +140,7 @@ impl RohcEngine {
                         cid, profile_id
                     ))
                 })?;
-                let result = handler.compress(context_box.as_mut(), uncompressed_headers);
+                let result = handler.compress(context_box.as_mut(), headers);
 
                 if result.is_ok() {
                     context_box.set_last_accessed(self.clock.now());
@@ -164,7 +164,7 @@ impl RohcEngine {
                     self.default_ir_refresh_interval,
                     self.clock.now(),
                 );
-                let result = handler.compress(new_context.as_mut(), uncompressed_headers);
+                let result = handler.compress(new_context.as_mut(), headers);
                 if result.is_ok() {
                     new_context.set_last_accessed(self.clock.now());
                 }
@@ -183,7 +183,7 @@ impl RohcEngine {
     /// Updates the context's last accessed time on successful decompression.
     ///
     /// # Parameters
-    /// - `rohc_packet_bytes`: Complete ROHC packet data including CID and payload
+    /// - `packet`: Complete ROHC packet data including CID and payload
     ///
     /// # Returns
     /// The reconstructed uncompressed headers on success.
@@ -193,11 +193,8 @@ impl RohcEngine {
     /// - [`RohcError::ContextNotFound`] - No context exists and packet is not IR type
     /// - [`RohcError::UnsupportedProfile`] - Profile handler not registered
     /// - [`RohcError::Internal`] - Context exists but handler missing
-    pub fn decompress(
-        &mut self,
-        rohc_packet_bytes: &[u8],
-    ) -> Result<GenericUncompressedHeaders, RohcError> {
-        if rohc_packet_bytes.is_empty() {
+    pub fn decompress(&mut self, packet: &[u8]) -> Result<GenericUncompressedHeaders, RohcError> {
+        if packet.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
@@ -205,7 +202,7 @@ impl RohcEngine {
             }));
         }
 
-        let (cid, _, core_packet_slice) = self.parse_cid_from_packet(rohc_packet_bytes)?;
+        let (cid, _, core_packet_slice) = self.parse_cid_from_packet(packet)?;
         if core_packet_slice.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
@@ -255,7 +252,7 @@ impl RohcEngine {
     /// This is an internal helper function.
     ///
     /// # Parameters
-    /// - `rohc_packet_bytes`: Slice of the ROHC packet.
+    /// - `packet`: Slice of the ROHC packet.
     ///
     /// # Returns
     /// A tuple containing (CID, Add-CID present flag, core packet slice).
@@ -264,23 +261,23 @@ impl RohcEngine {
     /// - [`RohcError::Parsing`] - Insufficient packet data
     fn parse_cid_from_packet<'a>(
         &self,
-        rohc_packet_bytes: &'a [u8],
+        packet: &'a [u8],
     ) -> Result<(u16, bool, &'a [u8]), RohcError> {
-        if rohc_packet_bytes.is_empty() {
+        if packet.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
                 context: "CID parsing".to_string(),
             }));
         }
-        let first_byte = rohc_packet_bytes[0];
+        let first_byte = packet[0];
         // Check for Add-CID octet (1110xxxx prefix)
         if (first_byte >> 4) == 0b1110 {
             let cid_val = (first_byte & ROHC_SMALL_CID_MASK) as u16;
-            Ok((cid_val, true, &rohc_packet_bytes[1..]))
+            Ok((cid_val, true, &packet[1..]))
         } else {
             // No Add-CID, assume implicit CID 0
-            Ok((0, false, rohc_packet_bytes))
+            Ok((0, false, packet))
         }
     }
 
