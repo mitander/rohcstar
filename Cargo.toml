@@ -5,3 +5,17 @@ members = [
     "rohcstar-sim"
 ]
 
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
+opt-level = 'z' # Optimize for size
+
+[profile.dev]
+opt-level = 0 # Default for dev
+
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1

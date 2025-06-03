@@ -46,6 +46,36 @@
 *   **Packet Processing:** Efficient and RFC-compliant parsing and building of ROHC packets and relevant L3/L4 headers.
 *   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC, SO) and transitions.
 
+## Performance Benchmarking
+
+ROHCstar includes a comprehensive benchmark suite to measure and monitor performance of critical ROHC operations:
+
+*   **Packet Parsing**: Raw parsing performance of RTP/UDP/IPv4 headers (>3 GiB/s)
+*   **LSB Operations**: Core W-LSB encoding/decoding algorithms (<5 ns per operation)
+*   **CRC Operations**: CRC-3 and CRC-8 calculations for packet validation (>800 MiB/s)
+*   **Compression Pipeline**: Full compression workflow including packet type selection
+*   **Decompression Pipeline**: Full decompression with context reconstruction
+*   **Full Roundtrip**: End-to-end compression and decompression cycles (<600 ns)
+*   **Context Management**: Context creation, lookup, and management overhead
+
+### Running Benchmarks
+
+```bash
+# Quick benchmark run
+./scripts/run_benchmarks.sh --quick
+
+# Run specific benchmark group
+./scripts/run_benchmarks.sh packet_parsing
+
+# Full benchmarks with HTML reports
+./scripts/run_benchmarks.sh --full --html
+
+# Direct cargo usage
+cd rohcstar && cargo bench --bench rohc_benchmarks
+```
+
+See [BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance analysis, optimization guidance, benchmark descriptions, and CI/CD integration.
+
 ## Basic Usage
 
 ```rust

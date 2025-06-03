@@ -14,13 +14,10 @@ serde_with = { version = "3", features = ["macros"] }
 serde_json = "1.0"
 rand = "0.9"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
-[profile.release]
-lto = true
-codegen-units = 1
-panic = 'abort'
-strip = true
-opt-level = 'z' # Optimize for size
 
-[profile.dev]
-opt-level = 0 # Default for dev
+
+[[bench]]
+name = "rohc_benchmarks"
+harness = false
