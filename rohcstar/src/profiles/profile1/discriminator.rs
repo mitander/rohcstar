@@ -5,7 +5,7 @@
 //! It provides a way to parse the first byte of a ROHC packet and determine its type
 //! in a structured manner, replacing complex bitmask operations in the handler.
 
-use crate::profiles::profile1::constants::*;
+use super::constants::*;
 
 /// Represents the discriminated type of a ROHC Profile 1 packet based on its first byte.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
