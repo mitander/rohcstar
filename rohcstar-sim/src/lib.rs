@@ -381,25 +381,14 @@ impl RohcSimulator {
                         }
 
                         if decompressed_headers.rtp_timestamp != original_headers.rtp_timestamp {
-                            let packet_index_from_start = current_sn_being_processed
-                                .saturating_sub(self.config.start_sn)
-                                as usize;
-
-                            // TODO: Post-UO-0 transition timestamp tracking bug at SN 11
-                            let is_post_uo0_timestamp_bug = packet_index_from_start == 10
-                                && self.config.marker_probability == 0.0
-                                && (self.config.seed == 42 || self.config.seed == 123);
-
-                            if !is_post_uo0_timestamp_bug {
-                                return Err(SimError::VerificationError {
-                                    sn: current_sn_being_processed,
-                                    message: format!(
-                                        "Timestamp mismatch: expected {:?}, got {:?}",
-                                        original_headers.rtp_timestamp,
-                                        decompressed_headers.rtp_timestamp
-                                    ),
-                                });
-                            }
+                            return Err(SimError::VerificationError {
+                                sn: current_sn_being_processed,
+                                message: format!(
+                                    "Timestamp mismatch: expected {:?}, got {:?}",
+                                    original_headers.rtp_timestamp,
+                                    decompressed_headers.rtp_timestamp
+                                ),
+                            });
                         }
                     }
                     _ => {

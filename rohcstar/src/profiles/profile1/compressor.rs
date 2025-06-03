@@ -148,6 +148,19 @@ pub(super) fn compress_as_ir(
     let packet =
         build_profile1_ir_packet(&ir_data, crc_calculators).map_err(RohcError::Building)?;
 
+    // Perform stride detection BEFORE updating context state to avoid race condition
+    if scaled_mode_failed {
+        // Resume stride detection using TS before IR, as IR TS may not be part of regular sequence
+        let old_ts = context.last_sent_rtp_ts_full;
+        context.last_sent_rtp_ts_full = previous_ts_before_ir;
+        context.detect_ts_stride(headers.rtp_timestamp);
+        context.last_sent_rtp_ts_full = old_ts;
+    } else if context.last_sent_rtp_ts_full.value() != 0 || context.ts_stride_packets > 0 {
+        // Normal stride detection for any packet with a previous timestamp reference
+        // This ensures stride detection works for the second packet and beyond
+        context.detect_ts_stride(headers.rtp_timestamp);
+    }
+
     context.last_sent_rtp_sn_full = headers.rtp_sequence_number;
     context.last_sent_rtp_ts_full = headers.rtp_timestamp;
     context.last_sent_rtp_marker = headers.rtp_marker;
@@ -160,12 +173,6 @@ pub(super) fn compress_as_ir(
         // IR packet TS becomes new ts_offset for scaled calculations
         context.ts_offset = headers.rtp_timestamp;
         context.ts_scaled_mode = true;
-    } else if scaled_mode_failed {
-        // Resume stride detection using TS before IR, as IR TS may not be part of regular sequence
-        let ts_of_this_ir = context.last_sent_rtp_ts_full;
-        context.last_sent_rtp_ts_full = previous_ts_before_ir;
-        context.detect_ts_stride(headers.rtp_timestamp);
-        context.last_sent_rtp_ts_full = ts_of_this_ir;
     }
 
     Ok(packet)
@@ -368,8 +375,12 @@ fn select_and_build_uo_packet(
         }
     }
 
-    // Try UO-1-TS
-    if !marker_changed && ts_changed && sn_delta == 1 && !ip_id_changed {
+    // Try UO-1-TS - Allow IP ID changes when stride detection is needed
+    if !marker_changed
+        && ts_changed
+        && sn_delta == 1
+        && (!ip_id_changed || context.ts_stride.is_none())
+    {
         let _ = context.detect_ts_stride(current_ts);
         let packet = build_uo1_ts_packet(context, current_sn, current_ts, crc_calculators)?;
         return Ok((packet, current_ts));
