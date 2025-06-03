@@ -29,11 +29,13 @@ pub const DEFAULT_ENGINE_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
 /// Default IR refresh interval for RohcEngine instances in tests.
 pub const DEFAULT_ENGINE_IR_REFRESH_INTERVAL: u32 = 100;
 
-/// Creates a `RohcEngine` with a `SystemClock` for general integration testing,
-/// using default IR refresh interval and test timeout values.
+/// Creates a default ROHC engine for testing purposes.
+///
+/// Uses standard configuration values for IR refresh interval and context timeout
+/// with a system clock implementation.
 ///
 /// # Returns
-/// A new `RohcEngine` instance.
+/// A new `RohcEngine` instance configured for testing.
 pub fn create_default_test_engine() -> RohcEngine {
     RohcEngine::new(
         DEFAULT_ENGINE_IR_REFRESH_INTERVAL,
@@ -42,14 +44,13 @@ pub fn create_default_test_engine() -> RohcEngine {
     )
 }
 
-/// Creates a `RohcEngine` with a `SystemClock` for general integration testing,
-/// allowing a specific IR refresh interval.
+/// Creates a ROHC engine with custom IR refresh interval for testing.
 ///
 /// # Parameters
-/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
+/// - `ir_refresh_interval`: Custom IR refresh interval in number of packets
 ///
 /// # Returns
-/// A new `RohcEngine` instance configured with the given IR refresh interval.
+/// A new `RohcEngine` instance with the specified IR refresh interval.
 pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEngine {
     RohcEngine::new(
         ir_refresh_interval,
@@ -62,15 +63,18 @@ pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEng
 ///
 /// This allows tests to precisely control the passage of time, which is crucial for
 /// verifying context timeout logic and other time-dependent behaviors.
+/// Creates a ROHC engine with a mock clock for deterministic testing.
+///
+/// Useful for testing time-dependent behavior like context timeouts
+/// in a controlled manner.
 ///
 /// # Parameters
-/// - `ir_refresh_interval`: The interval (in packets) for IR refreshes.
-/// - `timeout`: The context timeout duration.
-/// - `initial_mock_time`: The starting time for the `MockClock`.
+/// - `ir_refresh_interval`: IR refresh interval in number of packets
+/// - `timeout`: Context timeout duration
+/// - `initial_mock_time`: Starting time for the mock clock
 ///
 /// # Returns
-/// A tuple containing the configured `RohcEngine` and an `Arc<MockClock>`
-/// which can be used to manipulate time during the test.
+/// A tuple containing the configured engine and the mock clock reference.
 pub fn create_test_engine_with_mock_clock(
     ir_refresh_interval: u32,
     timeout: Duration,
@@ -236,15 +240,19 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
 /// Static fields (IP addresses, ports) are set to predefined common values.
 /// IP Identification is derived from `sn + ssrc` (lower 16 bits).
 /// Accepts `ts_val` as `u32` and converts to `Timestamp` internally.
+/// Creates RTP/UDP/IPv4 headers for testing with customizable RTP fields.
+///
+/// Uses default IP and UDP addresses/ports but allows customization of
+/// RTP-specific fields for testing different packet scenarios.
 ///
 /// # Parameters
-/// - `sn`: RTP Sequence Number.
-/// - `ts_val`: RTP Timestamp value (as `u32`).
-/// - `marker`: RTP Marker bit.
-/// - `ssrc`: RTP SSRC identifier.
+/// - `sn`: RTP sequence number
+/// - `ts_val`: RTP timestamp value
+/// - `marker`: RTP marker bit
+/// - `ssrc`: RTP SSRC identifier
 ///
 /// # Returns
-/// An `RtpUdpIpv4Headers` struct.
+/// Complete RTP/UDP/IPv4 headers ready for compression testing.
 pub fn create_rtp_headers(sn: u16, ts_val: u32, marker: bool, ssrc: u32) -> RtpUdpIpv4Headers {
     RtpUdpIpv4Headers {
         ip_src: "192.168.0.1".parse().unwrap(),
@@ -265,14 +273,18 @@ pub fn create_rtp_headers(sn: u16, ts_val: u32, marker: bool, ssrc: u32) -> RtpU
 /// Useful for tests where SSRC and IP-ID variations are not the primary focus.
 /// Accepts `ts_val` as `u32` and converts to `Timestamp` internally.
 /// Static fields (IP addresses, ports) are set to predefined values different from `create_rtp_headers`.
+/// Creates RTP/UDP/IPv4 headers with a fixed SSRC for consistent testing.
+///
+/// Similar to `create_rtp_headers` but uses a fixed SSRC and different
+/// port numbers for testing scenarios requiring consistent SSRC values.
 ///
 /// # Parameters
-/// - `sn`: RTP Sequence Number.
-/// - `ts_val`: RTP Timestamp value (as `u32`).
-/// - `marker`: RTP Marker bit.
+/// - `sn`: RTP sequence number
+/// - `ts_val`: RTP timestamp value
+/// - `marker`: RTP marker bit
 ///
 /// # Returns
-/// An `RtpUdpIpv4Headers` struct.
+/// Complete RTP/UDP/IPv4 headers with fixed SSRC (0x12345678).
 pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts_val: u32, marker: bool) -> RtpUdpIpv4Headers {
     RtpUdpIpv4Headers {
         ip_src: "192.168.0.1".parse().unwrap(),
@@ -288,20 +300,19 @@ pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts_val: u32, marker: bool) -> RtpU
     }
 }
 
-/// Creates a default `IrPacket` structure populated with basic test data.
+/// Creates a default IR packet structure for testing.
 ///
-/// The CRC8 field is set to 0 (placeholder, as it's calculated by the builder).
-/// The `ts_stride` field defaults to `None`.
-/// Accepts `ts_val` as `u32` for `dyn_rtp_timestamp`.
+/// Populates an `IrPacket` with basic test data using predefined IP addresses
+/// and UDP ports. The CRC8 field is set to 0 (calculated by the builder).
 ///
 /// # Parameters
-/// - `cid`: Context Identifier.
-/// - `ssrc`: RTP SSRC for the static chain.
-/// - `sn`: RTP Sequence Number for the dynamic chain.
-/// - `ts_val`: RTP Timestamp value (as `u32`) for the dynamic chain.
+/// - `cid`: Context Identifier
+/// - `ssrc`: RTP SSRC for the static chain
+/// - `sn`: RTP Sequence Number for the dynamic chain
+/// - `ts_val`: RTP Timestamp value for the dynamic chain
 ///
 /// # Returns
-/// An `IrPacket` struct.
+/// An `IrPacket` struct ready for use in IR packet building tests.
 pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPacket {
     IrPacket {
         cid,
@@ -319,23 +330,19 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPac
     }
 }
 
-/// Establishes an IR (Initialization and Refresh) context in the ROHC engine.
+/// Establishes an IR context in the ROHC engine for testing.
 ///
-/// This function sends an IR packet through the engine's compressor and then
-/// decompressor to ensure a valid Profile 1 context is established for the given CID.
-/// If a compressor context for the `cid` already exists and its SSRC matches `ssrc`,
-/// it forces the compressor into `InitializationAndRefresh` mode before sending the IR.
-/// If `headers_ir.ip_identification` is 0 and `initial_sn` is not 0 after creation,
-/// `ip_identification` is set to `initial_sn` for the IR packet.
-/// Accepts `initial_ts_val` as `u32` and uses it to create `RtpUdpIpv4Headers`.
+/// Sends an IR packet through both compressor and decompressor to ensure
+/// a valid Profile 1 context is established. Forces existing contexts into
+/// InitializationAndRefresh mode if SSRC matches.
 ///
 /// # Parameters
-/// - `engine`: Mutable reference to the `RohcEngine`.
-/// - `cid`: Context Identifier for the flow.
-/// - `initial_sn`: Initial RTP Sequence Number for the IR packet.
-/// - `initial_ts_val`: Initial RTP Timestamp value (as `u32`) for the IR packet.
-/// - `initial_marker`: Initial RTP Marker bit for the IR packet.
-/// - `ssrc`: SSRC for the RTP flow.
+/// - `engine`: Mutable reference to the ROHC engine
+/// - `cid`: Context Identifier for the flow
+/// - `initial_sn`: Initial RTP Sequence Number for the IR packet
+/// - `initial_ts_val`: Initial RTP Timestamp value for the IR packet
+/// - `initial_marker`: Initial RTP Marker bit for the IR packet
+/// - `ssrc`: SSRC for the RTP flow
 ///
 /// # Panics
 /// Panics if compression or decompression of the IR packet fails, or if internal
@@ -400,30 +407,32 @@ pub fn establish_ir_context(
 }
 
 /// Calculates the IP Identification value that `establish_ir_context` will
-/// effectively set in the compressor's context.
+/// Calculates the IP identification value established by an IR context.
 ///
-/// `establish_ir_context` uses `create_rtp_headers` which by default calculates
-/// `ip_identification` as `sn.wrapping_add(ssrc as u16)`.
-/// This helper provides a consistent way to get this value for test assertions.
+/// Returns the IP identification value that would be set in the compressor's
+/// context based on the SN and SSRC values used during IR establishment.
 ///
 /// # Parameters
-/// - `initial_sn`: The sequence number used to establish the IR context.
-/// - `ssrc_used_in_ir`: The SSRC used to establish the IR context.
+/// - `initial_sn`: The sequence number used to establish the IR context
+/// - `ssrc_used_in_ir`: The SSRC used to establish the IR context
 ///
 /// # Returns
-/// The calculated IP Identification value.
+/// The calculated IP identification value for test assertions.
 pub fn get_ip_id_established_by_ir(initial_sn: u16, ssrc_used_in_ir: u32) -> u16 {
     initial_sn.wrapping_add(ssrc_used_in_ir as u16)
 }
 
-/// Checks if a given ROHC packet (core part, after Add-CID) is an IR or IR-DYN packet for Profile 1.
+/// Checks if a ROHC packet is an IR or IR-DYN packet for Profile 1.
+///
+/// Examines the packet type discriminator to determine if this is an
+/// Initialization and Refresh packet (static-only or with dynamic chain).
 ///
 /// # Parameters
-/// - `packet`: Byte slice of the core ROHC packet.
-/// - `cid`: The CID of the packet flow. This determines if an Add-CID byte was stripped (not used here directly but implies caller handles it).
+/// - `packet`: Byte slice of the core ROHC packet (after Add-CID processing)
+/// - `cid`: The Context ID of the packet flow
 ///
 /// # Returns
-/// `true` if the packet is recognized as an IR or IR-DYN type, `false` otherwise.
+/// `true` if the packet is an IR or IR-DYN type, `false` otherwise.
 pub fn is_ir_packet(packet: &[u8], cid: u16) -> bool {
     let min_len = if cid == 0 {
         1
@@ -440,14 +449,17 @@ pub fn is_ir_packet(packet: &[u8], cid: u16) -> bool {
     type_byte == P1_ROHC_IR_PACKET_TYPE_WITH_DYN || type_byte == P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY
 }
 
-/// Checks if a given ROHC packet (core part, after Add-CID) is a UO-0 packet for Profile 1.
+/// Checks if a ROHC packet is a UO-0 packet for Profile 1.
+///
+/// Verifies the packet length matches UO-0 expectations and examines the
+/// packet type discriminator to confirm it's a UO-0 packet.
 ///
 /// # Parameters
-/// - `packet`: Byte slice of the core ROHC packet.
-/// - `cid`: The CID of the packet flow. This influences expected length if Add-CID was present.
+/// - `packet`: Byte slice of the core ROHC packet (after Add-CID processing)
+/// - `cid`: The Context ID of the packet flow
 ///
 /// # Returns
-/// `true` if the packet matches UO-0 criteria, `false` otherwise.
+/// `true` if the packet is a UO-0 type, `false` otherwise.
 pub fn is_uo0_packet(packet: &[u8], cid: u16) -> bool {
     let expected_len = if cid == 0 {
         1
@@ -464,14 +476,17 @@ pub fn is_uo0_packet(packet: &[u8], cid: u16) -> bool {
     (type_byte & 0x80) == 0x00
 }
 
-/// Checks if a given ROHC packet (core part, after Add-CID) is a UO-1-SN packet for Profile 1.
+/// Checks if a ROHC packet is a UO-1-SN packet for Profile 1.
+///
+/// Verifies the packet length matches UO-1-SN expectations and examines the
+/// packet type discriminator to confirm it's a UO-1-SN packet.
 ///
 /// # Parameters
-/// - `packet`: Byte slice of the core ROHC packet.
-/// - `cid`: The CID of the packet flow. This influences expected length.
+/// - `packet`: Byte slice of the core ROHC packet (after Add-CID processing)
+/// - `cid`: The Context ID of the packet flow
 ///
 /// # Returns
-/// `true` if the packet matches UO-1-SN criteria, `false` otherwise.
+/// `true` if the packet is a UO-1-SN type, `false` otherwise.
 pub fn is_uo1_sn_packet(packet: &[u8], cid: u16) -> bool {
     let expected_len = if cid == 0 {
         3
@@ -488,17 +503,20 @@ pub fn is_uo1_sn_packet(packet: &[u8], cid: u16) -> bool {
     (type_byte & 0xFE) == P1_UO_1_SN_PACKET_TYPE_PREFIX
 }
 
-/// Retrieves an immutable reference to the `Profile1DecompressorContext` for a given CID.
+/// Retrieves a Profile 1 decompressor context from the engine for testing.
+///
+/// Helper function that performs the necessary downcasting and error handling
+/// to extract a Profile 1 decompressor context for test assertions.
 ///
 /// # Parameters
-/// - `engine`: Reference to the `RohcEngine`.
-/// - `cid`: The Context ID of the decompressor context to retrieve.
+/// - `engine`: Reference to the ROHC engine
+/// - `cid`: Context ID to retrieve
 ///
 /// # Returns
-/// A reference to the `Profile1DecompressorContext`.
+/// Reference to the Profile 1 decompressor context.
 ///
 /// # Panics
-/// Panics if no context is found for the CID or if the context is not of type `Profile1DecompressorContext`.
+/// Panics if no context exists for the CID or if the context is not Profile 1.
 pub fn get_decompressor_context(engine: &RohcEngine, cid: u16) -> &Profile1DecompressorContext {
     engine
         .context_manager()
@@ -509,17 +527,20 @@ pub fn get_decompressor_context(engine: &RohcEngine, cid: u16) -> &Profile1Decom
         .unwrap_or_else(|| panic!("Context for CID {} is not Profile1DecompressorContext", cid))
 }
 
-/// Retrieves an immutable reference to the `Profile1CompressorContext` for a given CID.
+/// Retrieves a Profile 1 compressor context from the engine for testing.
+///
+/// Helper function that performs the necessary downcasting and error handling
+/// to extract a Profile 1 compressor context for test assertions.
 ///
 /// # Parameters
-/// - `engine`: Reference to the `RohcEngine`.
-/// - `cid`: The Context ID of the compressor context to retrieve.
+/// - `engine`: Reference to the ROHC engine
+/// - `cid`: Context ID to retrieve
 ///
 /// # Returns
-/// A reference to the `Profile1CompressorContext`.
+/// Reference to the Profile 1 compressor context.
 ///
 /// # Panics
-/// Panics if no context is found for the CID or if the context is not of type `Profile1CompressorContext`.
+/// Panics if no context exists for the CID or if the context is not Profile 1.
 pub fn get_compressor_context(engine: &RohcEngine, cid: u16) -> &Profile1CompressorContext {
     engine
         .context_manager()
@@ -530,16 +551,18 @@ pub fn get_compressor_context(engine: &RohcEngine, cid: u16) -> &Profile1Compres
         .unwrap_or_else(|| panic!("Context for CID {} is not Profile1CompressorContext", cid))
 }
 
-/// Asserts that the decompressor context for a given CID is in the expected `Profile1DecompressorMode`.
+/// Asserts that a decompressor context is in the expected mode.
+///
+/// Convenience function for testing decompressor state transitions.
 ///
 /// # Parameters
-/// - `engine`: Reference to the `RohcEngine`.
-/// - `cid`: The Context ID of the decompressor context to check.
-/// - `expected_mode`: The `Profile1DecompressorMode` that the context is expected to be in.
-/// - `message`: A message to include in the assertion failure if the modes do not match.
+/// - `engine`: Reference to the ROHC engine
+/// - `cid`: Context ID to check
+/// - `expected_mode`: The expected decompressor mode
+/// - `message`: Custom assertion message for test failures
 ///
 /// # Panics
-/// Panics if the context's mode does not match `expected_mode`, or if the context cannot be found/downcast.
+/// Panics if the decompressor mode doesn't match expectations.
 pub fn assert_decompressor_mode(
     engine: &RohcEngine,
     cid: u16,
@@ -550,22 +573,24 @@ pub fn assert_decompressor_mode(
     assert_eq!(ctx.mode, expected_mode, "{}", message);
 }
 
-/// Creates a new `Profile1Handler` instance for tests.
+/// Creates a new Profile 1 handler for testing.
 ///
 /// # Returns
-/// A new `Profile1Handler`.
+/// A new `Profile1Handler` instance ready for testing.
 pub fn create_profile1_handler() -> Profile1Handler {
     Profile1Handler::new()
 }
 
-/// Creates a new Profile 1 compressor context using the provided handler and default IR refresh interval.
+/// Creates a Profile 1 compressor context for testing.
+///
+/// Uses default IR refresh interval and current time for initialization.
 ///
 /// # Parameters
-/// - `handler`: Reference to a `Profile1Handler`.
-/// - `cid`: The Context ID for the new compressor context.
+/// - `handler`: Reference to the Profile 1 handler
+/// - `cid`: Context ID for the new context
 ///
 /// # Returns
-/// A `Box<dyn RohcCompressorContext>` for Profile 1.
+/// A boxed compressor context ready for testing.
 pub fn create_profile1_compressor_context(
     handler: &Profile1Handler,
     cid: u16,
@@ -573,15 +598,15 @@ pub fn create_profile1_compressor_context(
     handler.create_compressor_context(cid, DEFAULT_ENGINE_IR_REFRESH_INTERVAL, Instant::now())
 }
 
-/// Creates a new Profile 1 compressor context with a specific IR refresh interval.
+/// Creates a Profile 1 compressor context with custom IR refresh interval.
 ///
 /// # Parameters
-/// - `handler`: Reference to a `dyn ProfileHandler` (can be `Profile1Handler`).
-/// - `cid`: The Context ID for the new compressor context.
-/// - `ir_refresh_interval`: The desired IR refresh interval for the context.
+/// - `handler`: Reference to the profile handler
+/// - `cid`: Context ID for the new context
+/// - `ir_refresh_interval`: Custom IR refresh interval in packets
 ///
 /// # Returns
-/// A `Box<dyn RohcCompressorContext>` for Profile 1.
+/// A boxed compressor context with the specified IR interval.
 pub fn create_profile1_compressor_context_with_interval(
     handler: &dyn ProfileHandler,
     cid: u16,
@@ -590,14 +615,14 @@ pub fn create_profile1_compressor_context_with_interval(
     handler.create_compressor_context(cid, ir_refresh_interval, Instant::now())
 }
 
-/// Creates a new Profile 1 decompressor context using the provided handler.
+/// Creates a Profile 1 decompressor context for testing.
 ///
 /// # Parameters
-/// - `handler`: Reference to a `dyn ProfileHandler` (can be `Profile1Handler`).
-/// - `cid`: The Context ID for the new decompressor context.
+/// - `handler`: Reference to the profile handler
+/// - `cid`: Context ID for the new context
 ///
 /// # Returns
-/// A `Box<dyn RohcDecompressorContext>` for Profile 1
+/// A boxed decompressor context ready for testing.
 pub fn create_profile1_decompressor_context(
     handler: &dyn ProfileHandler,
     cid: u16,

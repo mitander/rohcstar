@@ -83,8 +83,7 @@ impl GenericUncompressedHeaders {
     /// Returns a reference to the RTP/UDP/IPv4 headers if this is the `RtpUdpIpv4` variant.
     ///
     /// # Returns
-    /// - `Some(&RtpUdpIpv4Headers)` if the variant is `RtpUdpIpv4
-    /// - `None` otherwise.
+    /// A reference to the headers if this is the `RtpUdpIpv4` variant, otherwise `None`.
     pub fn as_rtp_udp_ipv4(
         &self,
     ) -> Option<&crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers> {
@@ -97,8 +96,7 @@ impl GenericUncompressedHeaders {
     /// Returns a mutable reference to the RTP/UDP/IPv4 headers if this is the `RtpUdpIpv4` variant.
     ///
     /// # Returns
-    /// - `Some(mut &RtpUdpIpv4Headers)` if the variant is `RtpUdpIpv4
-    /// - `None` otherwise.
+    /// A mutable reference to the headers if this is the `RtpUdpIpv4` variant, otherwise `None`.
     pub fn as_rtp_udp_ipv4_mut(
         &mut self,
     ) -> Option<&mut crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers> {

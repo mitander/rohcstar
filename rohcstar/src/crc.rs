@@ -30,6 +30,9 @@ impl fmt::Debug for CrcCalculators {
 
 impl CrcCalculators {
     /// Creates a new `CrcCalculators` instance, initializing the ROHC CRC-3 and CRC-8 algorithms.
+    ///
+    /// # Returns
+    /// A new `CrcCalculators` instance with pre-initialized CRC algorithm instances.
     pub fn new() -> Self {
         Self {
             crc3_calculator: Crc::<u8>::new(&CRC_3_ROHC),
@@ -52,7 +55,7 @@ impl CrcCalculators {
     /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) using the pre-initialized instance.
     ///
     /// # Parameters
-    /// 0 `data`: A slice of bytes over which the CRC will be calculated.
+    /// - `data`: A slice of bytes over which the CRC will be calculated.
     ///
     /// # Returns
     /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
@@ -89,7 +92,7 @@ impl Default for CrcCalculators {
 /// - `data`: A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
-/// The calculated 8-bit CRC value.
+/// The calculated 8-bit CRC value (0x00 to 0xFF).
 pub fn calculate_rohc_crc8_direct(data: &[u8]) -> u8 {
     let crc_calculator_instance: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
     crc_calculator_instance.checksum(data)

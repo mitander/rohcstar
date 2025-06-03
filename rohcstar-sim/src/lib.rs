@@ -76,6 +76,13 @@ pub struct PacketGenerator {
 }
 
 impl PacketGenerator {
+    /// Creates a new packet generator with the specified configuration.
+    ///
+    /// # Parameters
+    /// - `config`: Simulation configuration containing packet parameters
+    ///
+    /// # Returns
+    /// A new `PacketGenerator` instance ready to generate packets.
     pub fn new(config: &SimConfig) -> Self {
         Self {
             rng: StdRng::seed_from_u64(config.seed),
@@ -86,7 +93,19 @@ impl PacketGenerator {
         }
     }
 
-    /// Determines which compression phase this packet belongs to.
+    /// Determines which compression phase this packet belongs to based on its index.
+    ///
+    /// The compression phases follow ROHC's typical progression:
+    /// - Packet 0: Always IR (Initialization/Refresh) for context establishment
+    /// - Packets 1 to `stable_phase_count`: Stable phase with regular compression
+    /// - Next `uo0_phase_count` packets: UO-0 (Unidirectional Optimistic) phase
+    /// - Remaining packets: Post-UO-0 phase with potential behavioral changes
+    ///
+    /// # Parameters
+    /// - `packet_index`: Zero-based index of the packet in the sequence
+    ///
+    /// # Returns
+    /// The appropriate `CompressionPhase` for this packet position
     fn get_compression_phase(&self, packet_index: usize) -> CompressionPhase {
         if packet_index == 0 {
             CompressionPhase::InitializationRefresh
@@ -100,6 +119,17 @@ impl PacketGenerator {
     }
 
     /// Calculates the expected timestamp for a packet based on its index and phase.
+    ///
+    /// Generates monotonically increasing timestamps using the configured stride.
+    /// All packets follow the same timestamp progression regardless of compression
+    /// phase to maintain RTP stream continuity.
+    ///
+    /// # Formula
+    /// `timestamp = start_ts_val + (packet_index * ts_stride)`
+    ///
+    /// # Parameters
+    /// - `packet_index`: Zero-based packet index (0 = first packet)
+    /// - `_phase`: Compression phase (currently unused)
     fn calculate_timestamp(&self, packet_index: usize, _phase: CompressionPhase) -> u32 {
         // All packets should have incrementing timestamps regardless of compression phase
         // Packet 0: start_ts_val + (0 * stride) = start_ts_val
@@ -108,7 +138,7 @@ impl PacketGenerator {
         self.config.start_ts_val + (packet_index as u32 * self.config.ts_stride)
     }
 
-    /// Calculates the IP ID for a packet based on its phase.
+    /// Returns base_ip_id for most phases, modified value for PostUo0 to test IP-ID changes.
     fn calculate_ip_id(&self, phase: CompressionPhase) -> u16 {
         match phase {
             CompressionPhase::InitializationRefresh
@@ -118,7 +148,7 @@ impl PacketGenerator {
         }
     }
 
-    /// Determines if the marker bit should be set for this packet.
+    /// Returns random marker bit only in PostUo0 phase, false otherwise.
     fn calculate_marker_bit(&mut self, phase: CompressionPhase) -> bool {
         if self.config.marker_probability == 0.0 {
             return false;
@@ -132,6 +162,13 @@ impl PacketGenerator {
         }
     }
 
+    /// Generates the next RTP/UDP/IPv4 packet headers in the sequence.
+    ///
+    /// Updates internal state including sequence numbers, timestamps, and packet counters.
+    /// Returns `None` when the configured number of packets has been generated.
+    ///
+    /// # Returns
+    /// The next packet headers if more packets remain, otherwise `None`.
     pub fn next_packet(&mut self) -> Option<RtpUdpIpv4Headers> {
         if self.packets_generated >= self.config.num_packets {
             return None;
@@ -171,6 +208,14 @@ pub struct SimulatedChannel {
 }
 
 impl SimulatedChannel {
+    /// Creates a new simulated network channel with packet loss.
+    ///
+    /// # Parameters
+    /// - `seed`: Random seed for reproducible packet loss patterns
+    /// - `packet_loss_probability`: Probability of packet loss (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// A new `SimulatedChannel` instance ready to simulate packet transmission.
     pub fn new(seed: u64, packet_loss_probability: f64) -> Self {
         debug_assert!((0.0..=1.0).contains(&packet_loss_probability));
         Self {
@@ -179,6 +224,15 @@ impl SimulatedChannel {
         }
     }
 
+    /// Simulates transmitting a packet through the channel.
+    ///
+    /// Randomly drops packets based on the configured loss probability.
+    ///
+    /// # Parameters
+    /// - `packet_bytes`: The packet data to transmit
+    ///
+    /// # Returns
+    /// The packet data if transmission succeeds, `None` if packet is lost.
     pub fn transmit(&mut self, packet_bytes: Vec<u8>) -> Option<Vec<u8>> {
         debug_assert!(!packet_bytes.is_empty());
         if self.packet_loss_probability > 0.0 && self.rng.random_bool(self.packet_loss_probability)
@@ -209,6 +263,16 @@ pub enum SimError {
 }
 
 impl RohcSimulator {
+    /// Creates a new ROHC simulation instance.
+    ///
+    /// Initializes the compressor and decompressor engines, packet generator,
+    /// and simulated network channel based on the provided configuration.
+    ///
+    /// # Parameters
+    /// - `config`: Complete simulation configuration
+    ///
+    /// # Returns
+    /// A new `RohcSimulator` ready to run the simulation.
     pub fn new(config: SimConfig) -> Self {
         let initial_time = Instant::now();
         let clock_seed_offset = config.seed;
@@ -254,6 +318,17 @@ impl RohcSimulator {
     }
 
     /// Runs the simulation, processing packets and verifying outcomes.
+    ///
+    /// Generates packets, compresses them, simulates network transmission with possible
+    /// packet loss, decompresses received packets, and verifies correctness.
+    ///
+    /// # Returns
+    /// `()` on successful completion of all configured packets.
+    ///
+    /// # Errors
+    /// - [`SimError::CompressionFailed`] - Packet compression failed
+    /// - [`SimError::DecompressionFailed`] - Packet decompression failed
+    /// - [`SimError::ValidationFailed`] - Decompressed headers don't match originals
     pub fn run(&mut self) -> Result<(), SimError> {
         for _ in 0..self.config.num_packets {
             let original_headers = self

@@ -23,8 +23,7 @@ use crate::error::RohcParsingError;
 ///   shifts the window to the left (lower values) relative to `reference_value`.
 ///
 /// # Returns
-/// - `true` if `value` is within the W-LSB interpretation interval.
-/// - `false` otherwise, or if `num_lsb_bits` is 0 or greater than 64.
+/// `true` if `value` is within the W-LSB interpretation interval, `false` otherwise.
 pub fn value_in_lsb_interval(
     value: u64,
     reference_value: u64,
@@ -68,8 +67,10 @@ pub fn value_in_lsb_interval(
 /// - `num_lsb_bits`: The number of LSBs (`k`) to extract. Must be between 1 and 64.
 ///
 /// # Returns
-/// - `Ok(u64)` containing the LSB-encoded part of the value.
-/// - `Err(RohcParsingError::InvalidLsbOperation)` if `num_lsb_bits` is 0 or greater than 64.
+/// The LSB-encoded portion of the value.
+///
+/// # Errors
+/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid `num_lsb_bits` parameter
 pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 {
         return Err(RohcParsingError::InvalidLsbOperation {
@@ -115,9 +116,10 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
 /// - `p_offset`: The window offset parameter (`p`) from W-LSB.
 ///
 /// # Returns
-/// - `Ok(u64)` containing the reconstructed value.
-/// - `Err(RohcParsingError::InvalidLsbOperation)` if decoding fails (e.g., invalid parameters,
-///   `received_lsbs` too large for `num_lsb_bits`, or no unique resolution in the window).
+/// The reconstructed original value.
+///
+/// # Errors
+/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid parameters, LSBs too large, or no unique resolution
 pub fn decode_lsb(
     received_lsbs: u64,
     reference_value: u64,

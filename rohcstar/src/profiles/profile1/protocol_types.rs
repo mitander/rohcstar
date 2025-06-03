@@ -21,31 +21,45 @@ pub struct Timestamp(pub u32);
 
 impl Timestamp {
     /// Creates a new `Timestamp`.
+    ///
+    /// # Returns
+    /// A new `Timestamp` wrapping the provided value.
     #[inline]
     pub fn new(value: u32) -> Self {
         Self(value)
     }
 
     /// Returns the raw `u32` value of the timestamp.
+    ///
+    /// # Returns
+    /// The underlying timestamp value as a `u32`.
     #[inline]
     pub fn value(self) -> u32 {
         self.0
     }
 
     /// Performs a wrapping addition with a `u32` value, returning a new `Timestamp`.
+    ///
+    /// # Returns
+    /// A new `Timestamp` with the result of wrapping addition.
     #[inline]
     pub fn wrapping_add(self, other_val: u32) -> Self {
         Self(self.0.wrapping_add(other_val))
     }
 
     /// Calculates the wrapping difference between this timestamp and another.
-    /// Returns the difference as a `u32`.
+    ///
+    /// # Returns
+    /// The wrapping difference as a `u32`.
     #[inline]
     pub fn wrapping_diff(self, other: Timestamp) -> u32 {
         self.0.wrapping_sub(other.0)
     }
 
     /// Converts the timestamp to big-endian bytes.
+    ///
+    /// # Returns
+    /// A 4-byte array containing the timestamp in big-endian format.
     #[inline]
     pub fn to_be_bytes(self) -> [u8; 4] {
         self.0.to_be_bytes()
@@ -174,6 +188,9 @@ impl Default for RtpUdpIpv4Headers {
 
 impl RtpUdpIpv4Headers {
     /// Validates that the CSRC count matches the length of the CSRC list and max count.
+    ///
+    /// # Returns
+    /// `true` if CSRC count is valid, `false` otherwise.
     pub fn validate_csrc_count(&self) -> bool {
         self.rtp_csrc_count as usize == self.rtp_csrc_list.len()
             && self.rtp_csrc_count <= RTP_MAX_CSRC_COUNT
@@ -181,6 +198,9 @@ impl RtpUdpIpv4Headers {
 
     /// Sets the IP Identification field for these headers.
     /// Primarily a test helper.
+    ///
+    /// # Returns
+    /// Modified headers with the specified IP identification value.
     pub fn with_ip_id(mut self, ip_id: u16) -> Self {
         self.ip_identification = ip_id;
         self

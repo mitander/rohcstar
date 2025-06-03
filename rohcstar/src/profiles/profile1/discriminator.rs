@@ -42,7 +42,7 @@ impl Profile1PacketType {
     /// - `byte`: The first byte of the core ROHC Profile 1 packet.
     ///
     /// # Returns
-    /// The corresponding `Profile1PacketType`.
+    /// The corresponding `Profile1PacketType` based on the packet discriminator.
     pub fn from_first_byte(byte: u8) -> Self {
         // Check for IR / IR-DYN packets (Type: 1111110D)
         if (byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
@@ -98,6 +98,9 @@ impl Profile1PacketType {
     }
 
     /// Returns `true` if the packet type is `IrStatic` or `IrDynamic`.
+    ///
+    /// # Returns
+    /// `true` for IR packet types, `false` otherwise.
     pub fn is_ir(&self) -> bool {
         matches!(
             self,
@@ -106,11 +109,17 @@ impl Profile1PacketType {
     }
 
     /// Returns `true` if the packet type is `Uo0`.
+    ///
+    /// # Returns
+    /// `true` for UO-0 packet type, `false` otherwise.
     pub fn is_uo0(&self) -> bool {
         matches!(self, Profile1PacketType::Uo0)
     }
 
     /// Returns `true` if the packet type is any UO-1 variant.
+    ///
+    /// # Returns
+    /// `true` for any UO-1 packet type variant, `false` otherwise.
     pub fn is_uo1(&self) -> bool {
         matches!(
             self,

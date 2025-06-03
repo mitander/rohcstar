@@ -15,17 +15,7 @@ use crate::crc::CrcCalculators;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 
-/// Handles the outcome of UO packet parsing when the decompressor is in Full Context (FC) mode.
-///
-/// Transitions to Second Order (SO) on a streak of successful UO decompressions.
-/// Transitions to Static Context (SC) on repeated CRC failures.
-///
-/// # Parameters
-/// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `parse_outcome`: The result of attempting to parse and reconstruct the UO packet.
-///
-/// # Returns
-/// The `parse_outcome` itself, after context state has been potentially updated.
+// Handles UO packet outcome in FC mode, transitioning to SO on success or SC on failures.
 fn handle_fc_uo_packet_outcome(
     context: &mut Profile1DecompressorContext,
     parse_outcome: Result<RtpUdpIpv4Headers, RohcError>,
@@ -73,17 +63,7 @@ fn handle_fc_uo_packet_outcome(
     }
 }
 
-/// Determines if the decompressor should transition from Second Order (SO) to No Context (NC) mode.
-///
-/// Transition occurs if:
-/// - Max consecutive failures in SO are reached.
-/// - Dynamic confidence drops below a threshold.
-///
-/// # Parameters
-/// - `context`: Reference to the `Profile1DecompressorContext`.
-///
-/// # Returns
-/// `true` if transition to NC is warranted, `false` otherwise.
+// Checks if SO mode should transition to NC due to consecutive failures or low confidence.
 fn should_transition_so_to_nc(context: &Profile1DecompressorContext) -> bool {
     debug_assert_eq!(
         context.mode,
@@ -99,15 +79,7 @@ fn should_transition_so_to_nc(context: &Profile1DecompressorContext) -> bool {
     false
 }
 
-/// Determines if the decompressor should transition from Static Context (SC) to No Context (NC) mode.
-///
-/// Transition occurs if k2 CRC failures occur within an n2 packet window.
-///
-/// # Parameters
-/// - `context`: Reference to the `Profile1DecompressorContext`.
-///
-/// # Returns
-/// `true` if transition to NC is warranted, `false` otherwise.
+// Checks if SC mode should transition to NC due to repeated failures.
 fn should_transition_sc_to_nc(context: &Profile1DecompressorContext) -> bool {
     debug_assert_eq!(
         context.mode,

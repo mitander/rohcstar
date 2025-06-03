@@ -21,8 +21,24 @@ use crate::traits::ProfileHandler;
 
 /// The main ROHC processing engine.
 ///
-/// Manages ROHC profile handlers and their associated compression/decompression
-/// contexts. It provides the primary API for compressing and decompressing packets.
+/// Central orchestrator for ROHC compression and decompression operations.
+///
+/// The `RohcEngine` manages profile handlers, compression/decompression contexts, and provides
+/// the primary API for processing packets. It supports multiple ROHC profiles through a
+/// pluggable architecture where profile handlers are registered and contexts are managed
+/// automatically.
+///
+/// ## Usage
+///
+/// 1. Create an engine with [`RohcEngine::new`]
+/// 2. Register profile handlers using [`register_profile_handler`]
+/// 3. Use [`compress`] and [`decompress`] methods to process packets
+/// 4. Periodically call [`prune_stale_contexts`] to clean up inactive contexts
+///
+/// [`register_profile_handler`]: Self::register_profile_handler
+/// [`compress`]: Self::compress
+/// [`decompress`]: Self::decompress
+/// [`prune_stale_contexts`]: Self::prune_stale_contexts
 #[derive(Debug)]
 pub struct RohcEngine {
     /// Stores registered ROHC profile handlers, keyed by their `RohcProfile` identifier.
@@ -40,12 +56,21 @@ pub struct RohcEngine {
 }
 
 impl RohcEngine {
-    /// Creates a new `RohcEngine`.
+    /// Creates a new ROHC engine with specified configuration.
+    ///
+    /// Initializes an empty engine with no registered profile handlers. Profile handlers
+    /// must be registered separately using [`register_profile_handler`] before the engine
+    /// can compress or decompress packets.
     ///
     /// # Parameters
-    /// - `default_ir_refresh_interval`: Default IR refresh interval for new compressor contexts.
-    /// - `context_timeout`: Duration after which an inactive context is considered stale and can be pruned.
-    /// - `clock`: An `Arc` to a `Clock` implementation, allowing for custom time sources (e.g., `SystemClock` or `MockClock` for testing).
+    /// - `default_ir_refresh_interval`: Default IR refresh interval for new compressor contexts
+    /// - `context_timeout`: Duration after which inactive contexts are eligible for pruning
+    /// - `clock`: Clock implementation for timestamping and timeout calculations
+    ///
+    /// # Returns
+    /// A new `RohcEngine` instance ready for profile handler registration.
+    ///
+    /// [`register_profile_handler`]: Self::register_profile_handler
     pub fn new(
         default_ir_refresh_interval: u32,
         context_timeout: Duration,
@@ -66,8 +91,10 @@ impl RohcEngine {
     /// - `handler`: A `Box<dyn ProfileHandler>` for the profile.
     ///
     /// # Returns
-    /// - `Ok(())` if the handler was successfully registered.
-    /// - `Err(RohcError::Internal)` if a handler for this profile ID is already registered.
+    /// `()` on successful registration.
+    ///
+    /// # Errors
+    /// - [`RohcError::Internal`] - Handler for this profile ID already registered
     pub fn register_profile_handler(
         &mut self,
         handler: Box<dyn ProfileHandler>,
@@ -92,8 +119,12 @@ impl RohcEngine {
     /// - `uncompressed_headers`: The `GenericUncompressedHeaders` to compress.
     ///
     /// # Returns
-    /// - `Ok(Vec<u8>)` containing the ROHC-compressed packet on success.
-    /// - `Err(RohcError)` if compression fails (e.g., context issues, unsupported profile, or profile-specific compression errors).
+    /// The ROHC-compressed packet as a byte vector.
+    ///
+    /// # Errors
+    /// - [`RohcError::Internal`] - Context issues or handler missing
+    /// - [`RohcError::UnsupportedProfile`] - Profile not supported
+    /// - [`RohcError::Building`] - Profile-specific compression errors
     pub fn compress(
         &mut self,
         cid: u16,
@@ -145,15 +176,23 @@ impl RohcEngine {
         }
     }
 
-    /// Decompresses an incoming ROHC packet.
-    /// Updates the context's last accessed time on success.
+    /// Decompresses a ROHC packet into uncompressed headers.
+    ///
+    /// Processes a complete ROHC packet by extracting the Context ID (CID), locating or creating
+    /// the appropriate decompressor context, and delegating to the registered profile handler.
+    /// Updates the context's last accessed time on successful decompression.
     ///
     /// # Parameters
-    /// - `rohc_packet_bytes`: Byte slice of the complete incoming ROHC packet.
+    /// - `rohc_packet_bytes`: Complete ROHC packet data including CID and payload
     ///
     /// # Returns
-    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on success.
-    /// - `Err(RohcError)` if decompression fails (e.g., parsing errors, context issues, or profile-specific decompression errors).
+    /// The reconstructed uncompressed headers on success.
+    ///
+    /// # Errors
+    /// - [`RohcError::Parsing`] - Invalid packet format or insufficient data
+    /// - [`RohcError::ContextNotFound`] - No context exists and packet is not IR type
+    /// - [`RohcError::UnsupportedProfile`] - Profile handler not registered
+    /// - [`RohcError::Internal`] - Context exists but handler missing
     pub fn decompress(
         &mut self,
         rohc_packet_bytes: &[u8],
@@ -219,9 +258,10 @@ impl RohcEngine {
     /// - `rohc_packet_bytes`: Slice of the ROHC packet.
     ///
     /// # Returns
-    /// - `Ok((u16, bool, &'a [u8]))` containing the CID, a flag indicating if an Add-CID octet was present,
-    ///   and a slice representing the core packet data (after the Add-CID octet, if any).
-    /// - `Err(RohcError::Parsing(RohcParsingError::NotEnoughData))` if `rohc_packet_bytes` is empty.
+    /// A tuple containing (CID, Add-CID present flag, core packet slice).
+    ///
+    /// # Errors
+    /// - [`RohcError::Parsing`] - Insufficient packet data
     fn parse_cid_from_packet<'a>(
         &self,
         rohc_packet_bytes: &'a [u8],
@@ -252,8 +292,11 @@ impl RohcEngine {
     /// - `core_packet_slice`: Packet data after Add-CID processing.
     ///
     /// # Returns
-    /// - `Ok(RohcProfile)` containing the inferred ROHC profile ID on success.
-    /// - `Err(RohcError)` if parsing fails (e.g., due to insufficient data or an unsuitable packet type).
+    /// The inferred ROHC profile identifier.
+    ///
+    /// # Errors
+    /// - [`RohcError::Parsing`] - Insufficient data for profile determination
+    /// - [`RohcError::InvalidState`] - Non-IR packet for new CID
     fn peek_profile_from_core_packet(
         &self,
         core_packet_slice: &[u8],
@@ -278,11 +321,11 @@ impl RohcEngine {
         }
     }
 
-    /// Removes stale compressor and decompressor contexts that haven't been accessed
-    /// within the configured `context_timeout`.
+    /// Removes contexts that have been inactive beyond the configured timeout.
     ///
-    /// This method should be called periodically by the application using the RohcEngine
-    /// to manage context lifecycle and prevent resource leaks.
+    /// Iterates through all compressor and decompressor contexts, removing those whose
+    /// last access time exceeds the engine's `context_timeout` duration. This method
+    /// should be called periodically to manage context lifecycle and prevent resource leaks.
     pub fn prune_stale_contexts(&mut self) {
         let now = self.clock.now();
         let timeout_duration = self.context_timeout;

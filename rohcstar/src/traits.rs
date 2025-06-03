@@ -87,8 +87,10 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// - `headers`: The `GenericUncompressedHeaders` to be compressed.
     ///
     /// # Returns
-    /// - `Ok(Vec<u8>)` containing the ROHC-compressed packet on success.
-    /// - `Err(RohcError)` if compression fails.
+    /// The ROHC-compressed packet as a byte vector.
+    ///
+    /// # Errors
+    /// - [`RohcError`] - Compression fails due to context or profile-specific issues
     fn compress(
         &self,
         context: &mut dyn RohcCompressorContext,
@@ -102,8 +104,10 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// - `packet_bytes`: A slice containing the ROHC packet data to decompress.
     ///
     /// # Returns
-    /// - `Ok(GenericUncompressedHeaders)` containing the reconstructed headers on success.
-    /// - `Err(RohcError)` if decompression fails.
+    /// The reconstructed uncompressed headers.
+    ///
+    /// # Errors
+    /// - [`RohcError`] - Decompression fails due to parsing, CRC, or context issues
     fn decompress(
         &self,
         context: &mut dyn RohcDecompressorContext,

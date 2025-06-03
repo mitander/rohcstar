@@ -33,6 +33,9 @@ pub mod mock_clock {
 
     impl MockClock {
         /// Creates a new `MockClock` starting at the given `start_time`.
+        ///
+        /// # Returns
+        /// A new `MockClock` instance initialized with the specified start time.
         pub fn new(start_time: Instant) -> Self {
             Self {
                 current_time: Mutex::new(start_time),
@@ -40,12 +43,18 @@ pub mod mock_clock {
         }
 
         /// Advances the mock clock's current time by the specified `duration`.
+        ///
+        /// # Parameters
+        /// - `duration`: The amount of time to advance the clock
         pub fn advance(&self, duration: Duration) {
             let mut current = self.current_time.lock().unwrap();
             *current += duration;
         }
 
         /// Sets the mock clock's current time to a specific `new_time`.
+        ///
+        /// # Parameters
+        /// - `new_time`: The new time to set as the current time
         #[allow(dead_code)] // May not be used in all test scenarios initially
         pub fn set_time(&self, new_time: Instant) {
             let mut current = self.current_time.lock().unwrap();

@@ -26,6 +26,9 @@ pub struct ContextManager {
 
 impl ContextManager {
     /// Creates a new, empty `ContextManager`.
+    ///
+    /// # Returns
+    /// A new `ContextManager` instance with no active contexts.
     pub fn new() -> Self {
         Self::default()
     }
@@ -64,8 +67,10 @@ impl ContextManager {
     /// - `cid`: The Context ID of the compressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&mut Box<dyn RohcCompressorContext>)` if the context is found.
-    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    /// A mutable reference to the compressor context.
+    ///
+    /// # Errors
+    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_compressor_context_mut(
         &mut self,
         cid: u16,
@@ -81,8 +86,10 @@ impl ContextManager {
     /// - `cid`: The Context ID of the decompressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&mut Box<dyn RohcDecompressorContext>)` if the context is found.
-    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    /// A mutable reference to the decompressor context.
+    ///
+    /// # Errors
+    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_decompressor_context_mut(
         &mut self,
         cid: u16,
@@ -92,14 +99,16 @@ impl ContextManager {
             .ok_or(RohcError::ContextNotFound(cid))
     }
 
-    /// Retrieves a immutable reference to a compressor context by its CID.
+    /// Retrieves an immutable reference to a compressor context by its CID.
     ///
     /// # Parameters
     /// - `cid`: The Context ID of the compressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&dyn RohcCompressorContext)` if the context is found.
-    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    /// An immutable reference to the compressor context.
+    ///
+    /// # Errors
+    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_compressor_context(
         &self,
         cid: u16,
@@ -113,14 +122,16 @@ impl ContextManager {
             .ok_or(RohcError::ContextNotFound(cid))
     }
 
-    /// Retrieves a immutable reference to a decompressor context by its CID.
+    /// Retrieves an immutable reference to a decompressor context by its CID.
     ///
     /// # Parameters
     /// - `cid`: The Context ID of the decompressor context to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&dyn RohcDecompressorContext)` if the context is found.
-    /// - `Err(RohcError::ContextNotFound(cid))` if no context exists for the given CID.
+    /// An immutable reference to the decompressor context.
+    ///
+    /// # Errors
+    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_decompressor_context(
         &self,
         cid: u16,
@@ -162,41 +173,64 @@ impl ContextManager {
     }
 
     /// Clears all compressor contexts from the manager.
+    ///
+    /// Removes all active compressor contexts, freeing their resources.
+    /// This operation is irreversible.
     pub fn clear_compressor_contexts(&mut self) {
         self.compressor_contexts.clear();
     }
 
     /// Clears all decompressor contexts from the manager.
+    ///
+    /// Removes all active decompressor contexts, freeing their resources.
+    /// This operation is irreversible.
     pub fn clear_decompressor_contexts(&mut self) {
         self.decompressor_contexts.clear();
     }
 
     /// Clears all contexts (both compressor and decompressor) from the manager.
+    ///
+    /// Removes all active contexts of both types, effectively resetting the manager
+    /// to an empty state. This operation is irreversible.
     pub fn clear_all_contexts(&mut self) {
         self.clear_compressor_contexts();
         self.clear_decompressor_contexts();
     }
 
     /// Returns the number of active compressor contexts.
+    ///
+    /// # Returns
+    /// The count of currently managed compressor contexts.
     pub fn compressor_context_count(&self) -> usize {
         self.compressor_contexts.len()
     }
 
     /// Returns the number of active decompressor contexts.
+    ///
+    /// # Returns
+    /// The count of currently managed decompressor contexts.
     pub fn decompressor_context_count(&self) -> usize {
         self.decompressor_contexts.len()
     }
 
-    /// Returns an immutable iterator over compressor contexts (CID, &Box<dyn RohcCompressorContext>).
+    /// Returns an immutable iterator over compressor contexts.
+    ///
     /// Used by the RohcEngine for operations like pruning stale contexts.
+    ///
+    /// # Returns
+    /// An iterator yielding (CID, context) pairs for all active compressor contexts.
     pub fn compressor_contexts_iter(
         &self,
     ) -> impl Iterator<Item = (&u16, &Box<dyn RohcCompressorContext>)> {
         self.compressor_contexts.iter()
     }
 
-    /// Returns an immutable iterator over decompressor contexts (CID, &Box<dyn RohcDecompressorContext>).
+    /// Returns an immutable iterator over decompressor contexts.
+    ///
     /// Used by the RohcEngine for operations like pruning stale contexts.
+    ///
+    /// # Returns
+    /// An iterator yielding (CID, context) pairs for all active decompressor contexts.
     pub fn decompressor_contexts_iter(
         &self,
     ) -> impl Iterator<Item = (&u16, &Box<dyn RohcDecompressorContext>)> {

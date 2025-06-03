@@ -72,6 +72,27 @@ fn main() {
 }
 
 /// Generates a randomized `SimConfig` for a fuzzing iteration.
+///
+/// Creates a deterministic but varied simulation configuration using the provided seed.
+/// The generated configuration includes randomized parameters for packet generation,
+/// network conditions, and ROHC compression behavior to stress-test different scenarios.
+///
+/// # Parameters
+/// - `iteration_seed`: Random seed for deterministic configuration generation
+/// - `num_packets_per_run`: Number of packets to generate in this simulation run
+/// - `max_channel_loss`: Maximum packet loss probability (0.0 to 1.0) to randomly select from
+///
+/// # Returns
+/// A `SimConfig` with randomized parameters suitable for fuzzing
+///
+/// # Configuration Randomization
+/// - **SSRC**: Fully randomized for context isolation
+/// - **Starting values**: Random but reasonable ranges for SN, timestamp, IP ID
+/// - **Timestamp stride**: Usually 160 (RTP default) but occasionally randomized
+/// - **CID**: 50% chance of using 0, otherwise random 1-15
+/// - **Marker probability**: 70% chance of 0.0, otherwise 1-50%
+/// - **Packet loss**: 70% chance of 0.0, otherwise up to `max_channel_loss`
+/// - **Phase counts**: Random but ensure at least 1 packet per phase
 fn generate_fuzz_config(
     iteration_seed: u64,
     num_packets_per_run: usize,
@@ -110,6 +131,32 @@ fn generate_fuzz_config(
     }
 }
 
+/// Runs the fuzzing mode with parallel workers to test many randomized configurations.
+///
+/// This function orchestrates a large-scale fuzzing campaign by:
+/// 1. Creating multiple worker threads for parallel execution
+/// 2. Generating unique simulation configurations for each iteration
+/// 3. Running simulations and collecting failure statistics
+/// 4. Logging critical failures and tolerated errors
+/// 5. Providing progress updates and final summary
+///
+/// # Parameters
+/// - `args`: Command-line arguments containing fuzzing parameters
+///
+/// # Worker Distribution
+/// Each worker gets roughly `iterations / workers` configurations to test.
+/// Workers use deterministic seeds derived from the master seed to ensure
+/// reproducible failure sequences even in parallel execution.
+///
+/// # Error Classification
+/// - **Critical Failures**: Unexpected errors that indicate real bugs
+/// - **Tolerated Errors**: Expected errors due to configuration (e.g., timestamp
+///   mismatches with packet loss, parsing errors with high loss rates)
+///
+/// # Exit Behavior
+/// - Returns 0 (success) if no critical failures found
+/// - Returns 1 (failure) if any critical failures detected
+/// - Supports graceful shutdown via Ctrl+C
 fn run_fuzz_mode(args: CliArgs) {
     println!(
         "Starting Fuzz mode: {} iterations, {} packets/iter, up to {}% loss, {} workers.",
@@ -267,6 +314,24 @@ fn run_fuzz_mode(args: CliArgs) {
         println!("PASS: No critical failures detected.");
     }
 }
+/// Runs replay mode to reproduce a specific simulation scenario.
+///
+/// This mode allows debugging specific failures found during fuzzing by
+/// recreating the exact same simulation conditions using a known seed.
+/// The simulation uses the same configuration generation logic as fuzzing
+/// but runs only a single deterministic scenario.
+///
+/// # Parameters
+/// - `args`: Command-line arguments containing the seed and replay parameters
+///
+/// # Requirements
+/// - `args.seed` must be provided (the function will panic if missing)
+/// - The seed should typically come from a previous fuzzing run's failure log
+///
+/// # Exit Behavior
+/// - Returns 0 (success) if replay completes without errors
+/// - Returns 1 (failure) if replay encounters any simulation error
+/// - Prints the full configuration being replayed for debugging
 fn run_replay_mode(args: CliArgs) {
     let seed_to_replay = args
         .seed
@@ -295,6 +360,31 @@ fn run_replay_mode(args: CliArgs) {
     }
 }
 
+/// Runs stress test mode for long-duration stability testing.
+///
+/// This mode is designed to test system stability under sustained load by
+/// running a single simulation with a large number of packets and moderate
+/// network conditions. Unlike fuzzing, this focuses on endurance rather
+/// than configuration variety.
+///
+/// # Parameters
+/// - `args`: Command-line arguments containing stress test parameters
+///
+/// # Configuration
+/// - Uses 1,000,000 packets per iteration (overriding CLI packet count)
+/// - Applies 1% packet loss and 5% marker probability for realistic stress
+/// - Phase counts are tied to the iterations parameter for duration control
+/// - Single-threaded execution to focus on individual run stability
+///
+/// # Use Cases
+/// - Memory leak detection over long runs
+/// - Performance profiling under sustained load
+/// - Stability testing for production-like scenarios
+///
+/// # Exit Behavior
+/// - Returns 0 (success) if stress test completes successfully
+/// - Returns 1 (failure) if any error occurs during execution
+/// - Reports timing information for performance analysis
 fn run_stress_mode(args: CliArgs) {
     println!(
         "Stress Test Mode ({} packets per iteration, {} workers, interrupt with Ctrl+C):",

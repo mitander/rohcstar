@@ -105,6 +105,9 @@ impl Profile1CompressorContext {
     /// - `ir_refresh_interval`: The packet interval for sending IR refresh packets. A value of 0
     ///   disables periodic refresh based on packet count, though IRs may still be sent for other reasons.
     /// - `creation_time`: The `Instant` at which this context is being created, used for `last_accessed`.
+    ///
+    /// # Returns
+    /// A new `Profile1CompressorContext` instance ready for packet compression.
     pub fn new(cid: u16, ir_refresh_interval: u32, creation_time: Instant) -> Self {
         Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -168,11 +171,12 @@ impl Profile1CompressorContext {
         self.ts_scaled_mode = false;
     }
 
-    /// Helper to get the CID for UO packet builders if it's a small CID (1-15).
+    /// Returns the small CID value for this context, if applicable.
+    ///
+    /// Small CIDs are in the range 1-15 and can be embedded directly in certain packet types.
     ///
     /// # Returns
-    /// - `Some(u8)` with the CID if it's a small CID
-    /// - `None` if not small CID.
+    /// The CID as a `u8` if it qualifies as a small CID, otherwise `None`.
     pub fn get_small_cid_for_packet(&self) -> Option<u8> {
         if self.cid > 0 && self.cid <= 15 {
             Some(self.cid as u8)
@@ -188,16 +192,17 @@ impl Profile1CompressorContext {
     /// It checks if the difference between `current_packet_ts` and the
     /// `last_sent_rtp_ts_full` (timestamp of the previously sent packet) matches
     /// the currently suspected `ts_stride`.
+    /// Updates TS Stride detection and possibly activates TS_SCALED mode.
     ///
-    /// If a consistent stride is detected for `P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD`
-    /// packets, `ts_scaled_mode` is activated.
+    /// Analyzes the timestamp difference pattern between consecutive packets to detect
+    /// a consistent stride value, enabling TS_SCALED compression mode when a pattern
+    /// is established for `P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD` packets.
     ///
     /// # Parameters
-    /// - `current_packet_ts`: The timestamp of the packet currently being processed.
+    /// - `current_packet_ts`: The RTP timestamp of the current packet being processed
     ///
     /// # Returns
-    /// - `true` if TS scaled mode became active during this specific update.
-    /// - `false` otherwise.
+    /// `true` if TS scaled mode became active during this update, `false` otherwise.
     pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
         if self.rtp_ssrc == 0 {
             return false; // SSRC must be known.
@@ -269,8 +274,7 @@ impl Profile1CompressorContext {
     /// - `current_packet_ts`: The timestamp of the packet for which TS_SCALED is to be calculated.
     ///
     /// # Returns
-    /// - `Some(u8)` containing the TS_SCALED value
-    /// - `None` if calculation fails or cannot fit in 8 bits.
+    /// The TS_SCALED value if calculation succeeds and fits in 8 bits, otherwise `None`.
     pub fn calculate_ts_scaled(&self, current_packet_ts: Timestamp) -> Option<u8> {
         if !self.ts_scaled_mode {
             return None;
@@ -443,6 +447,9 @@ impl Profile1DecompressorContext {
     ///
     /// # Parameters
     /// - `cid`: The Context Identifier (CID) for this flow.
+    ///
+    /// # Returns
+    /// A new `Profile1DecompressorContext` instance ready for packet decompression.
     pub fn new(cid: u16) -> Self {
         Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -551,8 +558,7 @@ impl Profile1DecompressorContext {
     /// - `ts_scaled_received`: The 8-bit TS_SCALED value from a UO-1-RTP packet.
     ///
     /// # Returns
-    /// - `Some(Timestamp)` with the reconstructed timestamp if `ts_stride` is known.
-    /// - `None` if `ts_stride` is `None` (meaning stride is not established).
+    /// The reconstructed timestamp if `ts_stride` is established, otherwise `None`.
     pub fn reconstruct_ts_from_scaled(&self, ts_scaled_received: u8) -> Option<Timestamp> {
         let stride_val = self.ts_stride?;
         debug_assert!(

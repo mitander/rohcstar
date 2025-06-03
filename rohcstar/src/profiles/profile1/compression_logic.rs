@@ -38,8 +38,7 @@ use crate::packet_defs::RohcProfile;
 /// - `uncompressed_headers`: Headers from the packet being compressed.
 ///
 /// # Returns
-/// - `true`: An IR packet must be sent.
-/// - `false`: Other, more optimal UO packet types can be considered.
+/// `true` if an IR packet must be sent, `false` if other UO packet types can be considered.
 pub(super) fn should_force_ir(
     context: &Profile1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
@@ -97,8 +96,11 @@ pub(super) fn should_force_ir(
 /// - `crc_calculators`: CRC calculator instances for packet integrity checks.
 ///
 /// # Returns
-/// - `Ok(Vec<u8>)`: Compressed IR packet data.
-/// - `Err(RohcError)`: If IR packet building fails (e.g., internal error).
+/// The compressed IR packet data as a byte vector.
+///
+/// # Errors
+/// - [`RohcError::Building`] - IR packet construction failed
+/// - [`RohcError::Internal`] - Internal logic error
 pub(super) fn compress_as_ir(
     context: &mut Profile1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
@@ -194,8 +196,11 @@ pub(super) fn compress_as_ir(
 /// - `crc_calculators`: CRC calculator instances for packet integrity checks.
 ///
 /// # Returns
-/// - `Ok(Vec<u8>)`: Compressed UO packet data.
-/// - `Err(RohcError)`: If no suitable UO packet type is available or building fails.
+/// The compressed UO packet data as a byte vector.
+///
+/// # Errors
+/// - [`RohcError::Building`] - No suitable UO packet type available or construction failed
+/// - [`RohcError::Internal`] - Internal logic error
 pub(super) fn compress_as_uo(
     context: &mut Profile1CompressorContext,
     uncompressed_headers: &RtpUdpIpv4Headers,
@@ -244,8 +249,8 @@ pub(super) fn compress_as_uo(
     Ok(packet_bytes)
 }
 
-/// Checks if any field delta (SN, TS, IP-ID) exceeds its LSB encoding window.
-/// This indicates that an IR packet might be needed to prevent decompressor ambiguity.
+// Checks if the current packet values would exceed the LSB decoding window.
+// Returns true if IR refresh is needed due to large deltas in SN, TS, or IP-ID.
 fn check_lsb_window_exceeded(
     context: &Profile1CompressorContext,
     headers: &RtpUdpIpv4Headers,
@@ -292,23 +297,21 @@ fn check_lsb_window_exceeded(
     false
 }
 
-/// Calculates the minimum wrapping distance between two u16 values.
-/// E.g., distance(65535, 1) is 2, not 65534.
+// Calculates the minimum wrapping distance between two u16 values.
 fn min_wrapping_distance_u16(a: u16, b: u16) -> u16 {
     let forward = a.wrapping_sub(b);
     let backward = b.wrapping_sub(a);
     forward.min(backward)
 }
 
-/// Calculates the minimum wrapping distance between two u32 values.
+// Calculates the minimum wrapping distance between two u32 values.
 fn min_wrapping_distance_u32(a: u32, b: u32) -> u32 {
     let forward = a.wrapping_sub(b);
     let backward = b.wrapping_sub(a);
     forward.min(backward)
 }
 
-/// Calculates the implicit RTP timestamp if a TS stride is active in the context.
-/// Based on the sequence number delta from the last sent packet.
+// Calculates the implicit RTP timestamp based on SN delta and context TS stride.
 fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Option<Timestamp> {
     if let Some(stride) = context.ts_stride {
         if sn_delta > 0 {
@@ -327,8 +330,8 @@ fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> 
     }
 }
 
-/// Selects the most appropriate UO packet type and builds it.
-/// Returns the packet bytes and the RTP timestamp value that was effectively transmitted or implied.
+// Selects the optimal UO packet type (UO-0, UO-1-SN, UO-1-TS, UO-1-ID, UO-1-RTP)
+// based on what fields have changed and builds the corresponding packet.
 #[allow(clippy::too_many_arguments)]
 fn select_and_build_uo_packet(
     context: &mut Profile1CompressorContext,
@@ -438,7 +441,7 @@ fn select_and_build_uo_packet(
     ))
 }
 
-/// Updates compressor mode from FirstOrder to SecondOrder if threshold is met.
+// Updates compressor mode from FirstOrder to SecondOrder if threshold is met.
 fn update_compressor_mode(context: &mut Profile1CompressorContext) {
     if context.mode == Profile1CompressorMode::FirstOrder {
         context.consecutive_fo_packets_sent = context.consecutive_fo_packets_sent.saturating_add(1);
@@ -449,7 +452,7 @@ fn update_compressor_mode(context: &mut Profile1CompressorContext) {
     }
 }
 
-/// Builds a ROHC Profile 1 UO-0 packet.
+// Builds a UO-0 packet with LSB-encoded SN and 3-bit CRC.
 fn build_uo0(
     context: &Profile1CompressorContext,
     current_sn: u16,
@@ -473,7 +476,7 @@ fn build_uo0(
     build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
 }
 
-/// Builds a ROHC Profile 1 UO-1-TS packet.
+// Builds a UO-1-TS packet when timestamp changes but SN increments by 1.
 fn build_uo1_ts(
     context: &mut Profile1CompressorContext, // Mutable for update_ts_stride_detection.
     current_sn: u16,
@@ -500,7 +503,8 @@ fn build_uo1_ts(
     build_profile1_uo1_ts_packet(&uo1_packet_data).map_err(RohcError::Building)
 }
 
-/// Builds a ROHC Profile 1 UO-1-SN packet.
+// Builds a UO-1-SN packet when SN jumps or marker bit changes.
+// Requires established TS stride for implicit timestamp calculation.
 fn build_uo1_sn(
     context: &Profile1CompressorContext,
     current_sn: u16,
@@ -547,7 +551,7 @@ fn build_uo1_sn(
     build_profile1_uo1_sn_packet(&uo1_sn_data).map_err(RohcError::Building)
 }
 
-/// Builds a ROHC Profile 1 UO-1-ID packet.
+// Builds a UO-1-ID packet when IP identification changes but SN increments by 1.
 fn build_uo1_id(
     context: &Profile1CompressorContext,
     current_sn: u16,
@@ -594,7 +598,7 @@ fn build_uo1_id(
     build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
 }
 
-/// Builds a ROHC Profile 1 UO-1-RTP packet.
+// Builds a UO-1-RTP packet using TS_SCALED mode when TS follows the established stride.
 fn build_uo1_rtp(
     context: &Profile1CompressorContext,
     current_sn: u16,

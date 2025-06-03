@@ -34,8 +34,10 @@ use crate::traits::RohcDecompressorContext;
 /// - `handler_profile_id`: Expected ROHC profile ID for this handler, used for validation.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed RTP/UDP/IPv4 headers.
-/// - `Err(RohcError)`: If parsing fails (e.g., CRC mismatch, invalid profile ID).
+/// The reconstructed RTP/UDP/IPv4 headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - CRC mismatch, invalid profile ID, or parsing failure
 pub(super) fn parse_and_reconstruct_ir(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -75,8 +77,10 @@ pub(super) fn parse_and_reconstruct_ir(
 /// - `crc_calculators`: CRC calculator instances for verification.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed RTP/UDP/IPv4 headers.
-/// - `Err(RohcError)`: If parsing, CRC validation, or LSB decoding fails.
+/// The reconstructed RTP/UDP/IPv4 headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
 pub(super) fn parse_and_reconstruct_uo0(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -146,8 +150,10 @@ pub(super) fn parse_and_reconstruct_uo0(
 /// - `crc_calculators`: CRC calculator instances.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed headers.
-/// - `Err(RohcError)`: If parsing, CRC validation, or LSB decoding fails.
+/// The reconstructed headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
 pub(super) fn parse_and_reconstruct_uo1_sn(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -213,8 +219,10 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
 /// - `crc_calculators`: CRC calculator instances.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed headers.
-/// - `Err(RohcError)`: If parsing, CRC, or LSB decoding fails.
+/// The reconstructed headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
 pub(super) fn parse_and_reconstruct_uo1_ts(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -295,8 +303,10 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
 /// - `crc_calculators`: CRC calculator instances.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed headers.
-/// - `Err(RohcError)`: If parsing, CRC, or LSB decoding fails.
+/// The reconstructed headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
 pub(super) fn parse_and_reconstruct_uo1_id(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -379,8 +389,10 @@ pub(super) fn parse_and_reconstruct_uo1_id(
 /// - `crc_calculators`: CRC calculator instances.
 ///
 /// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Reconstructed headers.
-/// - `Err(RohcError)`: If parsing, TS reconstruction, or CRC validation fails.
+/// The reconstructed headers.
+///
+/// # Errors
+/// - [`RohcError::Parsing`] - Parsing, TS reconstruction, or CRC validation failure
 pub(super) fn parse_and_reconstruct_uo1_rtp(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
@@ -446,21 +458,7 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
     ))
 }
 
-/// Reconstructs full `RtpUdpIpv4Headers` from decompressor context and current dynamic fields.
-///
-/// Combines static fields from the context (IP addresses, ports, SSRC) with the provided
-/// dynamic fields (SN, TS, Marker, IP-ID). Uses standard defaults for fields not directly
-/// conveyed by ROHC Profile 1 packets (e.g., TTL, DSCP).
-///
-/// # Parameters
-/// - `context`: Decompressor context holding static chain information.
-/// - `sn`: Current RTP sequence number.
-/// - `ts`: Current RTP timestamp.
-/// - `marker`: Current RTP marker bit.
-/// - `ip_id`: Current IP Identification value.
-///
-/// # Returns
-/// Fully reconstructed `RtpUdpIpv4Headers`.
+// Reconstructs complete RTP/UDP/IPv4 headers from decompressor context and packet fields.
 fn reconstruct_headers_from_context(
     context: &Profile1DecompressorContext,
     sn: u16,
@@ -509,8 +507,7 @@ fn reconstruct_headers_from_context(
     }
 }
 
-/// Calculates reconstructed RTP timestamp based on SN delta and context stride.
-/// If no stride, returns context's last TS.
+// Calculates the implicit RTP timestamp based on SN delta and context TS stride.
 fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
     decoded_sn: u16,
@@ -532,8 +529,7 @@ fn calculate_reconstructed_ts_implicit(
     }
 }
 
-/// Calculates reconstructed RTP timestamp assuming SN increments by 1 and context has a stride.
-/// If no stride, returns context's last TS.
+// Calculates reconstructed RTP timestamp assuming SN increments by 1 and context has a stride.
 fn calculate_reconstructed_ts_implicit_sn_plus_one(
     context: &Profile1DecompressorContext,
 ) -> Timestamp {
