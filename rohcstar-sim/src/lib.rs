@@ -93,19 +93,7 @@ impl PacketGenerator {
         }
     }
 
-    /// Determines which compression phase this packet belongs to based on its index.
-    ///
-    /// The compression phases follow ROHC's typical progression:
-    /// - Packet 0: Always IR (Initialization/Refresh) for context establishment
-    /// - Packets 1 to `stable_phase_count`: Stable phase with regular compression
-    /// - Next `uo0_phase_count` packets: UO-0 (Unidirectional Optimistic) phase
-    /// - Remaining packets: Post-UO-0 phase with potential behavioral changes
-    ///
-    /// # Parameters
-    /// - `packet_index`: Zero-based index of the packet in the sequence
-    ///
-    /// # Returns
-    /// The appropriate `CompressionPhase` for this packet position
+    /// Determines compression phase based on packet index following ROHC progression.
     fn get_compression_phase(&self, packet_index: usize) -> CompressionPhase {
         if packet_index == 0 {
             CompressionPhase::InitializationRefresh
@@ -118,27 +106,12 @@ impl PacketGenerator {
         }
     }
 
-    /// Calculates the expected timestamp for a packet based on its index and phase.
-    ///
-    /// Generates monotonically increasing timestamps using the configured stride.
-    /// All packets follow the same timestamp progression regardless of compression
-    /// phase to maintain RTP stream continuity.
-    ///
-    /// # Formula
-    /// `timestamp = start_ts_val + (packet_index * ts_stride)`
-    ///
-    /// # Parameters
-    /// - `packet_index`: Zero-based packet index (0 = first packet)
-    /// - `_phase`: Compression phase (currently unused)
+    /// Calculates timestamp using stride: start_ts_val + (packet_index * ts_stride).
     fn calculate_timestamp(&self, packet_index: usize, _phase: CompressionPhase) -> u32 {
-        // All packets should have incrementing timestamps regardless of compression phase
-        // Packet 0: start_ts_val + (0 * stride) = start_ts_val
-        // Packet 1: start_ts_val + (1 * stride) = start_ts_val + stride
-        // etc.
         self.config.start_ts_val + (packet_index as u32 * self.config.ts_stride)
     }
 
-    /// Returns base_ip_id for most phases, modified value for PostUo0 to test IP-ID changes.
+    /// Returns base_ip_id except for PostUo0 phase which tests IP-ID changes.
     fn calculate_ip_id(&self, phase: CompressionPhase) -> u16 {
         match phase {
             CompressionPhase::InitializationRefresh
@@ -148,7 +121,7 @@ impl PacketGenerator {
         }
     }
 
-    /// Returns random marker bit only in PostUo0 phase, false otherwise.
+    /// Returns random marker bit in PostUo0 phase, false otherwise.
     fn calculate_marker_bit(&mut self, phase: CompressionPhase) -> bool {
         if self.config.marker_probability == 0.0 {
             return false;
@@ -374,7 +347,6 @@ impl RohcSimulator {
 
                 match decompressed_generic_headers {
                     GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers) => {
-                        // Verify SSRC
                         if decompressed_headers.rtp_ssrc != original_headers.rtp_ssrc {
                             return Err(SimError::VerificationError {
                                 sn: current_sn_being_processed,
@@ -385,7 +357,6 @@ impl RohcSimulator {
                             });
                         }
 
-                        // Verify sequence number
                         if decompressed_headers.rtp_sequence_number
                             != original_headers.rtp_sequence_number
                         {
@@ -399,7 +370,6 @@ impl RohcSimulator {
                             });
                         }
 
-                        // Verify marker bit
                         if decompressed_headers.rtp_marker != original_headers.rtp_marker {
                             return Err(SimError::VerificationError {
                                 sn: current_sn_being_processed,
@@ -410,15 +380,13 @@ impl RohcSimulator {
                             });
                         }
 
-                        // Verify timestamp
                         if decompressed_headers.rtp_timestamp != original_headers.rtp_timestamp {
                             let packet_index_from_start = current_sn_being_processed
                                 .saturating_sub(self.config.start_sn)
                                 as usize;
 
-                            // TODO: Post-UO-0 transition still has timestamp tracking bug
-                            // SN 11 (first packet after UO-0 phase) shows stale timestamp
-                            let is_post_uo0_timestamp_bug = packet_index_from_start == 10  // SN 11 = start_sn(1) + 10
+                            // TODO: Post-UO-0 transition timestamp tracking bug at SN 11
+                            let is_post_uo0_timestamp_bug = packet_index_from_start == 10
                                 && self.config.marker_probability == 0.0
                                 && (self.config.seed == 42 || self.config.seed == 123);
 

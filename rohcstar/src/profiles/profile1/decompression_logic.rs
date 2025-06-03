@@ -54,8 +54,7 @@ pub(super) fn parse_and_reconstruct_ir(
 
     context.initialize_from_ir_packet(&parsed_ir);
 
-    // IR packets for Profile 1 do not explicitly carry IP-ID in the dynamic part.
-    // The decompressor's context IP-ID will be used (initialized to 0 or from previous state).
+    // IP-ID uses context value (not carried in IR dynamic part)
     Ok(reconstruct_headers_from_context(
         context,
         parsed_ir.dyn_rtp_sn,
@@ -124,11 +123,9 @@ pub(super) fn parse_and_reconstruct_uo0(
         }));
     }
 
-    // Update context after successful CRC validation.
     context.infer_ts_stride_from_decompressed_ts(new_timestamp, decoded_sn);
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
-    // Marker and IP-ID remain from context for UO-0.
 
     Ok(reconstruct_headers_from_context(
         context,
@@ -196,7 +193,6 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
     context.last_reconstructed_rtp_marker = parsed_uo1.marker;
-    // IP-ID remains from context for UO-1-SN.
 
     Ok(reconstruct_headers_from_context(
         context,
@@ -236,7 +232,6 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
 
     let parsed_uo1_ts = parse_profile1_uo1_ts_packet(packet_bytes)?;
 
-    // UO-1-TS implies SN increments by 1.
     let reconstructed_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
     let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or_else(|| {
@@ -279,7 +274,6 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, reconstructed_sn);
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = decoded_ts;
-    // Marker and IP-ID remain from context for UO-1-TS.
 
     Ok(reconstruct_headers_from_context(
         context,
@@ -320,7 +314,6 @@ pub(super) fn parse_and_reconstruct_uo1_id(
 
     let parsed_uo1_id = parse_profile1_uo1_id_packet(packet_bytes)?;
 
-    // UO-1-ID implies SN increments by 1.
     let reconstructed_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
     let new_timestamp = calculate_reconstructed_ts_implicit_sn_plus_one(context);
 
@@ -344,7 +337,6 @@ pub(super) fn parse_and_reconstruct_uo1_id(
         context.p_ip_id,
     )? as u16;
 
-    // UO-1-ID uses a specific CRC input format.
     let crc_input_bytes = prepare_uo1_id_specific_crc_input_payload(
         context.rtp_ssrc,
         reconstructed_sn,
@@ -366,7 +358,6 @@ pub(super) fn parse_and_reconstruct_uo1_id(
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = new_timestamp;
     context.last_reconstructed_ip_id_full = decoded_ip_id;
-    // Marker remains from context for UO-1-ID.
 
     Ok(reconstruct_headers_from_context(
         context,
@@ -406,7 +397,6 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
 
     let parsed_uo1_rtp = parse_profile1_uo1_rtp_packet(packet_bytes)?;
 
-    // UO-1-RTP implies SN increments by 1.
     let reconstructed_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
     let ts_scaled_received = parsed_uo1_rtp.ts_scaled.ok_or_else(|| {
@@ -438,7 +428,7 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
         }));
     }
 
-    // Successful UO-1-RTP implies decompressor should be in (or enter) scaled mode if stride is known.
+    // Enter TS_SCALED mode if stride known
     if context.ts_stride.is_some() && !context.ts_scaled_mode {
         context.ts_scaled_mode = true;
     }
@@ -447,7 +437,6 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
     context.last_reconstructed_rtp_sn_full = reconstructed_sn;
     context.last_reconstructed_rtp_ts_full = reconstructed_ts;
     context.last_reconstructed_rtp_marker = parsed_uo1_rtp.marker;
-    // IP-ID remains from context for UO-1-RTP.
 
     Ok(reconstruct_headers_from_context(
         context,
@@ -458,7 +447,6 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
     ))
 }
 
-// Reconstructs complete RTP/UDP/IPv4 headers from decompressor context and packet fields.
 fn reconstruct_headers_from_context(
     context: &Profile1DecompressorContext,
     sn: u16,
@@ -472,20 +460,16 @@ fn reconstruct_headers_from_context(
     );
 
     RtpUdpIpv4Headers {
-        // Static fields from context
         ip_src: context.ip_source,
         ip_dst: context.ip_destination,
         udp_src_port: context.udp_source_port,
         udp_dst_port: context.udp_destination_port,
         rtp_ssrc: context.rtp_ssrc,
-
-        // Dynamic fields from current packet
         rtp_sequence_number: sn,
         rtp_timestamp: ts,
         rtp_marker: marker,
         ip_identification: ip_id,
-
-        // Fixed or default values for Profile 1 reconstruction
+        // Fixed values for Profile 1
         ip_ihl: IPV4_STANDARD_IHL,
         ip_dscp: 0,
         ip_ecn: 0,
@@ -507,7 +491,6 @@ fn reconstruct_headers_from_context(
     }
 }
 
-// Calculates the implicit RTP timestamp based on SN delta and context TS stride.
 fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
     decoded_sn: u16,
@@ -529,7 +512,6 @@ fn calculate_reconstructed_ts_implicit(
     }
 }
 
-// Calculates reconstructed RTP timestamp assuming SN increments by 1 and context has a stride.
 fn calculate_reconstructed_ts_implicit_sn_plus_one(
     context: &Profile1DecompressorContext,
 ) -> Timestamp {

@@ -19,8 +19,6 @@ pub struct CrcCalculators {
 
 impl fmt::Debug for CrcCalculators {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Since Crc<u8> and Algorithm<u8> don't implement Debug,
-        // we provide a placeholder or minimal information.
         f.debug_struct("CrcCalculators")
             .field("crc3_calculator", &format_args!("Crc<u8>(ROHC_CRC3_Algo)"))
             .field("crc8_calculator", &format_args!("Crc<u8>(ROHC_CRC8_Algo)"))
@@ -71,10 +69,6 @@ impl Default for CrcCalculators {
         Self::new()
     }
 }
-
-// --- Standalone CRC calculation functions ---
-// These are kept for potential direct use or by other modules/profiles
-// not using the Profile1Handler's CrcCalculators instance.
 
 /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) directly.
 ///

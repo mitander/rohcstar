@@ -33,14 +33,11 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
 
-    // P1: Manually establish IR context to ensure precise header values
     let initial_sn_p1: u16 = 100;
     let initial_ts_p1_val: u32 = 1000;
     let initial_marker_p1 = false;
     let ssrc_p1 = SSRC_FOR_FLOW_TESTS;
-    let initial_ip_id_p1 = initial_sn_p1.wrapping_add(ssrc_p1 as u16); // Consistent IP-ID generation
-
-    // Create the exact headers that will be used to generate the IR
+    let initial_ip_id_p1 = initial_sn_p1.wrapping_add(ssrc_p1 as u16);
     let headers_for_ir = RtpUdpIpv4Headers {
         ip_src: "192.168.0.1".parse().unwrap(), // Match common::create_rtp_headers
         ip_dst: "192.168.0.2".parse().unwrap(),
@@ -64,7 +61,6 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
 
     let comp_ctx_after_p1 = get_compressor_context(&engine, cid);
 
-    // P2: UO-0 (SN+1, TS/Marker/IP-ID same as compressor's context after IR)
     let sn_p2 = initial_sn_p1.wrapping_add(1);
     let headers_p2 = RtpUdpIpv4Headers {
         ip_src: headers_for_ir.ip_src,
@@ -93,10 +89,9 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
 
     let _ = engine.decompress(&rohc_packet_p2).unwrap();
 
-    // P3: UO-1-TS (SN+1 from P2, TS changes to establish stride, marker same)
     let comp_ctx_after_p2 = get_compressor_context(&engine, cid);
     let sn_p3 = sn_p2.wrapping_add(1);
-    let ts_p3_val: u32 = 1160; // TS changed by 160
+    let ts_p3_val: u32 = 1160;
     let headers_p3 = RtpUdpIpv4Headers {
         ip_src: headers_for_ir.ip_src,
         ip_dst: headers_for_ir.ip_dst,
@@ -125,12 +120,10 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     let decomp_headers_p3 = decompressed_generic_p3.as_rtp_udp_ipv4().unwrap();
     assert_eq!(decomp_headers_p3.rtp_timestamp, Timestamp::new(ts_p3_val));
 
-    // P4: UO-1-SN (SN+1 from P3, Marker changes, TS implicitly updated via stride)
     let comp_ctx_after_p3 = get_compressor_context(&engine, cid);
     let sn_p4 = sn_p3.wrapping_add(1);
-    let marker_p4 = true; // Marker changed
-    // For UO-1-SN, we need to provide the actual TS value that matches the implicit update
-    let ts_p4_val = 1320; // 1160 + 160 (stride)
+    let marker_p4 = true;
+    let ts_p4_val = 1320; // Implicit TS update via stride
     let headers_p4 = RtpUdpIpv4Headers {
         ip_src: headers_for_ir.ip_src,
         ip_dst: headers_for_ir.ip_dst,
@@ -138,7 +131,7 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
         udp_dst_port: headers_for_ir.udp_dst_port,
         rtp_ssrc: comp_ctx_after_p3.rtp_ssrc,
         rtp_sequence_number: sn_p4,
-        rtp_timestamp: Timestamp::new(ts_p4_val), // Use the calculated TS
+        rtp_timestamp: Timestamp::new(ts_p4_val),
         rtp_marker: marker_p4,
         ip_identification: comp_ctx_after_p3.last_sent_ip_id_full,
         ..Default::default()
@@ -158,11 +151,10 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     let decomp_headers_p4 = decompressed_generic_p4.as_rtp_udp_ipv4().unwrap();
     assert_eq!(decomp_headers_p4.rtp_timestamp, Timestamp::new(ts_p4_val));
 
-    // P5: UO-1-SN (SN+1 from P4, Marker changes back, implicit TS update)
     let comp_ctx_after_p4 = get_compressor_context(&engine, cid);
     let sn_p5 = sn_p4.wrapping_add(1);
-    let marker_p5 = false; // Marker changed back
-    let ts_p5_val = 1480; // 1320 + 160 (stride)
+    let marker_p5 = false;
+    let ts_p5_val = 1480;
     let headers_p5 = RtpUdpIpv4Headers {
         ip_src: headers_for_ir.ip_src,
         ip_dst: headers_for_ir.ip_dst,
@@ -170,7 +162,7 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
         udp_dst_port: headers_for_ir.udp_dst_port,
         rtp_ssrc: comp_ctx_after_p4.rtp_ssrc,
         rtp_sequence_number: sn_p5,
-        rtp_timestamp: Timestamp::new(ts_p5_val), // Use the calculated TS
+        rtp_timestamp: Timestamp::new(ts_p5_val),
         rtp_marker: marker_p5,
         ip_identification: comp_ctx_after_p4.last_sent_ip_id_full,
         ..Default::default()
@@ -190,10 +182,9 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     let decomp_headers_p5 = decompressed_generic_p5.as_rtp_udp_ipv4().unwrap();
     assert_eq!(decomp_headers_p5.rtp_timestamp, Timestamp::new(ts_p5_val));
 
-    // P6: UO-0 (SN+1 from P5, TS/Marker/IP-ID same as expected after implicit updates)
     let comp_ctx_after_p5 = get_compressor_context(&engine, cid);
     let sn_p6 = sn_p5.wrapping_add(1);
-    let ts_p6_val = 1640; // 1480 + 160 (stride)
+    let ts_p6_val = 1640;
     let headers_p6 = RtpUdpIpv4Headers {
         ip_src: headers_for_ir.ip_src,
         ip_dst: headers_for_ir.ip_dst,
@@ -248,20 +239,18 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     assert_eq!(decomp_headers_p7.rtp_timestamp, Timestamp::new(2000));
 
     let comp_ctx_after_p7 = get_compressor_context(&engine, cid);
-    assert_eq!(comp_ctx_after_p7.fo_packets_sent_since_ir, 0); // Reset after IR
+    assert_eq!(comp_ctx_after_p7.fo_packets_sent_since_ir, 0);
 }
 
-/// Tests a sequence of packets for a small CID, transitioning from IR to UO-1-TS (establish stride),
-/// then UO-1-SN, and finally forcing an IR due to TS change. Checks Add-CID handling.
+/// Tests packet sequence for small CID with Add-CID handling through IR→UO-1-TS→UO-1-SN→IR transitions.
 #[test]
 fn p1_umode_ir_to_fo_sequence_small_cid() {
     let small_cid: u16 = 5;
-    let mut engine = create_test_engine_with_system_clock(4); // IR refresh interval of 4
+    let mut engine = create_test_engine_with_system_clock(4);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
 
-    // P1: Initial IR
     establish_ir_context(&mut engine, small_cid, 200, 2000, true, SSRC_FOR_FLOW_TESTS);
     let ip_id_in_context = get_ip_id_established_by_ir(200, SSRC_FOR_FLOW_TESTS);
 
@@ -277,8 +266,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     assert_eq!(comp_ctx_p1.last_sent_rtp_ts_full, Timestamp::new(2000));
     assert_eq!(comp_ctx_p1.last_sent_ip_id_full, ip_id_in_context);
 
-    // P2: UO-1-TS (SN+1, TS changes to establish stride, marker same as IR)
-    let mut original_headers2 = create_rtp_headers_fixed_ssrc(201, 2160, true); // TS changed by 160
+    let mut original_headers2 = create_rtp_headers_fixed_ssrc(201, 2160, true);
     original_headers2.ip_identification = ip_id_in_context;
     let generic_headers2 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers2.clone());
     let rohc_packet2_framed = engine
@@ -288,7 +276,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         rohc_packet2_framed.len(),
         5,
         "Packet 2 should be UO-1-TS with Add-CID"
-    ); // Add-CID + 4-byte UO-1-TS
+    );
     assert_eq!(
         rohc_packet2_framed[0],
         ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (small_cid as u8 & ROHC_SMALL_CID_MASK)
@@ -308,8 +296,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     assert_eq!(decomp_headers2.rtp_sequence_number, 201);
     assert_eq!(decomp_headers2.rtp_timestamp, Timestamp::new(2160));
 
-    // P3: UO-1-SN (SN+1, Marker changes from P2's true to false - stride now established)
-    let mut original_headers3 = create_rtp_headers_fixed_ssrc(202, 2160, false); // Marker changed
+    let mut original_headers3 = create_rtp_headers_fixed_ssrc(202, 2160, false);
     original_headers3.ip_identification = ip_id_in_context;
     let generic_headers3 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers3.clone());
     let rohc_packet3_framed = engine
@@ -320,7 +307,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         4,
         "Packet 3 should be UO-1-SN with Add-CID"
     );
-    assert_eq!(rohc_packet3_framed[1] & P1_UO_1_SN_MARKER_BIT_MASK, 0); // Marker is false
+    assert_eq!(rohc_packet3_framed[1] & P1_UO_1_SN_MARKER_BIT_MASK, 0);
 
     let comp_ctx_after_p3 = get_compressor_context(&engine, small_cid);
     assert_eq!(comp_ctx_after_p3.fo_packets_sent_since_ir, 2);
@@ -332,10 +319,9 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         original_headers3.rtp_sequence_number
     );
     assert_eq!(decomp_headers3.rtp_marker, original_headers3.rtp_marker);
-    // Implicit TS update: 2160 + 160 = 2320
+
     assert_eq!(decomp_headers3.rtp_timestamp, Timestamp::new(2320));
 
-    // P4: UO-1-SN (SN+1 from P3, Marker changes back to true)
     let mut original_headers4 = create_rtp_headers_fixed_ssrc(203, 2320, true);
     original_headers4.ip_identification = ip_id_in_context;
     let generic_headers4 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers4.clone());
@@ -347,7 +333,7 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
         4,
         "Packet 4 should be UO-1-SN with Add-CID"
     );
-    assert_ne!(rohc_packet4_framed[1] & P1_UO_1_SN_MARKER_BIT_MASK, 0); // Marker is true
+    assert_ne!(rohc_packet4_framed[1] & P1_UO_1_SN_MARKER_BIT_MASK, 0);
 
     let comp_ctx_after_p4 = get_compressor_context(&engine, small_cid);
     assert_eq!(comp_ctx_after_p4.fo_packets_sent_since_ir, 3);

@@ -59,28 +59,26 @@ pub(super) fn should_force_ir(
         return true;
     }
 
-    // Change in SSRC signifies a new RTP stream, requiring full context establishment.
+    // SSRC change requires new context
     if context.rtp_ssrc != uncompressed_headers.rtp_ssrc {
         return true;
     }
 
-    // Check conditions related to TS_SCALED mode.
     if context.ts_scaled_mode {
         if context.ts_stride.is_none() {
-            // Scaled mode requires a known TS stride; this is an inconsistent state.
+            // TS_SCALED requires known stride
             return true;
         }
         if context
             .calculate_ts_scaled(uncompressed_headers.rtp_timestamp)
             .is_none()
         {
-            // Current RTP timestamp is not aligned with the established stride for TS_SCALED,
-            // or the scaled value would overflow. An IR is needed to resynchronize or signal a change.
+            // TS not aligned with stride or would overflow
             return true;
         }
     }
 
-    // Check if field deltas exceed LSB encoding windows, risking misinterpretation by decompressor.
+    // Check if field deltas exceed LSB encoding windows
     check_lsb_window_exceeded(context, uncompressed_headers)
 }
 
@@ -113,37 +111,34 @@ pub(super) fn compress_as_ir(
 
     let previous_ts_before_ir = context.last_sent_rtp_ts_full;
 
-    // Determine if scaled mode needs to be reset due to calculation failures or missing stride.
+    // Reset scaled mode if calculation failures or missing stride
     let scaled_mode_had_issues = context.ts_scaled_mode
         && (context.ts_stride.is_none()
             || context
                 .calculate_ts_scaled(uncompressed_headers.rtp_timestamp)
                 .is_none());
 
-    // Determine the TS_STRIDE value to signal in the IR packet, if any.
     let ir_packet_stride_to_signal = if scaled_mode_had_issues {
-        // Reset scaled mode state due to issues.
         context.ts_scaled_mode = false;
         context.ts_stride = None;
         context.ts_offset = Timestamp::new(0);
         context.ts_stride_packets = 0;
-        None // Don't signal a stride if scaled mode just failed.
+        None
     } else if context.ts_scaled_mode {
-        // Already in scaled mode and no issues, signal the current active stride.
         context.ts_stride
     } else if context.ts_stride.is_some()
         && context.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
     {
-        // Not in scaled mode, but stride is established enough to signal for future use.
+        // Stride established, signal for future use
         context.ts_stride
     } else {
-        None // No stride to signal.
+        None
     };
 
     let ir_data = IrPacket {
         cid: context.cid,
         profile_id: RohcProfile::RtpUdpIp,
-        crc8: 0, // Placeholder, calculated by build_profile1_ir_packet
+        crc8: 0, // Calculated by build_profile1_ir_packet
         static_ip_src: context.ip_source,
         static_ip_dst: context.ip_destination,
         static_udp_src_port: context.udp_source_port,
@@ -158,7 +153,6 @@ pub(super) fn compress_as_ir(
     let rohc_packet_bytes =
         build_profile1_ir_packet(&ir_data, crc_calculators).map_err(RohcError::Building)?;
 
-    // Update context state common to all IR packets.
     context.last_sent_rtp_sn_full = uncompressed_headers.rtp_sequence_number;
     context.last_sent_rtp_ts_full = uncompressed_headers.rtp_timestamp;
     context.last_sent_rtp_marker = uncompressed_headers.rtp_marker;
@@ -168,17 +162,15 @@ pub(super) fn compress_as_ir(
     context.consecutive_fo_packets_sent = 0;
 
     if ir_packet_stride_to_signal.is_some() {
-        // Activate scaled mode if a stride was signaled in this IR.
-        // The TS of the IR packet itself becomes the new TS_Offset for scaled calculations.
+        // IR packet TS becomes new ts_offset for scaled calculations
         context.ts_offset = uncompressed_headers.rtp_timestamp;
         context.ts_scaled_mode = true;
     } else if scaled_mode_had_issues {
-        // Scaled mode was just turned off. Resume stride detection using the TS
-        // *before* this IR packet, as the IR's TS might not be part of the regular sequence.
-        let ts_of_this_ir = context.last_sent_rtp_ts_full; // Currently holds uncompressed_headers.rtp_timestamp
+        // Resume stride detection using TS before IR, as IR TS may not be part of regular sequence
+        let ts_of_this_ir = context.last_sent_rtp_ts_full;
         context.last_sent_rtp_ts_full = previous_ts_before_ir;
         context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp);
-        context.last_sent_rtp_ts_full = ts_of_this_ir; // Restore for next packet's reference
+        context.last_sent_rtp_ts_full = ts_of_this_ir;
     }
 
     Ok(rohc_packet_bytes)
@@ -237,7 +229,6 @@ pub(super) fn compress_as_uo(
         crc_calculators,
     )?;
 
-    // Update context with the values that were effectively transmitted or implied.
     context.last_sent_rtp_sn_full = current_sn;
     context.last_sent_rtp_ts_full = actual_ts_for_context_update;
     context.last_sent_rtp_marker = current_marker;
@@ -249,17 +240,14 @@ pub(super) fn compress_as_uo(
     Ok(packet_bytes)
 }
 
-// Checks if the current packet values would exceed the LSB decoding window.
-// Returns true if IR refresh is needed due to large deltas in SN, TS, or IP-ID.
+// Check if field deltas exceed LSB decoding windows, requiring IR refresh
 fn check_lsb_window_exceeded(
     context: &Profile1CompressorContext,
     headers: &RtpUdpIpv4Headers,
 ) -> bool {
-    // Check sequence number window.
-    let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Using UO-1-SN as a common case.
+    let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT;
     if sn_k > 0 && sn_k < 16 {
-        // LSB widths for SN are typically small (e.g., 4-8 bits).
-        // The unambiguous window is 2^(k-1). Delta must be within this.
+        // Unambiguous window is 2^(k-1)
         let max_safe_delta: u16 = (1u16 << (sn_k - 1)).saturating_sub(1);
         let sn_delta_abs =
             min_wrapping_distance_u16(headers.rtp_sequence_number, context.last_sent_rtp_sn_full);
@@ -268,7 +256,7 @@ fn check_lsb_window_exceeded(
         }
     }
 
-    // Check timestamp window, but only if not in TS_SCALED mode (where TS is handled differently).
+    // Check TS window only if not in TS_SCALED mode
     let ts_k = P1_UO1_TS_LSB_WIDTH_DEFAULT;
     if !context.ts_scaled_mode && ts_k > 0 && ts_k < 32 {
         let max_safe_delta: u32 = (1u32 << (ts_k - 1)).saturating_sub(1);
@@ -281,7 +269,6 @@ fn check_lsb_window_exceeded(
         }
     }
 
-    // Check IP-ID window only if IP-ID has changed from the last sent packet.
     if headers.ip_identification != context.last_sent_ip_id_full {
         let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
         if ipid_k > 0 && ipid_k < 16 {
@@ -297,25 +284,22 @@ fn check_lsb_window_exceeded(
     false
 }
 
-// Calculates the minimum wrapping distance between two u16 values.
 fn min_wrapping_distance_u16(a: u16, b: u16) -> u16 {
     let forward = a.wrapping_sub(b);
     let backward = b.wrapping_sub(a);
     forward.min(backward)
 }
 
-// Calculates the minimum wrapping distance between two u32 values.
 fn min_wrapping_distance_u32(a: u32, b: u32) -> u32 {
     let forward = a.wrapping_sub(b);
     let backward = b.wrapping_sub(a);
     forward.min(backward)
 }
 
-// Calculates the implicit RTP timestamp based on SN delta and context TS stride.
+// Calculate implicit RTP timestamp based on SN delta and TS stride
 fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Option<Timestamp> {
     if let Some(stride) = context.ts_stride {
         if sn_delta > 0 {
-            // Only calculate if SN has advanced.
             Some(Timestamp::new(
                 context
                     .last_sent_rtp_ts_full
@@ -323,15 +307,14 @@ fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> 
                     .wrapping_add(sn_delta as u32 * stride),
             ))
         } else {
-            None // SN did not advance or regressed; implicit TS is not straightforward.
+            None
         }
     } else {
-        None // No stride active.
+        None
     }
 }
 
-// Selects the optimal UO packet type (UO-0, UO-1-SN, UO-1-TS, UO-1-ID, UO-1-RTP)
-// based on what fields have changed and builds the corresponding packet.
+// Select optimal UO packet type based on field changes
 #[allow(clippy::too_many_arguments)]
 fn select_and_build_uo_packet(
     context: &mut Profile1CompressorContext,
@@ -346,7 +329,7 @@ fn select_and_build_uo_packet(
     implicit_ts_if_stride_set: Option<Timestamp>,
     crc_calculators: &CrcCalculators,
 ) -> Result<(Vec<u8>, Timestamp), RohcError> {
-    // Try UO-1-RTP for scaled mode if SN increments by 1 and IP-ID is unchanged.
+    // Try UO-1-RTP for TS_SCALED mode
     if context.ts_scaled_mode && sn_delta == 1 && !ip_id_changed {
         if let Some(ts_scaled_val) = context.calculate_ts_scaled(current_ts) {
             let packet = build_uo1_rtp(
@@ -356,31 +339,27 @@ fn select_and_build_uo_packet(
                 current_marker,
                 crc_calculators,
             )?;
-            return Ok((packet, current_ts)); // Actual current_ts used for UO-1-RTP
+            return Ok((packet, current_ts));
         } else if context.ts_stride.is_some() {
-            // TS_SCALED calculation failed (e.g., misaligned, overflow), but stride exists.
-            // Fallback to UO-1-SN, which uses implicit TS update via stride.
+            // TS_SCALED failed, fallback to UO-1-SN with implicit TS
             let implicit_ts_for_fallback = implicit_ts_if_stride_set
                 .expect("Stride exists with positive sn_delta, implicit_ts should be Some.");
             let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
             return Ok((packet, implicit_ts_for_fallback));
         } else {
-            // Should have been caught by should_force_ir if TS_SCALED failed without stride.
             return Err(RohcError::InvalidState(
                 "TS_SCALED failed and no stride for fallback".to_string(),
             ));
         }
     }
 
-    // Try UO-0 for minimal changes: Marker unchanged, SN increments within UO-0 window, IP-ID unchanged.
+    // Try UO-0 for minimal changes
     if !marker_changed && sn_delta > 0 && sn_delta < 16 && !ip_id_changed {
         let ts_matches_stride_pattern = implicit_ts_if_stride_set == Some(current_ts);
         let ts_is_unchanged_from_context = current_ts == context.last_sent_rtp_ts_full;
 
         if ts_matches_stride_pattern || ts_is_unchanged_from_context {
             if ts_matches_stride_pattern && context.ts_stride.is_some() && !context.ts_scaled_mode {
-                // If UO-0 chosen because TS matches stride, update detection state.
-                // This aids transition to scaled_mode.
                 let _ = context.update_ts_stride_detection(current_ts);
             }
             let ts_to_use_for_uo0_crc = if ts_matches_stride_pattern {
@@ -393,15 +372,14 @@ fn select_and_build_uo_packet(
         }
     }
 
-    // Try UO-1-TS: Marker unchanged, TS changed, SN increments by 1, IP-ID unchanged.
+    // Try UO-1-TS
     if !marker_changed && ts_changed && sn_delta == 1 && !ip_id_changed {
-        // This packet helps in TS stride detection.
         let _ = context.update_ts_stride_detection(current_ts);
         let packet = build_uo1_ts(context, current_sn, current_ts, crc_calculators)?;
         return Ok((packet, current_ts));
     }
 
-    // Try UO-1-ID: Effective TS for UO-1-ID is based on context's last TS, potentially advanced by stride.
+    // Try UO-1-ID
     let ts_for_uo1_id_check = implicit_ts_if_stride_set.unwrap_or(context.last_sent_rtp_ts_full);
     if !marker_changed && ip_id_changed && sn_delta == 1 && (current_ts == ts_for_uo1_id_check) {
         if context.ts_stride.is_some()
@@ -410,7 +388,6 @@ fn select_and_build_uo_packet(
                     .unwrap_or(Timestamp::new(current_ts.value().wrapping_add(1)))
             && !context.ts_scaled_mode
         {
-            // TS matches stride, ensure stride detection state is updated.
             let _ = context.update_ts_stride_detection(current_ts);
         }
         let packet = build_uo1_id(context, current_sn, current_ip_id, crc_calculators)?;
@@ -422,8 +399,6 @@ fn select_and_build_uo_packet(
         let implicit_ts_for_sn_fallback = match implicit_ts_if_stride_set {
             Some(ts) => ts,
             None => {
-                // This implies sn_delta might not have been positive when implicit_ts_if_stride_set was calculated,
-                // or stride got broken. If stride is still Some now, recalculate with current_sn_delta.
                 let current_sn_delta_for_fallback =
                     current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
                 Timestamp::new(context.last_sent_rtp_ts_full.value().wrapping_add(
@@ -441,7 +416,6 @@ fn select_and_build_uo_packet(
     ))
 }
 
-// Updates compressor mode from FirstOrder to SecondOrder if threshold is met.
 fn update_compressor_mode(context: &mut Profile1CompressorContext) {
     if context.mode == Profile1CompressorMode::FirstOrder {
         context.consecutive_fo_packets_sent = context.consecutive_fo_packets_sent.saturating_add(1);
@@ -452,7 +426,6 @@ fn update_compressor_mode(context: &mut Profile1CompressorContext) {
     }
 }
 
-// Builds a UO-0 packet with LSB-encoded SN and 3-bit CRC.
 fn build_uo0(
     context: &Profile1CompressorContext,
     current_sn: u16,
@@ -464,7 +437,7 @@ fn build_uo0(
         context.rtp_ssrc,
         current_sn,
         ts_for_crc,
-        context.last_sent_rtp_marker, // UO-0 implies marker is unchanged from context.
+        context.last_sent_rtp_marker,
     );
     let crc3 = crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
 
@@ -476,9 +449,8 @@ fn build_uo0(
     build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
 }
 
-// Builds a UO-1-TS packet when timestamp changes but SN increments by 1.
 fn build_uo1_ts(
-    context: &mut Profile1CompressorContext, // Mutable for update_ts_stride_detection.
+    context: &mut Profile1CompressorContext,
     current_sn: u16,
     current_ts: Timestamp,
     crc_calculators: &CrcCalculators,
@@ -503,8 +475,6 @@ fn build_uo1_ts(
     build_profile1_uo1_ts_packet(&uo1_packet_data).map_err(RohcError::Building)
 }
 
-// Builds a UO-1-SN packet when SN jumps or marker bit changes.
-// Requires established TS stride for implicit timestamp calculation.
 fn build_uo1_sn(
     context: &Profile1CompressorContext,
     current_sn: u16,
@@ -518,7 +488,7 @@ fn build_uo1_sn(
 
     let sn_lsb_val = encode_lsb(current_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT)? as u16;
 
-    // Calculate implicit timestamp based on stride for CRC.
+    // Calculate implicit timestamp based on stride for CRC
     let sn_delta_for_ts = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
     let implicit_ts_for_crc = if let Some(stride_val) = context.ts_stride {
         Timestamp::new(
@@ -568,7 +538,7 @@ fn build_uo1_id(
     // or ensures `implicit_ts_if_stride_set` is compatible before choosing UO-1-ID.
     // For CRC, we need the effective TS based on these rules.
     let ts_for_crc = if let Some(stride_val) = context.ts_stride {
-        // SN delta is implicitly 1 for UO-1-ID selection.
+        // SN delta is implicitly 1 for UO-1-ID
         Timestamp::new(
             context
                 .last_sent_rtp_ts_full

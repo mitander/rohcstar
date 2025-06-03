@@ -40,7 +40,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         &mut engine,
         cid,
         current_packet_headers.rtp_sequence_number,
-        current_packet_headers.rtp_timestamp.value(), // Pass u32
+        current_packet_headers.rtp_timestamp.value(),
         current_packet_headers.rtp_marker,
         ssrc,
     );
@@ -96,8 +96,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     assert_eq!(decomp_1.rtp_timestamp, Timestamp::new(initial_ts_val));
 }
 
-/// Verifies UO-0 SN LSB encoding at the interpretation window edges.
-/// Tests SN values just within the UO-0 window (ref_sn + 15), just outside (ref_sn + 16, which
+/// Verifies UO-0 SN LSB encoding at interpretation window edges.
 /// can still be UO-0 if other fields like TS are stable), and then a larger jump forcing UO-1.
 #[test]
 fn p1_uo0_sn_at_lsb_window_edge() {
@@ -123,7 +122,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     let ip_id_from_ir_context = ir_headers_for_context.ip_identification;
 
-    // Test SN at the edge of UO-0 encodable range (ref_sn + 15)
+    // Test SN at UO-0 encodable range edge (ref_sn + 15)
     let sn_at_edge = initial_sn_ir + 15;
     let headers_at_edge_uncompressed =
         create_rtp_headers(sn_at_edge, initial_ts_val, initial_marker, ssrc)
@@ -142,10 +141,10 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_at_edge.rtp_sequence_number, sn_at_edge);
     assert_eq!(decomp_at_edge.rtp_timestamp, Timestamp::new(initial_ts_val));
-    assert_eq!(decomp_at_edge.ip_identification, 0); // IP-ID not in UO-0
+    assert_eq!(decomp_at_edge.ip_identification, 0);
 
-    // Test SN just beyond the simple +15 UO-0 window, but still potentially UO-0 if TS is stable
-    let sn_next_to_edge = sn_at_edge + 1; // initial_sn_ir + 16
+    // Test SN beyond +15 window, still UO-0 if TS stable
+    let sn_next_to_edge = sn_at_edge + 1;
     let headers_next_to_edge_uncompressed =
         create_rtp_headers(sn_next_to_edge, initial_ts_val, initial_marker, ssrc)
             .with_ip_id(ip_id_from_ir_context);
@@ -154,7 +153,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     let compressed_next_to_edge = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_next_to_edge)
         .unwrap();
-    assert_eq!(compressed_next_to_edge.len(), 1); // Still expect UO-0 due to stable TS/Marker
+    assert_eq!(compressed_next_to_edge.len(), 1);
     let decomp_next_to_edge = engine
         .decompress(&compressed_next_to_edge)
         .unwrap()
@@ -168,8 +167,8 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     assert_eq!(decomp_next_to_edge.ip_identification, 0);
 
-    // Re-establish context and test a larger jump that should force UO-1 (or IR if too large)
-    let new_ir_base_ts_val: u32 = initial_ts_val + 100; // Change TS to differentiate context
+    // Re-establish context for larger jump test
+    let new_ir_base_ts_val: u32 = initial_ts_val + 100;
     let new_ir_sn = 115;
     let new_ir_headers_for_context =
         create_rtp_headers(new_ir_sn, new_ir_base_ts_val, initial_marker, ssrc);
@@ -183,10 +182,9 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     let ip_id_from_new_ir_context = new_ir_headers_for_context.ip_identification;
 
-    // Send a UO-1-TS packet to establish a stride in the compressor
-    // Compressor context after IR: SN=115, TS=2100, Marker=false, IP-ID=ip_id_from_new_ir_context
-    let sn_for_stride_establish = new_ir_sn.wrapping_add(1); // 116
-    let ts_for_stride_establish = new_ir_base_ts_val.wrapping_add(160); // 2100 + 160 = 2260 (Arbitrary stride)
+    // Send UO-1-TS to establish stride
+    let sn_for_stride_establish = new_ir_sn.wrapping_add(1);
+    let ts_for_stride_establish = new_ir_base_ts_val.wrapping_add(160);
     let headers_for_stride = create_rtp_headers(
         sn_for_stride_establish,
         ts_for_stride_establish,
@@ -195,10 +193,9 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     )
     .with_ip_id(ip_id_from_new_ir_context);
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
-    let compressed_stride_packet =
-        engine // This should be UO-1-TS
-            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
-            .unwrap();
+    let compressed_stride_packet = engine
+        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+        .unwrap();
     assert_eq!(
         compressed_stride_packet.len(),
         4,
@@ -208,7 +205,6 @@ fn p1_uo0_sn_at_lsb_window_edge() {
 
     let _ = engine.decompress(&compressed_stride_packet).unwrap();
 
-    // Verify compressor context now has a stride and updated TS/SN
     let comp_ctx_check = get_compressor_context(&engine, cid);
     assert!(
         comp_ctx_check.ts_stride.is_some(),
@@ -224,13 +220,8 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     let established_stride = comp_ctx_check.ts_stride.unwrap();
 
-    // SN jump that should not be UO-0.
-    // Context: SN=116, TS=2260, Marker=false, IP-ID=ip_id_from_new_ir_context, Stride=160
-    // Target packet: SN = 116 + 16 = 132.
+    // Test SN jump beyond UO-0 window
     let sn_outside_window = sn_for_stride_establish.wrapping_add(16);
-
-    // TS changes significantly (not UO-0), IP-ID changes (not UO-0/UO-1-TS)
-    // This combination should lead to UO-1-SN.
     let actual_ts_for_packet_outside_window = ts_for_stride_establish
         .wrapping_add(established_stride * 16)
         .wrapping_add(30);
@@ -241,14 +232,14 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         initial_marker,
         ssrc,
     )
-    .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1)); // IP-ID also changes
+    .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1));
 
     let generic_outside_window =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window_uncompressed.clone());
     let compressed_outside_window = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_outside_window)
         .unwrap();
-    assert_eq!(compressed_outside_window.len(), 3); // Expect UO-1-SN
+    assert_eq!(compressed_outside_window.len(), 3);
     assert_eq!(
         compressed_outside_window[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
         P1_UO_1_SN_PACKET_TYPE_PREFIX
@@ -262,18 +253,17 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_outside_window.rtp_sequence_number, sn_outside_window);
 
-    // UO-1-SN uses implicit TS based on its context's last_sent_ts and the established stride
+    // UO-1-SN uses implicit TS based on stride
     let expected_ts_for_decomp_uo1_sn =
         Timestamp::new(ts_for_stride_establish.wrapping_add(16 * established_stride));
     assert_eq!(
         decomp_outside_window.rtp_timestamp,
         expected_ts_for_decomp_uo1_sn
     );
-    assert_eq!(decomp_outside_window.ip_identification, 0); // IP-ID not in UO-1-SN
+    assert_eq!(decomp_outside_window.ip_identification, 0);
 }
 
-/// Tests that consecutive CRC failures on UO-0 packets in Full Context (FC) mode
-/// trigger a downgrade to Static Context (SC) mode in the decompressor.
+/// Tests that consecutive UO-0 CRC failures trigger FC→SC mode downgrade.
 #[test]
 fn p1_uo0_crc_failures_trigger_context_downgrade() {
     let mut engine = create_test_engine_with_system_clock(100);

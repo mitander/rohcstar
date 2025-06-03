@@ -38,18 +38,17 @@ fn handle_fc_uo_packet_outcome(
                 context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
                 context.so_packets_received_in_so = 0;
                 context.so_consecutive_failures = 0;
-                context.fc_packets_successful_streak = 0; // Reset streak after transition
+                context.fc_packets_successful_streak = 0;
             }
             Ok(reconstructed_headers)
         }
         Err(e) => {
-            // Only count CRC mismatches for FC->SC transition based on consecutive failures.
-            // Other parsing errors might not indicate context desync.
+            // Only count CRC mismatches for FC->SC transition; other errors may not indicate desync
             if matches!(&e, RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) {
                 context.consecutive_crc_failures_in_fc =
                     context.consecutive_crc_failures_in_fc.saturating_add(1);
             }
-            context.fc_packets_successful_streak = 0; // Reset streak on any failure
+            context.fc_packets_successful_streak = 0;
 
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
@@ -129,10 +128,7 @@ pub(super) fn process_ir_packet(
             ))
         }
         Err(e) => {
-            // If IR parsing itself fails (e.g. CRC, bad profile ID), context mode might not change,
-            // or could even go to NC if it was previously unstable.
-            // For now, if IR parsing fails, the context state (mode) remains as it was before this call.
-            // The caller (handler) might decide to nuke the context or signal severe error.
+            // IR parsing failure leaves context state unchanged; caller may decide to remove context
             Err(e)
         }
     }
@@ -268,15 +264,14 @@ pub(super) fn process_packet_in_sc_mode(
         Ok(headers) => {
             context.sc_to_nc_k_failures = 0;
             context.sc_to_nc_n_window_count = 0;
-            // If a dynamically updating packet was successfully processed, transition to FC.
-            // All UO-1 types handled above are dynamic updaters.
+            // Dynamic packet success transitions to FC
             debug_assert!(discriminated_type.is_dynamically_updating_type());
             context.mode = Profile1DecompressorMode::FullContext;
-            context.fc_packets_successful_streak = 1; // Start FC streak
+            context.fc_packets_successful_streak = 1;
             Ok(GenericUncompressedHeaders::RtpUdpIpv4(headers))
         }
         Err(ref e) => {
-            // Only consider dynamically updating packets for the SC->NC N2 window.
+            // Only dynamic packets count for SC->NC N2 window
             if discriminated_type.is_dynamically_updating_type() {
                 context.sc_to_nc_n_window_count = context.sc_to_nc_n_window_count.saturating_add(1);
 

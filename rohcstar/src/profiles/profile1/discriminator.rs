@@ -47,9 +47,9 @@ impl Profile1PacketType {
         // Check for IR / IR-DYN packets (Type: 1111110D)
         if (byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
             if (byte & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0 {
-                Profile1PacketType::IrDynamic // D-bit is 1
+                Profile1PacketType::IrDynamic
             } else {
-                Profile1PacketType::IrStatic // D-bit is 0
+                Profile1PacketType::IrStatic
             }
         }
         // Check for UO-0 packets (Type: 0xxxxxxx)
@@ -57,42 +57,23 @@ impl Profile1PacketType {
             Profile1PacketType::Uo0
         }
         // Check for UO-1 base prefix (Type: 101xxxxx)
-        // P1_UO_1_TS_PACKET_TYPE_PREFIX is 0b1010_0000. Masking with 0b1110_0000 (0xE0)
-        // checks for the `101` prefix common to UO-1 packets.
         else if (byte & 0xE0) == P1_UO_1_TS_PACKET_TYPE_PREFIX {
-            // Order of UO-1 checks:
-            // 1. UO-1-RTP (1010100M) - Most specific with TSI=100
-            // 2. UO-1-ID  (10101100) - Specific TSI=110, M=0
-            // 3. UO-1-TS  (10100100) - Specific TSI=010, M=0
-            // 4. UO-1-SN  (1010000M) - TSI=000 (fallback)
+            // Check most specific UO-1 variants first: RTP, ID, TS, then SN
 
             if (byte & 0b1111_1110) == P1_UO_1_RTP_DISCRIMINATOR_BASE {
-                // Base is 0xA8 (10101000)
                 let marker = (byte & P1_UO_1_RTP_MARKER_BIT_MASK) != 0;
                 Profile1PacketType::Uo1Rtp { marker }
             } else if byte == P1_UO_1_ID_DISCRIMINATOR {
-                // 0xAC (10101100)
                 Profile1PacketType::Uo1Id
-            } else if (byte & P1_UO_1_TS_TYPE_MASK)
-                == (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
-            {
-                // 0xA4 (10100100)
+            } else if (byte & P1_UO_1_TS_TYPE_MASK) == P1_UO_1_TS_DISCRIMINATOR {
                 Profile1PacketType::Uo1Ts
-            }
-            // Check for UO-1-SN (Type: 1010000M) after other specific UO-1 types
-            // This ensures that bits 3-1 (TSI field) are 000.
-            else if (byte & !P1_UO_1_SN_MARKER_BIT_MASK) == P1_UO_1_SN_PACKET_TYPE_PREFIX {
-                // P1_UO_1_SN_PACKET_TYPE_PREFIX is 0xA0 (10100000)
+            } else if (byte & !P1_UO_1_SN_MARKER_BIT_MASK) == P1_UO_1_SN_PACKET_TYPE_PREFIX {
                 let marker = (byte & P1_UO_1_SN_MARKER_BIT_MASK) != 0;
                 Profile1PacketType::Uo1Sn { marker }
-            }
-            // If it matched the `101xxxxx` UO-1 prefix but none of the specific variants above
-            else {
+            } else {
                 Profile1PacketType::Unknown(byte)
             }
-        }
-        // If none of the above, it's an unknown type for Profile 1
-        else {
+        } else {
             Profile1PacketType::Unknown(byte)
         }
     }
@@ -217,8 +198,7 @@ mod tests {
             ),
             Profile1PacketType::Uo1Rtp { marker: true }
         );
-        // Ensure it's preferred over UO-1-SN if the bits match UO-1-RTP's TSI=100 pattern
-        // Example: 0xA8 (10101000) is UO-1-RTP, not UO-1-SN
+        // Ensure UO-1-RTP is preferred over UO-1-SN for matching bit patterns
         assert_ne!(
             Profile1PacketType::from_first_byte(0xA8),
             Profile1PacketType::Uo1Sn { marker: false }
@@ -239,12 +219,12 @@ mod tests {
             Profile1PacketType::from_first_byte(0xF0), // Not specific IR
             Profile1PacketType::Unknown(0xF0)
         );
-        // 101 0001 0 - UO-1 prefix, TSI=001, M=0. TSI=001 is not a defined variant.
+        // UO-1 prefix with undefined TSI=001
         assert_eq!(
             Profile1PacketType::from_first_byte(0b10100010),
             Profile1PacketType::Unknown(0b10100010)
         );
-        // 101 1111 0 - UO-1 prefix, TSI=111, M=0. TSI=111 is not a defined variant.
+        // UO-1 prefix with undefined TSI=111
         assert_eq!(
             Profile1PacketType::from_first_byte(0b10111110),
             Profile1PacketType::Unknown(0b10111110)

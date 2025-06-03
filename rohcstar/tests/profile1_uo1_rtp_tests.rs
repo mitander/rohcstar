@@ -1,9 +1,7 @@
 //! Integration tests for ROHC Profile 1 UO-1-RTP packet handling.
 //!
-//! This module tests the UO-1-RTP packet format, which is used when the compressor
-//! has established a timestamp stride and can send a scaled timestamp (TS_SCALED).
-//! Tests cover TS_SCALED calculation, TS stride detection & updates, marker bit,
-//! CRC validation, and integration with IR-DYN TS_STRIDE signaling.
+//! Tests UO-1-RTP packet format with TS_SCALED when stride is established.
+//! Covers TS_SCALED calculation, stride detection, marker bit, and IR-DYN TS_STRIDE signaling.
 
 mod common;
 use common::{
@@ -23,7 +21,7 @@ use rohcstar::profiles::profile1::{
 const TEST_SSRC_UO1_RTP: u32 = 0x7788AADD;
 const TEST_CID_UO1_RTP: u16 = 0;
 
-/// Tests basic UO-1-RTP compression and decompression with TS_SCALED. Marker bit is false.
+/// Tests UO-1-RTP with TS_SCALED and marker bit false.
 #[test]
 fn p1_uo1_rtp_basic_compression_decompression_marker_false_succeeds() {
     let mut engine = create_test_engine_with_system_clock(50);
@@ -44,7 +42,6 @@ fn p1_uo1_rtp_basic_compression_decompression_marker_false_succeeds() {
         stride,
     );
 
-    // Verify C/D context alignment after the helper
     let comp_ctx_after_setup = get_compressor_context(&engine, TEST_CID_UO1_RTP);
     let decomp_ctx_after_setup = get_decompressor_context(&engine, TEST_CID_UO1_RTP);
 
@@ -78,7 +75,6 @@ fn p1_uo1_rtp_basic_compression_decompression_marker_false_succeeds() {
         "D: ts_offset mismatch"
     );
 
-    // Prepare for UO-1-RTP
     let last_ip_id_from_setup = comp_ctx_after_setup.last_sent_ip_id_full;
     let comp_offset_val_for_assert = comp_ctx_after_setup.ts_offset.value();
 

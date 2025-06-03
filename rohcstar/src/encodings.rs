@@ -31,32 +31,23 @@ pub fn value_in_lsb_interval(
     p_offset: i64,
 ) -> bool {
     if num_lsb_bits == 0 || num_lsb_bits > 64 {
-        // Invalid number of LSB bits; cannot form a meaningful interval.
         return false;
     }
     if num_lsb_bits == 64 {
-        // If all 64 bits are LSBs (k=64), any value is uniquely identified by its "LSBs".
-        // The concept of an interval is less critical as the value itself is fully known.
-        // Per RFC 3095, LSB encoding applies to k < N. However, k=N can be seen as a trivial case.
-        // For practical purposes of checking if a value is "representable", this is true.
+        // All 64 bits are LSBs, value is fully known
         return true;
     }
 
-    let window_size = 1u64 << num_lsb_bits; // This is 2^k.
+    let window_size = 1u64 << num_lsb_bits;
 
-    // Calculate the lower bound of the interpretation window: `v_ref - p`.
-    // Operations are `wrapping_...` to handle potential underflows/overflows correctly
-    // for modular arithmetic.
+    // Calculate interpretation window: [v_ref - p, v_ref - p + 2^k - 1]
     let interval_base = if p_offset >= 0 {
         reference_value.wrapping_sub(p_offset as u64)
     } else {
-        // p_offset is negative, so -p_offset is positive.
         reference_value.wrapping_add((-p_offset) as u64)
     };
 
-    // A value 'v' is in the interval [interval_base, interval_base + window_size - 1] (modulo 2^64)
-    // if and only if (v - interval_base) mod 2^64 < window_size.
-    // This is equivalent to `v.wrapping_sub(interval_base) < window_size`.
+    // Check if value is in window: (v - interval_base) mod 2^64 < window_size
     value.wrapping_sub(interval_base) < window_size
 }
 
@@ -79,8 +70,6 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
         });
     }
     if num_lsb_bits > 64 {
-        // While u64 can technically handle num_lsb_bits = 64,
-        // restricting to > 64 as an error for clarity.
         return Err(RohcParsingError::InvalidLsbOperation {
             field_name: "num_lsb_bits".to_string(),
             description: format!(
@@ -91,11 +80,8 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
     }
 
     if num_lsb_bits == 64 {
-        // If k=64, all bits are LSBs, so the value itself is the "encoded" LSBs.
         Ok(value)
     } else {
-        // (1 << k) creates a bitmask like 0...010...0 (k zeros).
-        // Subtracting 1 yields 0...001...1 (k ones).
         let mask = (1u64 << num_lsb_bits) - 1;
         Ok(value & mask)
     }
@@ -127,9 +113,6 @@ pub fn decode_lsb(
     p_offset: i64,
 ) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 || num_lsb_bits >= 64 {
-        // k must be > 0.
-        // k=64 implies the full value was sent; this function is for when only LSBs are available.
-        // RFC 3095 typically implies k < N (bit-width of the field).
         return Err(RohcParsingError::InvalidLsbOperation {
             field_name: "num_lsb_bits".to_string(),
             description: format!(
@@ -143,8 +126,7 @@ pub fn decode_lsb(
     debug_assert!(window_size > 0);
     let lsb_mask = window_size - 1;
 
-    // Ensure received_lsbs themselves are valid for the given k.
-    // e.g., if k=4, received_lsbs should not be > 15.
+    // Validate received_lsbs fit in k bits
     if received_lsbs > lsb_mask {
         return Err(RohcParsingError::InvalidLsbOperation {
             field_name: "received_lsbs".to_string(),
@@ -155,49 +137,31 @@ pub fn decode_lsb(
         });
     }
 
-    // Calculate the lower bound of the interpretation window: `v_ref - p`.
     let interval_base = if p_offset >= 0 {
         reference_value.wrapping_sub(p_offset as u64)
     } else {
         reference_value.wrapping_add((-p_offset) as u64)
     };
 
-    // Candidate value construction logic, derived from RFC 3095, Section 4.5.1.
-    // We are looking for a value `v_cand` such that:
-    // 1. `v_cand % (2^k) == received_lsbs`
-    // 2. `v_cand` is in the interval `[interval_base, interval_base + (2^k) - 1]`
-    //
-    // Start by finding a base candidate: align `interval_base` down to the nearest
-    // multiple of `2^k` that is less than or equal to `interval_base`, then add `received_lsbs`.
-    // `(interval_base & !lsb_mask)` effectively does `interval_base - (interval_base % 2^k)`.
+    // RFC 3095 Section 4.5.1: Find v_cand where v_cand % 2^k == received_lsbs
+    // and v_cand is in interpretation window
     let mut candidate_v = (interval_base & !lsb_mask).wrapping_add(received_lsbs);
 
-    // Adjust candidate_v to be >= interval_base.
-    // If `candidate_v` is already in the first half of the values that map to `received_lsbs`
-    // relative to `interval_base`, it might be less than `interval_base`.
-    // In such a case, adding `window_size` moves it to the correct corresponding value
-    // that is >= `interval_base`.
+    // Ensure candidate >= interval_base
     if candidate_v < interval_base {
         candidate_v = candidate_v.wrapping_add(window_size);
     }
 
-    // The window is `[interval_base, interval_base + window_size - 1]`.
-    // `candidate_v.wrapping_sub(interval_base)` calculates `(candidate_v - interval_base) mod 2^64`.
-    // If this difference is less than `window_size`, it's in the window.
+    // Check if candidate is in interpretation window
     if candidate_v.wrapping_sub(interval_base) < window_size {
         Ok(candidate_v)
     } else {
-        // If the first candidate was too high (e.g., `interval_base` was very high, close to MAX_U64,
-        // and `received_lsbs` caused `candidate_v` to wrap past 0, but the `candidate_v < interval_base`
-        // adjustment pushed it too far), then the correct candidate might be `window_size` lower.
-        // This alternative candidate corresponds to the next possible value that matches `received_lsbs`.
+        // Try alternative candidate (wrapping case)
         let alternative_candidate_v = candidate_v.wrapping_sub(window_size);
         if alternative_candidate_v.wrapping_sub(interval_base) < window_size {
             Ok(alternative_candidate_v)
         } else {
-            // Neither candidate is in the valid interpretation window.
-            // This indicates an unresolvable LSB value, possibly due to too much drift
-            // in `reference_value` or an issue with context synchronization.
+            // LSB value cannot be resolved - context drift or synchronization issue
             Err(RohcParsingError::InvalidLsbOperation {
                 field_name: "received_lsbs".to_string(),
                 description: format!(
@@ -231,7 +195,6 @@ mod tests {
 
     #[test]
     fn encode_lsb_invalid_num_bits() {
-        // k=0 is invalid for LSB encoding.
         let err_k0 = encode_lsb(0x1234, 0).unwrap_err();
         match err_k0 {
             RohcParsingError::InvalidLsbOperation {
@@ -244,7 +207,6 @@ mod tests {
             _ => panic!("Unexpected error type for k=0: {:?}", err_k0),
         }
 
-        // k > 64 is invalid for u64.
         let err_k65 = encode_lsb(0x1234, 65).unwrap_err();
         match err_k65 {
             RohcParsingError::InvalidLsbOperation {

@@ -1,9 +1,8 @@
 //! Integration tests for the ROHCStar deterministic simulator.
 //!
-//! This module tests the end-to-end simulation functionality including packet generation,
-//! ROHC compression/decompression, channel simulation, and verification logic. Tests cover
-//! various scenarios including perfect channels, packet loss, marker bit variations,
-//! context ID handling, and known edge cases in compression state transitions.
+//! Tests end-to-end simulation including packet generation, ROHC compression/decompression,
+//! channel simulation, and verification across various scenarios with perfect channels,
+//! packet loss, marker variations, and CID handling.
 
 use rohcstar::profiles::profile1::Timestamp;
 use rohcstar_sim::{RohcSimulator, SimConfig, SimError};

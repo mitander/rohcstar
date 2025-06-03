@@ -19,8 +19,7 @@ use rohcstar::profiles::profile1::{
     P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
 
-/// Tests basic UO-1-ID packet compression and decompression when IP-ID changes
-/// and SN increments by one, with TS and Marker stable.
+/// Tests UO-1-ID packet when IP-ID changes with SN+1 and stable TS/marker.
 #[test]
 fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -47,7 +46,7 @@ fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
     let comp_ctx = get_compressor_context(&engine, cid);
     assert_eq!(comp_ctx.last_sent_ip_id_full, ip_id_in_ir_context);
     let decomp_ctx = get_decompressor_context(&engine, cid);
-    assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0); // Decompressor IP-ID is 0 after IR for P1
+    assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0);
 
     let sn2 = initial_sn.wrapping_add(1);
     let ts2_val = initial_ts_val;
@@ -62,9 +61,9 @@ fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic2)
         .unwrap();
 
-    assert_eq!(compressed2.len(), 3); // Type + IP-ID LSB + CRC8
+    assert_eq!(compressed2.len(), 3);
     assert_eq!(compressed2[0], P1_UO_1_ID_DISCRIMINATOR);
-    assert_eq!(compressed2[1], (target_ip_id_for_uo1id & 0xFF) as u8); // Sent IP-ID LSB
+    assert_eq!(compressed2[1], (target_ip_id_for_uo1id & 0xFF) as u8);
 
     let decompressed_generic2 = engine.decompress(&compressed2).unwrap();
     let decomp_headers2 = decompressed_generic2.as_rtp_udp_ipv4().unwrap();
@@ -73,7 +72,6 @@ fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
     assert_eq!(decomp_headers2.rtp_timestamp, Timestamp::new(ts2_val));
     assert_eq!(decomp_headers2.rtp_marker, marker2);
 
-    // Decompressor reconstructs IP-ID using LSBs relative to its context's IP-ID (0 after IR)
     let expected_reconstructed_ip_id = target_ip_id_for_uo1id & 0xFF;
     assert_eq!(
         decomp_headers2.ip_identification,
@@ -96,8 +94,7 @@ fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
     );
 }
 
-/// Verifies that a large jump in IP-ID (beyond LSB encodable range for UO-1-ID)
-/// forces the compressor to send an IR packet.
+/// Tests that large IP-ID jumps beyond UO-1-ID LSB range force IR packets.
 #[test]
 fn p1_uo1_id_large_ipid_jump_forces_ir() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -127,8 +124,6 @@ fn p1_uo1_id_large_ipid_jump_forces_ir() {
     let sn2 = initial_sn.wrapping_add(1);
     let ts2_val = initial_ts_val;
     let marker2 = initial_marker;
-    // Large jump, UO-1-ID uses 8 LSBs for IP-ID. Max delta approx 127 (2^7-1).
-    // 260 is chosen to be > 127.
     let target_ip_id_for_next_packet = ip_id_in_ir_context.wrapping_add(260);
 
     let headers2 =
@@ -138,12 +133,11 @@ fn p1_uo1_id_large_ipid_jump_forces_ir() {
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic2)
         .unwrap();
 
-    assert_eq!(compressed2.len(), 26); // IR packet length for CID 0
+    assert_eq!(compressed2.len(), 26);
     assert_eq!(compressed2[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 }
 
-/// Tests IP-ID LSB reconstruction when the IP-ID value wraps around (e.g., from 65533 to 2),
-/// ensuring UO-1-ID is used if the effective difference is small.
+/// Tests UO-1-ID with IP-ID wraparound and LSB reconstruction.
 #[test]
 fn p1_uo1_id_ipid_lsb_wraparound_reconstruction() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -158,7 +152,7 @@ fn p1_uo1_id_ipid_lsb_wraparound_reconstruction() {
 
     establish_ir_context(&mut engine, cid, base_sn, base_ts_val, base_marker, ssrc);
 
-    // Manipulate compressor context to simulate high last_sent_ip_id_full
+    // Set high IP-ID in compressor context
     let comp_ctx_dyn = engine
         .context_manager_mut()
         .get_compressor_context_mut(cid)
@@ -170,11 +164,11 @@ fn p1_uo1_id_ipid_lsb_wraparound_reconstruction() {
     p1_comp_ctx.last_sent_rtp_sn_full = base_sn;
     p1_comp_ctx.last_sent_rtp_ts_full = Timestamp::new(base_ts_val);
     p1_comp_ctx.last_sent_rtp_marker = base_marker;
-    p1_comp_ctx.last_sent_ip_id_full = 65533; // High previous IP-ID
+    p1_comp_ctx.last_sent_ip_id_full = 65533;
     p1_comp_ctx.mode = rohcstar::profiles::profile1::context::Profile1CompressorMode::FirstOrder;
 
     let next_sn = base_sn.wrapping_add(1);
-    let target_actual_ip_id: u16 = 2; // IP-ID wraps around to a small value
+    let target_actual_ip_id: u16 = 2;
 
     let headers_wrap =
         create_rtp_headers(next_sn, base_ts_val, base_marker, ssrc).with_ip_id(target_actual_ip_id);
@@ -184,19 +178,9 @@ fn p1_uo1_id_ipid_lsb_wraparound_reconstruction() {
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_wrap)
         .unwrap();
 
-    assert_eq!(
-        compressed_wrap.len(),
-        3,
-        "Expected UO-1-ID for IP-ID wraparound"
-    );
-    assert_eq!(
-        compressed_wrap[0], P1_UO_1_ID_DISCRIMINATOR,
-        "Packet type should be UO-1-ID"
-    );
-    assert_eq!(
-        compressed_wrap[1], target_actual_ip_id as u8,
-        "IP-ID LSB in packet mismatch"
-    );
+    assert_eq!(compressed_wrap.len(), 3);
+    assert_eq!(compressed_wrap[0], P1_UO_1_ID_DISCRIMINATOR);
+    assert_eq!(compressed_wrap[1], target_actual_ip_id as u8);
 
     let decompressed_generic_wrap = engine.decompress(&compressed_wrap).unwrap();
     let decomp_headers_wrap = decompressed_generic_wrap.as_rtp_udp_ipv4().unwrap();

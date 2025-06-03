@@ -17,8 +17,7 @@ use rohcstar::profiles::profile1::{
     P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
 
-/// Tests basic UO-1-TS compression and decompression when TS changes, SN increments by one,
-/// and Marker remains stable.
+/// Tests UO-1-TS packet when TS changes with SN+1 and stable marker.
 #[test]
 fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -39,14 +38,13 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
-    // Packet: SN+1, TS changes, Marker stable, IP-ID stable
     let headers = create_rtp_headers(101, 2000, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
     let compressed = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
         .unwrap();
 
-    assert_eq!(compressed.len(), 4); // Type + TS_LSB(2) + CRC8
+    assert_eq!(compressed.len(), 4);
     assert_eq!(compressed[0], P1_UO_1_TS_DISCRIMINATOR);
 
     let decompressed = engine
@@ -68,8 +66,7 @@ fn p1_uo1_ts_basic_timestamp_change_sn_updates() {
     assert!(!decomp_ctx.last_reconstructed_rtp_marker);
 }
 
-/// Tests UO-1-TS compression with a large jump in the RTP Timestamp value,
-/// ensuring SN and Marker are correctly handled.
+/// Tests UO-1-TS with large timestamp jump.
 #[test]
 fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     let mut engine = create_test_engine_with_system_clock(100);
@@ -90,8 +87,7 @@ fn p1_uo1_ts_large_timestamp_jump_sn_updates() {
     );
     let ip_id_from_ir_context = ir_headers.ip_identification;
 
-    // Packet: SN+1, large TS change, Marker stable, IP-ID stable
-    let new_ts_val: u32 = 10000 + 15000; // Large TS jump
+    let new_ts_val: u32 = 10000 + 15000;
     let headers =
         create_rtp_headers(201, new_ts_val, false, ssrc).with_ip_id(ip_id_from_ir_context);
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());

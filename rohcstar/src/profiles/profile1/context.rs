@@ -205,9 +205,8 @@ impl Profile1CompressorContext {
     /// `true` if TS scaled mode became active during this update, `false` otherwise.
     pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
         if self.rtp_ssrc == 0 {
-            return false; // SSRC must be known.
+            return false;
         }
-        // If it's the very first packet after SSRC init, no prior TS to diff against.
         if self.last_sent_rtp_ts_full.value() == 0 && self.ts_stride_packets == 0 {
             return false;
         }
@@ -217,42 +216,36 @@ impl Profile1CompressorContext {
 
         match self.ts_stride {
             None => {
-                // No stride currently suspected.
                 if ts_diff > 0 {
-                    // A positive difference is a potential new stride. Assume sn_delta=1 for initial detection.
+                    // Potential new stride detected, assume sn_delta=1
                     self.ts_stride = Some(ts_diff);
-                    self.ts_offset = self.last_sent_rtp_ts_full; // Base TS for this potential stride.
+                    self.ts_offset = self.last_sent_rtp_ts_full;
                     self.ts_stride_packets = 1;
                     self.ts_scaled_mode = false;
                 }
             }
             Some(current_established_unit_stride) => {
-                // A unit stride is currently established or suspected.
                 if current_established_unit_stride > 0
                     && ts_diff > 0
                     && (ts_diff % current_established_unit_stride == 0)
                 {
-                    // The current packet's TS difference is a positive multiple of the established unit stride.
-                    // This means the TS is advancing consistently with the established unit stride.
-                    // This handles sn_delta=1 (where ts_diff == current_established_unit_stride)
-                    // and sn_delta > 1 (where ts_diff = sn_delta * current_established_unit_stride).
+                    // TS advancing consistently with established stride (handles sn_delta=1 and sn_delta>1)
                     self.ts_stride_packets = self.ts_stride_packets.saturating_add(1);
 
                     if !self.ts_scaled_mode
                         && self.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
                     {
-                        // Threshold met: activate scaled mode. ts_offset remains from initial detection.
+                        // Threshold met, activate TS_SCALED mode
                         self.ts_scaled_mode = true;
                         newly_activated_scaled_mode = true;
                     }
                 } else {
-                    // Stride is broken (ts_diff is not a positive multiple of current_established_unit_stride, or stride was 0).
+                    // Stride broken, reset and attempt new detection
                     self.ts_stride = None;
                     self.ts_offset = Timestamp::new(0);
                     self.ts_stride_packets = 0;
                     self.ts_scaled_mode = false;
 
-                    // Attempt to detect a new stride starting from this packet, assuming sn_delta=1.
                     if ts_diff > 0 {
                         self.ts_stride = Some(ts_diff);
                         self.ts_offset = self.last_sent_rtp_ts_full;
@@ -288,7 +281,6 @@ impl Profile1CompressorContext {
             "Stride value must be positive in scaled mode"
         );
         if stride_val == 0 {
-            // Should be caught by debug_assert, but defensive check
             return None;
         }
 
@@ -297,20 +289,9 @@ impl Profile1CompressorContext {
         if offset_from_base % stride_val != 0 {
             return None; // Not aligned with stride
         }
-        // This check tries to ensure TS is generally advancing or at least not regressing
-        // in a way that makes the scaled value meaningless before wrapping.
-        // If current_ts is less than ts_offset, but the diff is not 0 (meaning they are not equal),
-        // it implies a wrap-around that could be valid if it still aligns.
-        // However, a simple "less than" check is tricky with wrapping.
-        // The main guard is the modulo check. If TS truly jumped back non-aligned, modulo fails.
-        // If it jumped back aligned, scaled value might be very large.
+        // Guard against invalid backwards jumps; wrapping edge cases handled by max value check
         if current_packet_ts.value() < self.ts_offset.value() && offset_from_base != 0 {
-            // If current_ts < ts_offset, but the wrapping_diff results in a small positive
-            // number (e.g. ts_offset=U32_MAX-10, current_ts=5, diff=15), it's a valid forward wrap.
-            // If current_ts < ts_offset and diff is huge (meaning it's truly before),
-            // then scaled_value_u32 would be large and caught by P1_TS_SCALED_MAX_VALUE.
-            // This condition might be too restrictive or needs more nuance for all wrapping cases.
-            // For now, relying on modulo and max value check.
+            // Complex wrapping case - rely on modulo and max value validation
         }
 
         let scaled_value_u32 = offset_from_base / stride_val;

@@ -111,9 +111,9 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
     final_ir_ts_val: u32,
     stride: u32,
 ) {
-    // 1. Send an initial IR. Its TS will be the *initial* ts_offset for stride detection.
-    let initial_setup_sn = final_ir_sn_val.wrapping_sub(1); // SN of packet *before* the final IR
-    let initial_setup_ts_val = final_ir_ts_val.wrapping_sub(stride); // TS of packet *before* the final IR
+    // Send initial IR for stride detection setup
+    let initial_setup_sn = final_ir_sn_val.wrapping_sub(1);
+    let initial_setup_ts_val = final_ir_ts_val.wrapping_sub(stride);
 
     establish_ir_context(
         engine,
@@ -125,9 +125,7 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
     );
     let ip_id_for_final_ir = get_ip_id_established_by_ir(initial_setup_sn, ssrc).wrapping_add(1);
 
-    // 2. Directly manipulate compressor context to simulate that stride has been
-    //    detected and scaled mode is active. This bypasses sending UO packets for setup,
-    //    avoiding the UO-0 vs UO-1-TS selection problem.
+    // Directly set stride detection state to bypass UO packet setup complexity
     let comp_ctx_dyn_setup = engine
         .context_manager_mut()
         .get_compressor_context_mut(cid)
@@ -138,22 +136,17 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
         .unwrap();
 
     comp_ctx_concrete_setup.ts_stride = Some(stride);
-    // ts_offset should be the TS of the packet *before* stride detection starts.
-    // Here, it's the TS of the 'initial_setup_sn' IR.
     comp_ctx_concrete_setup.ts_offset = Timestamp::new(initial_setup_ts_val);
     comp_ctx_concrete_setup.ts_stride_packets = P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD;
     comp_ctx_concrete_setup.ts_scaled_mode = true;
-    // Ensure last sent fields are from the initial_setup_sn IR
     comp_ctx_concrete_setup.last_sent_rtp_sn_full = initial_setup_sn;
     comp_ctx_concrete_setup.last_sent_rtp_ts_full = Timestamp::new(initial_setup_ts_val);
 
-    // 3. Send the definitive IR packet. Since ts_scaled_mode and ts_stride are now set
-    //    in the compressor, this IR will signal TS_STRIDE. Its dynamic TS will become
-    //    the new TS_OFFSET for both compressor and decompressor.
+    // Send final IR packet with TS_STRIDE signaling
     let headers_final_ir = create_rtp_headers(final_ir_sn_val, final_ir_ts_val, false, ssrc)
         .with_ip_id(ip_id_for_final_ir);
 
-    // Get context again to force IR mode (as above may have been just before FO->SO transition)
+    // Force IR mode
     let comp_ctx_dyn_final_ir = engine
         .context_manager_mut()
         .get_compressor_context_mut(cid)
@@ -164,7 +157,7 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
         .unwrap();
     comp_ctx_concrete_final_ir.mode =
         rohcstar::profiles::profile1::context::Profile1CompressorMode::InitializationAndRefresh;
-    // These should persist from step 2, but ensure they are set for the IR logic
+
     assert!(
         comp_ctx_concrete_final_ir.ts_scaled_mode,
         "Helper: ts_scaled_mode not true before final IR build"

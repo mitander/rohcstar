@@ -291,7 +291,6 @@ pub fn build_profile1_ir_packet(
         final_packet_bytes.extend_from_slice(&stride_val.to_be_bytes());
     }
 
-    // Calculate CRC on stack
     let crc_payload_len = 1
         + P1_STATIC_CHAIN_LENGTH_BYTES
         + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
@@ -377,8 +376,7 @@ pub fn parse_profile1_ir_packet(
 
     if d_bit_set {
         dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
-        // Absolute index of RTP_Flags in core_packet_bytes:
-        // Type (1) + ProfileID (1) + Static (16) + SN (2) + TS (4) = 24th byte. Index is 23.
+        // RTP_Flags at byte 24: Type(1) + ProfileID(1) + Static(16) + SN(2) + TS(4) = 24
         const RTP_FLAGS_ABSOLUTE_IDX: usize = 24;
 
         if core_packet_bytes.len() > RTP_FLAGS_ABSOLUTE_IDX {
@@ -422,7 +420,6 @@ pub fn parse_profile1_ir_packet(
         });
     }
 
-    // current_offset_for_fields is already 1 (index of ProfileID)
     let profile_octet = core_packet_bytes[current_offset_for_fields];
     if profile_octet != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcParsingError::InvalidProfileId(profile_octet));
@@ -1126,7 +1123,6 @@ pub fn parse_profile1_uo1_rtp_packet(
 /// # Returns
 /// A fixed-size array containing the CRC input payload.
 #[inline]
-// Prepares the standard 11-byte CRC input payload for UO packet verification.
 pub(crate) fn prepare_generic_uo_crc_input_payload(
     context_ssrc: u32,
     sn_for_crc: u16,
@@ -1140,16 +1136,9 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
 
     let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES];
 
-    // SSRC (4 bytes)
     crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
-
-    // SN (2 bytes)
     crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
-
-    // TS (4 bytes)
     crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
-
-    // Marker (1 byte)
     crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
 
     crc_input
@@ -1175,7 +1164,6 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
 /// # Returns
 /// A fixed-size array containing the CRC input payload.
 #[inline]
-// Prepares the 12-byte CRC input payload for UO-1-ID packets (includes IP-ID LSB).
 pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
     context_ssrc: u32,
     sn_for_crc: u16,
@@ -1191,19 +1179,10 @@ pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
 
     let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES + 1];
 
-    // SSRC (4 bytes)
     crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
-
-    // SN (2 bytes)
     crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
-
-    // TS (4 bytes)
     crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
-
-    // Marker (1 byte)
     crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
-
-    // IP-ID LSB (1 byte)
     crc_input[11] = ip_id_lsb_for_crc;
 
     crc_input
@@ -1273,8 +1252,7 @@ mod tests {
             crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
-        // Base IR len: type(1) + profile(1) + static(16) + base_dyn(7) + crc(1) = 26
-        assert_eq!(built_bytes.len(), 26); // For CID 0, no Add-CID octet
+        assert_eq!(built_bytes.len(), 26); // CID 0: type(1) + profile(1) + static(16) + dyn(7) + crc(1)
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
         let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
@@ -1305,12 +1283,9 @@ mod tests {
             crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
-        // Expected len: type(1)+profile(1)+static(16)+base_dyn(7)+ts_stride_ext(4)+crc(1) = 30
-        assert_eq!(built_bytes.len(), 30);
+        assert_eq!(built_bytes.len(), 30); // +4 bytes for TS_STRIDE extension
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        // The RTP_Flags octet index in `built_bytes` for CID0:
-        // Type(0) Profile(1) Static(2-17) SN(18-19) TS(20-23) Flags(24) Stride(25-28) CRC(29)
         let rtp_flags_octet_absolute_index = 24;
         assert_eq!(
             built_bytes[rtp_flags_octet_absolute_index] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
@@ -1347,8 +1322,7 @@ mod tests {
             crc8: 0,
         };
         let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
-        // Expected len: AddCID(1)+type(1)+profile(1)+static(16)+base_dyn(7)+crc(1) = 27
-        assert_eq!(built_bytes.len(), 27);
+        assert_eq!(built_bytes.len(), 27); // +1 byte for Add-CID
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 

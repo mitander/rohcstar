@@ -126,8 +126,8 @@ fn generate_fuzz_config(
         } else {
             rng.random_range(0.0..=max_channel_loss.clamp(0.0, 1.0))
         },
-        stable_phase_count: rng.random_range(1..=10), // At least 1 packet in stable phase after IR
-        uo0_phase_count: rng.random_range(1..=10),    // At least 1 packet in UO-0 phase
+        stable_phase_count: rng.random_range(1..=10),
+        uo0_phase_count: rng.random_range(1..=10),
     }
 }
 
@@ -172,14 +172,12 @@ fn run_fuzz_mode(args: CliArgs) {
     let tolerated_errors = Arc::new(AtomicUsize::new(0));
     let gracefully_stopped = Arc::new(AtomicBool::new(false));
 
-    // Create or truncate the output log file
     let output_file_handle = Arc::new(std::sync::Mutex::new(
         File::create(&args.output_file).unwrap_or_else(|e| {
             panic!("Failed to create output file {:?}: {}", args.output_file, e)
         }),
     ));
 
-    // Setup Ctrl+C handler
     let running_main_thread = Arc::new(AtomicBool::new(true));
     let running_ctrlc = running_main_thread.clone();
     ctrlc::set_handler(move || {
@@ -205,8 +203,7 @@ fn run_fuzz_mode(args: CliArgs) {
         let output_file_worker = Arc::clone(&output_file_handle);
         let gracefully_stopped_clone = gracefully_stopped.clone();
 
-        // Each worker gets its own scenario seed generator, seeded deterministically
-        // to ensure if one worker fails, its sequence of SimConfigs is reproducible.
+        // Deterministic seed generator per worker for reproducible failure sequences
         let mut worker_scenario_seed_rng = StdRng::seed_from_u64(scenario_seed_rng.random());
 
         thread::spawn(move || {

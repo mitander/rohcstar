@@ -18,29 +18,7 @@ use rohcstar::profiles::profile1::{
     Profile1Handler,
 };
 
-/// Establishes a TS stride in the compressor context after an initial IR packet.
-///
-/// This helper function first sends an IR packet based on `base_sn`, `base_ts_val`,
-/// and `base_marker` to initialize the context. Then, it sends a UO-1-TS packet
-/// with `SN = base_sn + 1` and `TS = base_ts_val + stride_to_establish`.
-/// The `base_ip_id` is used for the IP-ID field of the UO-1-TS packet.
-/// After this sequence, the compressor context associated with `cid` should have
-/// `ts_stride` set to `stride_to_establish`, and its last sent SN/TS/Marker updated
-/// according to the UO-1-TS packet.
-///
-/// # Parameters
-/// - `engine`: Mutable reference to the `RohcEngine`.
-/// - `cid`: Context ID for the ROHC flow.
-/// - `ssrc`: SSRC for the RTP flow.
-/// - `base_sn`: RTP sequence number for the initial IR packet.
-/// - `base_ts_val`: RTP timestamp value for the initial IR packet.
-/// - `base_marker`: RTP marker bit for the initial IR packet.
-/// - `base_ip_id`: IP Identification value used for the subsequent UO-1-TS packet.
-/// - `stride_to_establish`: The desired RTP timestamp stride to be established.
-///
-/// # Panics
-/// Panics if compression or decompression of the internal setup packets fails,
-/// or if assertions about packet types/lengths fail internally.
+/// Establishes TS stride by sending UO-1-TS packet after IR context.
 #[allow(clippy::too_many_arguments)]
 fn establish_stride_after_ir(
     engine: &mut rohcstar::engine::RohcEngine,
@@ -54,38 +32,23 @@ fn establish_stride_after_ir(
 ) {
     let sn_for_stride = base_sn.wrapping_add(1);
     let ts_for_stride = base_ts_val.wrapping_add(stride_to_establish);
-
-    // For UO-1-TS, marker and IP-ID should be same as context
     let headers_for_stride =
         create_rtp_headers(sn_for_stride, ts_for_stride, base_marker, ssrc).with_ip_id(base_ip_id);
 
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride);
     let compressed_stride_packet = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
-        .unwrap_or_else(|e| panic!("Failed to compress stride-establishing UO-1-TS: {:?}", e));
+        .unwrap();
 
-    assert_eq!(
-        compressed_stride_packet.len(),
-        4,
-        "Stride establishing packet should be UO-1-TS (len 4). Pkt: {:02X?}",
-        compressed_stride_packet
-    );
+    assert_eq!(compressed_stride_packet.len(), 4);
     if !compressed_stride_packet.is_empty() {
-        assert_eq!(
-            compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR,
-            "Stride establishing packet not UO-1-TS type. Pkt: {:02X?}",
-            compressed_stride_packet
-        );
+        assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
     }
 
     let _ = engine.decompress(&compressed_stride_packet).unwrap();
 
     let comp_ctx = get_compressor_context(engine, cid);
-    assert_eq!(
-        comp_ctx.ts_stride,
-        Some(stride_to_establish),
-        "TS_STRIDE not established in compressor"
-    );
+    assert_eq!(comp_ctx.ts_stride, Some(stride_to_establish));
     assert_eq!(comp_ctx.last_sent_rtp_sn_full, sn_for_stride);
     assert_eq!(
         comp_ctx.last_sent_rtp_ts_full,
@@ -94,8 +57,7 @@ fn establish_stride_after_ir(
     assert_eq!(comp_ctx.last_sent_rtp_marker, base_marker);
 }
 
-/// Tests UO-1-SN compression and decompression with SN wrapping around from high values to low values,
-/// ensuring marker bit and TS are handled correctly.
+/// Tests UO-1-SN with SN wraparound and marker bit handling.
 #[test]
 fn p1_uo1_sn_with_sn_wraparound() {
     let mut engine = create_test_engine_with_system_clock(200);
@@ -160,15 +122,14 @@ fn p1_uo1_sn_with_sn_wraparound() {
     assert_eq!(decomp1.rtp_marker, marker1);
     assert_eq!(decomp1.rtp_timestamp, Timestamp::new(expected_ts1_val));
 
-    // Packet 2 (UO-1-SN): SN wrapped around, marker false
-    let comp_ctx_p2 = get_compressor_context(&engine, cid); // last_sn=65532, last_ts=1320, marker=true
+    let comp_ctx_p2 = get_compressor_context(&engine, cid);
     let sn2: u16 = 2;
-    let marker2 = false; // Marker changes
-    let sn_delta_p2 = sn2.wrapping_sub(comp_ctx_p2.last_sent_rtp_sn_full); // (2 + 65536 - 65532) = 6
+    let marker2 = false;
+    let sn_delta_p2 = sn2.wrapping_sub(comp_ctx_p2.last_sent_rtp_sn_full);
     let expected_ts2_val = comp_ctx_p2
         .last_sent_rtp_ts_full
         .value()
-        .wrapping_add(sn_delta_p2 as u32 * stride_val); // 1320 + 6*160 = 2280
+        .wrapping_add(sn_delta_p2 as u32 * stride_val);
 
     let headers2 =
         create_rtp_headers(sn2, expected_ts2_val, marker2, ssrc).with_ip_id(ip_id_from_ir);
@@ -195,8 +156,7 @@ fn p1_uo1_sn_with_sn_wraparound() {
     assert_eq!(decomp2.rtp_timestamp, Timestamp::new(expected_ts2_val));
 }
 
-/// Verifies that UO-1-SN packets are used when the RTP Marker bit changes rapidly,
-/// SN increments by one, and TS is updated implicitly.
+/// Tests rapid marker bit changes forcing UO-1-SN packet selection.
 #[test]
 fn p1_rapid_marker_toggling_forces_uo1() {
     let mut engine = create_test_engine_with_system_clock(200);
@@ -232,7 +192,7 @@ fn p1_rapid_marker_toggling_forces_uo1() {
         stride_val,
     );
 
-    let mut current_marker_in_loop = initial_marker_ir; // Loop starts with marker state after stride establish (false)
+    let mut current_marker_in_loop = initial_marker_ir;
 
     for i in 0..5 {
         let comp_ctx_before = get_compressor_context(&engine, cid);
