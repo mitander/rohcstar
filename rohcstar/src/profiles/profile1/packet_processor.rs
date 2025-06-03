@@ -314,7 +314,7 @@ pub fn build_profile1_ir_packet(
     crc_payload[1 + P1_STATIC_CHAIN_LENGTH_BYTES..1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_len]
         .copy_from_slice(&final_packet_bytes[dynamic_chain_start_index_in_final..]);
 
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_payload[..crc_payload_len]);
+    let calculated_crc8 = crc_calculators.crc8(&crc_payload[..crc_payload_len]);
     final_packet_bytes.push(calculated_crc8);
 
     debug_assert!(
@@ -410,7 +410,7 @@ pub fn parse_profile1_ir_packet(
     let crc_payload_slice =
         &core_packet_bytes[crc_payload_start_index_in_core..crc_octet_index_in_core];
     let received_crc8 = core_packet_bytes[crc_octet_index_in_core];
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(crc_payload_slice);
+    let calculated_crc8 = crc_calculators.crc8(crc_payload_slice);
 
     if received_crc8 != calculated_crc8 {
         return Err(RohcParsingError::CrcMismatch {

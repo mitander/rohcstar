@@ -84,7 +84,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profile_id_constants_are_correct() {
+    fn profile_id_constants_match_spec() {
         assert_eq!(PROFILE_ID_UNCOMPRESSED, 0x00);
         assert_eq!(PROFILE_ID_RTP_UDP_IP, 0x01);
         assert_eq!(PROFILE_ID_UDP_IP, 0x02);
@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn ip_protocol_constants_are_correct() {
+    fn ip_protocol_constants_match_rfc() {
         assert_eq!(IP_PROTOCOL_UDP, 17);
         assert_eq!(IP_PROTOCOL_TCP, 6);
     }

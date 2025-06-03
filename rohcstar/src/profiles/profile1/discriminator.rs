@@ -115,7 +115,7 @@ impl Profile1PacketType {
     ///
     /// # Returns
     /// `true` if the packet type is considered a dynamic updater, `false` otherwise.
-    pub fn is_dynamically_updating_type(&self) -> bool {
+    pub fn is_dynamic_updating(&self) -> bool {
         match self {
             Profile1PacketType::IrDynamic
             | Profile1PacketType::Uo1Sn { .. }
@@ -259,14 +259,14 @@ mod tests {
 
     #[test]
     fn packet_type_is_dynamically_updating() {
-        assert!(Profile1PacketType::IrDynamic.is_dynamically_updating_type());
-        assert!(Profile1PacketType::Uo1Sn { marker: false }.is_dynamically_updating_type());
-        assert!(Profile1PacketType::Uo1Ts.is_dynamically_updating_type());
-        assert!(Profile1PacketType::Uo1Id.is_dynamically_updating_type());
-        assert!(Profile1PacketType::Uo1Rtp { marker: false }.is_dynamically_updating_type());
-        assert!(Profile1PacketType::Unknown(0xFF).is_dynamically_updating_type());
+        assert!(Profile1PacketType::IrDynamic.is_dynamic_updating());
+        assert!(Profile1PacketType::Uo1Sn { marker: false }.is_dynamic_updating());
+        assert!(Profile1PacketType::Uo1Ts.is_dynamic_updating());
+        assert!(Profile1PacketType::Uo1Id.is_dynamic_updating());
+        assert!(Profile1PacketType::Uo1Rtp { marker: false }.is_dynamic_updating());
+        assert!(Profile1PacketType::Unknown(0xFF).is_dynamic_updating());
 
-        assert!(!Profile1PacketType::IrStatic.is_dynamically_updating_type());
-        assert!(!Profile1PacketType::Uo0.is_dynamically_updating_type());
+        assert!(!Profile1PacketType::IrStatic.is_dynamic_updating());
+        assert!(!Profile1PacketType::Uo0.is_dynamic_updating());
     }
 }

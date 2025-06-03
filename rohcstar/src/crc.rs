@@ -46,7 +46,7 @@ impl CrcCalculators {
     /// # Returns
     /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
     #[inline]
-    pub fn calculate_rohc_crc3(&self, data: &[u8]) -> u8 {
+    pub fn crc3(&self, data: &[u8]) -> u8 {
         self.crc3_calculator.checksum(data)
     }
 
@@ -58,7 +58,7 @@ impl CrcCalculators {
     /// # Returns
     /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
     #[inline]
-    pub fn calculate_rohc_crc8(&self, data: &[u8]) -> u8 {
+    pub fn crc8(&self, data: &[u8]) -> u8 {
         self.crc8_calculator.checksum(data)
     }
 }
@@ -87,7 +87,7 @@ impl Default for CrcCalculators {
 ///
 /// # Returns
 /// The calculated 8-bit CRC value (0x00 to 0xFF).
-pub fn calculate_rohc_crc8_direct(data: &[u8]) -> u8 {
+pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
     let crc_calculator_instance: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
     crc_calculator_instance.checksum(data)
 }
@@ -108,7 +108,7 @@ pub fn calculate_rohc_crc8_direct(data: &[u8]) -> u8 {
 ///
 /// # Returns
 /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
-pub fn calculate_rohc_crc3_direct(data: &[u8]) -> u8 {
+pub fn calculate_rohc_crc3(data: &[u8]) -> u8 {
     let crc_calculator_instance: Crc<u8> = Crc::<u8>::new(&CRC_3_ROHC);
     crc_calculator_instance.checksum(data)
 }
@@ -131,7 +131,7 @@ mod tests {
         let calculators = CrcCalculators::new();
         let data = b"123456789";
         let expected_crc = 0xD0;
-        let calculated_crc = calculators.calculate_rohc_crc8(data);
+        let calculated_crc = calculators.crc8(data);
         assert_eq!(
             calculated_crc, expected_crc,
             "CrcCalculators: CRC-8 mismatch for '123456789'. Expected ROHC-specific 0xD0."
@@ -144,7 +144,7 @@ mod tests {
         let calculators = CrcCalculators::new();
         let data = b"123456789";
         let expected_crc = 0x06;
-        let calculated_crc = calculators.calculate_rohc_crc3(data);
+        let calculated_crc = calculators.crc3(data);
         assert_eq!(
             calculated_crc, expected_crc,
             "CrcCalculators: CRC-3 mismatch for '123456789'. Expected ROHC-specific 0x06."
@@ -155,7 +155,7 @@ mod tests {
     fn direct_rohc_crc8_calculation_standard_test_vector() {
         let data = b"123456789";
         let expected_crc = 0xD0;
-        let calculated_crc = calculate_rohc_crc8_direct(data);
+        let calculated_crc = calculate_rohc_crc8(data);
         assert_eq!(
             calculated_crc, expected_crc,
             "Direct CRC-8 mismatch for '123456789'. Expected ROHC-specific 0xD0."
@@ -167,7 +167,7 @@ mod tests {
     fn direct_rohc_crc3_calculation_standard_test_vector() {
         let data = b"123456789";
         let expected_crc = 0x06;
-        let calculated_crc = calculate_rohc_crc3_direct(data);
+        let calculated_crc = calculate_rohc_crc3(data);
         assert_eq!(
             calculated_crc, expected_crc,
             "Direct CRC-3 mismatch for '123456789'. Expected ROHC-specific 0x06."
@@ -184,7 +184,7 @@ mod tests {
     fn direct_rohc_crc8_empty_input() {
         let data = b"";
         let expected_crc = 0xFF;
-        let calculated_crc = calculate_rohc_crc8_direct(data);
+        let calculated_crc = calculate_rohc_crc8(data);
         assert_eq!(calculated_crc, expected_crc);
     }
 
@@ -192,14 +192,14 @@ mod tests {
     fn direct_rohc_crc3_empty_input() {
         let data = b"";
         let expected_crc = 0x07;
-        let calculated_crc = calculate_rohc_crc3_direct(data);
+        let calculated_crc = calculate_rohc_crc3(data);
         assert_eq!(calculated_crc, expected_crc);
     }
 
     #[test]
     fn direct_rohc_crc3_output_is_3_bits() {
         let data_long = b"This is a longer test string for CRC3 calculation";
-        let crc3_val = calculate_rohc_crc3_direct(data_long);
+        let crc3_val = calculate_rohc_crc3(data_long);
         assert!(
             crc3_val <= 0x07,
             "CRC-3 output {} exceeded 3 bits (0x07).",

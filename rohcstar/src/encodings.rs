@@ -24,7 +24,7 @@ use crate::error::RohcParsingError;
 ///
 /// # Returns
 /// `true` if `value` is within the W-LSB interpretation interval, `false` otherwise.
-pub fn value_in_lsb_interval(
+pub fn is_value_in_lsb_interval(
     value: u64,
     reference_value: u64,
     num_lsb_bits: u8,
@@ -435,18 +435,18 @@ mod tests {
     #[test]
     fn value_in_lsb_interval_verifies_correctly() {
         // Scenario: p_offset = 0, v_ref = 10, k = 4. Window [10, 25].
-        assert!(value_in_lsb_interval(12, 10, 4, 0));
-        assert!(value_in_lsb_interval(25, 10, 4, 0));
-        assert!(value_in_lsb_interval(10, 10, 4, 0));
-        assert!(!value_in_lsb_interval(9, 10, 4, 0));
-        assert!(!value_in_lsb_interval(26, 10, 4, 0));
+        assert!(is_value_in_lsb_interval(12, 10, 4, 0));
+        assert!(is_value_in_lsb_interval(25, 10, 4, 0));
+        assert!(is_value_in_lsb_interval(10, 10, 4, 0));
+        assert!(!is_value_in_lsb_interval(9, 10, 4, 0));
+        assert!(!is_value_in_lsb_interval(26, 10, 4, 0));
 
         // Scenario: p_offset > 0, v_ref = 100, k = 5, p_offset = 15. Window [85, 116].
         // interval_base = 100 - 15 = 85. window_size = 32.
-        assert!(value_in_lsb_interval(85, 100, 5, 15)); // 85.sub(85) = 0 < 32.
-        assert!(value_in_lsb_interval(116, 100, 5, 15)); // 116.sub(85) = 31 < 32.
-        assert!(!value_in_lsb_interval(84, 100, 5, 15)); // 84.sub(85) = MAX_U64 > 32.
-        assert!(!value_in_lsb_interval(117, 100, 5, 15)); // 117.sub(85) = 32. Not < 32.
+        assert!(is_value_in_lsb_interval(85, 100, 5, 15)); // 85.sub(85) = 0 < 32.
+        assert!(is_value_in_lsb_interval(116, 100, 5, 15)); // 116.sub(85) = 31 < 32.
+        assert!(!is_value_in_lsb_interval(84, 100, 5, 15)); // 84.sub(85) = MAX_U64 > 32.
+        assert!(!is_value_in_lsb_interval(117, 100, 5, 15)); // 117.sub(85) = 32. Not < 32.
 
         // Scenario: p_offset < 0, v_ref near u64::MAX, k = 4, p_offset = -2.
         let ref_near_max = u64::MAX - 10; // Example: ...FFF5
@@ -454,44 +454,49 @@ mod tests {
         let p_neg = -2;
         let interval_base_neg_p = ref_near_max.wrapping_add(2); // ...FFF7
 
-        assert!(value_in_lsb_interval(
+        assert!(is_value_in_lsb_interval(
             interval_base_neg_p,
             ref_near_max,
             k_val,
             p_neg
         )); // diff 0
-        assert!(value_in_lsb_interval(u64::MAX, ref_near_max, k_val, p_neg)); // u64::MAX is ...FFFF. diff = MAX - (...FFF7) = 8. 8 < 16.
-        assert!(value_in_lsb_interval(0, ref_near_max, k_val, p_neg)); // 0.sub(...FFF7) = 9. 9 < 16.
+        assert!(is_value_in_lsb_interval(
+            u64::MAX,
+            ref_near_max,
+            k_val,
+            p_neg
+        )); // u64::MAX is ...FFFF. diff = MAX - (...FFF7) = 8. 8 < 16.
+        assert!(is_value_in_lsb_interval(0, ref_near_max, k_val, p_neg)); // 0.sub(...FFF7) = 9. 9 < 16.
 
         let upper_val_in_window = interval_base_neg_p.wrapping_add(15); // ...FFF7 + 15 = ...0006 (wrapped)
-        assert!(value_in_lsb_interval(
+        assert!(is_value_in_lsb_interval(
             upper_val_in_window,
             ref_near_max,
             k_val,
             p_neg
-        )); // diff 15.
+        ));
 
         // Test outside lower bound
-        assert!(!value_in_lsb_interval(
+        assert!(!is_value_in_lsb_interval(
             interval_base_neg_p.wrapping_sub(1), // ...FFF6
             ref_near_max,
             k_val,
             p_neg
-        )); // diff MAX_U64
+        ));
 
         // Test outside upper bound
-        assert!(!value_in_lsb_interval(
+        assert!(!is_value_in_lsb_interval(
             upper_val_in_window.wrapping_add(1), // ...0007
             ref_near_max,
             k_val,
             p_neg
-        )); // diff 16. Not < 16.
+        ));
 
         // Invalid k values
-        assert!(!value_in_lsb_interval(10, 10, 0, 0)); // k=0, invalid
-        assert!(!value_in_lsb_interval(10, 10, 65, 0)); // k=65, invalid
+        assert!(!is_value_in_lsb_interval(10, 10, 0, 0)); // k=0, invalid
+        assert!(!is_value_in_lsb_interval(10, 10, 65, 0)); // k=65, invalid
 
         // k=64 is a special case, always true if num_lsb_bits == 64
-        assert!(value_in_lsb_interval(12345, 67890, 64, 0));
+        assert!(is_value_in_lsb_interval(12345, 67890, 64, 0));
     }
 }

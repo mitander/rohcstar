@@ -79,7 +79,7 @@ pub(super) fn should_force_ir(
     }
 
     // Check if field deltas exceed LSB encoding windows
-    check_lsb_window_exceeded(context, uncompressed_headers)
+    lsb_window_exceeded(context, uncompressed_headers)
 }
 
 /// Prepares and builds an IR (Initialization/Refresh) packet.
@@ -169,7 +169,7 @@ pub(super) fn compress_as_ir(
         // Resume stride detection using TS before IR, as IR TS may not be part of regular sequence
         let ts_of_this_ir = context.last_sent_rtp_ts_full;
         context.last_sent_rtp_ts_full = previous_ts_before_ir;
-        context.update_ts_stride_detection(uncompressed_headers.rtp_timestamp);
+        context.detect_ts_stride(uncompressed_headers.rtp_timestamp);
         context.last_sent_rtp_ts_full = ts_of_this_ir;
     }
 
@@ -213,7 +213,7 @@ pub(super) fn compress_as_uo(
     let ts_changed = current_ts != context.last_sent_rtp_ts_full;
     let ip_id_changed = current_ip_id != context.last_sent_ip_id_full;
 
-    let implicit_ts_if_stride_is_set = calculate_implicit_ts(context, sn_delta);
+    let implicit_ts_if_stride_set = compute_implicit_ts(context, sn_delta);
 
     let (packet_bytes, actual_ts_for_context_update) = select_and_build_uo_packet(
         context,
@@ -225,7 +225,7 @@ pub(super) fn compress_as_uo(
         marker_changed,
         ts_changed,
         ip_id_changed,
-        implicit_ts_if_stride_is_set,
+        implicit_ts_if_stride_set,
         crc_calculators,
     )?;
 
@@ -234,17 +234,14 @@ pub(super) fn compress_as_uo(
     context.last_sent_rtp_marker = current_marker;
     context.last_sent_ip_id_full = current_ip_id;
 
-    update_compressor_mode(context);
+    advance_compressor_mode(context);
     context.fo_packets_sent_since_ir = context.fo_packets_sent_since_ir.saturating_add(1);
 
     Ok(packet_bytes)
 }
 
 // Check if field deltas exceed LSB decoding windows, requiring IR refresh
-fn check_lsb_window_exceeded(
-    context: &Profile1CompressorContext,
-    headers: &RtpUdpIpv4Headers,
-) -> bool {
+fn lsb_window_exceeded(context: &Profile1CompressorContext, headers: &RtpUdpIpv4Headers) -> bool {
     let sn_k = P1_UO1_SN_LSB_WIDTH_DEFAULT;
     if sn_k > 0 && sn_k < 16 {
         // Unambiguous window is 2^(k-1)
@@ -297,7 +294,7 @@ fn min_wrapping_distance_u32(a: u32, b: u32) -> u32 {
 }
 
 // Calculate implicit RTP timestamp based on SN delta and TS stride
-fn calculate_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Option<Timestamp> {
+fn compute_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Option<Timestamp> {
     if let Some(stride) = context.ts_stride {
         if sn_delta > 0 {
             Some(Timestamp::new(
@@ -332,7 +329,7 @@ fn select_and_build_uo_packet(
     // Try UO-1-RTP for TS_SCALED mode
     if context.ts_scaled_mode && sn_delta == 1 && !ip_id_changed {
         if let Some(ts_scaled_val) = context.calculate_ts_scaled(current_ts) {
-            let packet = build_uo1_rtp(
+            let packet = build_uo1_rtp_packet(
                 context,
                 current_sn,
                 ts_scaled_val,
@@ -344,7 +341,7 @@ fn select_and_build_uo_packet(
             // TS_SCALED failed, fallback to UO-1-SN with implicit TS
             let implicit_ts_for_fallback = implicit_ts_if_stride_set
                 .expect("Stride exists with positive sn_delta, implicit_ts should be Some.");
-            let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
+            let packet = build_uo1_sn_packet(context, current_sn, current_marker, crc_calculators)?;
             return Ok((packet, implicit_ts_for_fallback));
         } else {
             return Err(RohcError::InvalidState(
@@ -360,22 +357,23 @@ fn select_and_build_uo_packet(
 
         if ts_matches_stride_pattern || ts_is_unchanged_from_context {
             if ts_matches_stride_pattern && context.ts_stride.is_some() && !context.ts_scaled_mode {
-                let _ = context.update_ts_stride_detection(current_ts);
+                let _ = context.detect_ts_stride(current_ts);
             }
             let ts_to_use_for_uo0_crc = if ts_matches_stride_pattern {
                 current_ts
             } else {
                 context.last_sent_rtp_ts_full
             };
-            let packet = build_uo0(context, current_sn, ts_to_use_for_uo0_crc, crc_calculators)?;
+            let packet =
+                build_uo0_packet(context, current_sn, ts_to_use_for_uo0_crc, crc_calculators)?;
             return Ok((packet, ts_to_use_for_uo0_crc));
         }
     }
 
     // Try UO-1-TS
     if !marker_changed && ts_changed && sn_delta == 1 && !ip_id_changed {
-        let _ = context.update_ts_stride_detection(current_ts);
-        let packet = build_uo1_ts(context, current_sn, current_ts, crc_calculators)?;
+        let _ = context.detect_ts_stride(current_ts);
+        let packet = build_uo1_ts_packet(context, current_sn, current_ts, crc_calculators)?;
         return Ok((packet, current_ts));
     }
 
@@ -388,9 +386,9 @@ fn select_and_build_uo_packet(
                     .unwrap_or(Timestamp::new(current_ts.value().wrapping_add(1)))
             && !context.ts_scaled_mode
         {
-            let _ = context.update_ts_stride_detection(current_ts);
+            let _ = context.detect_ts_stride(current_ts);
         }
-        let packet = build_uo1_id(context, current_sn, current_ip_id, crc_calculators)?;
+        let packet = build_uo1_id_packet(context, current_sn, current_ip_id, crc_calculators)?;
         return Ok((packet, ts_for_uo1_id_check));
     }
 
@@ -406,7 +404,7 @@ fn select_and_build_uo_packet(
                 ))
             }
         };
-        let packet = build_uo1_sn(context, current_sn, current_marker, crc_calculators)?;
+        let packet = build_uo1_sn_packet(context, current_sn, current_marker, crc_calculators)?;
         return Ok((packet, implicit_ts_for_sn_fallback));
     }
 
@@ -416,7 +414,7 @@ fn select_and_build_uo_packet(
     ))
 }
 
-fn update_compressor_mode(context: &mut Profile1CompressorContext) {
+fn advance_compressor_mode(context: &mut Profile1CompressorContext) {
     if context.mode == Profile1CompressorMode::FirstOrder {
         context.consecutive_fo_packets_sent = context.consecutive_fo_packets_sent.saturating_add(1);
         if context.consecutive_fo_packets_sent >= P1_COMPRESSOR_FO_TO_SO_THRESHOLD {
@@ -426,7 +424,7 @@ fn update_compressor_mode(context: &mut Profile1CompressorContext) {
     }
 }
 
-fn build_uo0(
+fn build_uo0_packet(
     context: &Profile1CompressorContext,
     current_sn: u16,
     ts_for_crc: Timestamp, // This is the TS value used in CRC calculation.
@@ -439,7 +437,7 @@ fn build_uo0(
         ts_for_crc,
         context.last_sent_rtp_marker,
     );
-    let crc3 = crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
+    let crc3 = crc_calculators.crc3(&crc_input_bytes);
 
     let uo0_data = Uo0Packet {
         cid: context.get_small_cid_for_packet(),
@@ -449,7 +447,7 @@ fn build_uo0(
     build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
 }
 
-fn build_uo1_ts(
+fn build_uo1_ts_packet(
     context: &mut Profile1CompressorContext,
     current_sn: u16,
     current_ts: Timestamp,
@@ -462,7 +460,7 @@ fn build_uo1_ts(
         current_ts,
         context.last_sent_rtp_marker, // UO-1-TS implies marker is unchanged from context.
     );
-    let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     let uo1_packet_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -475,7 +473,7 @@ fn build_uo1_ts(
     build_profile1_uo1_ts_packet(&uo1_packet_data).map_err(RohcError::Building)
 }
 
-fn build_uo1_sn(
+fn build_uo1_sn_packet(
     context: &Profile1CompressorContext,
     current_sn: u16,
     current_marker: bool,
@@ -508,7 +506,7 @@ fn build_uo1_sn(
         implicit_ts_for_crc,
         current_marker, // UO-1-SN carries the current marker.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     let uo1_sn_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -522,7 +520,7 @@ fn build_uo1_sn(
 }
 
 // Builds a UO-1-ID packet when IP identification changes but SN increments by 1.
-fn build_uo1_id(
+fn build_uo1_id_packet(
     context: &Profile1CompressorContext,
     current_sn: u16,
     current_ip_id: u16,
@@ -556,7 +554,7 @@ fn build_uo1_id(
         context.last_sent_rtp_marker, // UO-1-ID implies marker is unchanged from context.
         ip_id_lsb_for_packet,
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     let uo1_id_packet_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -569,7 +567,7 @@ fn build_uo1_id(
 }
 
 // Builds a UO-1-RTP packet using TS_SCALED mode when TS follows the established stride.
-fn build_uo1_rtp(
+fn build_uo1_rtp_packet(
     context: &Profile1CompressorContext,
     current_sn: u16,
     ts_scaled_val: u8, // The calculated TS_SCALED value.
@@ -593,7 +591,7 @@ fn build_uo1_rtp(
         full_ts_for_crc,
         current_marker, // UO-1-RTP carries the current marker bit.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     let uo1_rtp_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
@@ -923,7 +921,7 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
 
         // UO-0
-        let uo0 = build_uo0(
+        let uo0 = build_uo0_packet(
             &context_no_stride,
             101,
             Timestamp::new(1000),
@@ -935,12 +933,13 @@ mod tests {
         // UO-1-SN requires stride in context
         let mut context_with_stride = context_no_stride.clone();
         context_with_stride.ts_stride = Some(160);
-        let uo1_sn = build_uo1_sn(&context_with_stride, 101, true, &crc_calculators).unwrap();
+        let uo1_sn =
+            build_uo1_sn_packet(&context_with_stride, 101, true, &crc_calculators).unwrap();
         assert_eq!(uo1_sn.len(), 3);
 
         // UO-1-TS
         let mut context_mut_for_ts = context_no_stride.clone();
-        let uo1_ts = build_uo1_ts(
+        let uo1_ts = build_uo1_ts_packet(
             &mut context_mut_for_ts,
             101,
             Timestamp::new(1160),
@@ -950,14 +949,15 @@ mod tests {
         assert_eq!(uo1_ts.len(), 4);
 
         // UO-1-ID
-        let uo1_id = build_uo1_id(&context_no_stride, 101, 11, &crc_calculators).unwrap();
+        let uo1_id = build_uo1_id_packet(&context_no_stride, 101, 12345, &crc_calculators).unwrap();
         assert_eq!(uo1_id.len(), 3);
 
         // UO-1-RTP
         let mut context_scaled = context_no_stride.clone();
         context_scaled.ts_offset = Timestamp::new(1000); // Assume offset aligns for simplicity
         context_scaled.ts_stride = Some(160);
-        let uo1_rtp = build_uo1_rtp(&context_scaled, 101, 1, false, &crc_calculators).unwrap();
+        let uo1_rtp =
+            build_uo1_rtp_packet(&context_scaled, 101, 1, false, &crc_calculators).unwrap();
         assert_eq!(uo1_rtp.len(), 3);
     }
 

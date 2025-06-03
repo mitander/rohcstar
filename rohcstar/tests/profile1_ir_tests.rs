@@ -68,7 +68,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
 
         // Recalculate CRC for modified payload
         let crc_payload_slice = &ir_packet_bytes[1..ir_packet_bytes.len() - 1];
-        let new_crc = test_crc_calculators.calculate_rohc_crc8(crc_payload_slice);
+        let new_crc = test_crc_calculators.crc8(crc_payload_slice);
         *ir_packet_bytes.last_mut().unwrap() = new_crc;
     } else {
         panic!("Generated IR packet is too short to modify profile ID.");
@@ -483,7 +483,7 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_successfully() {
     // CRC for IR-STATIC is over Profile ID + Static Chain
     let crc_payload_slice = &ir_packet_bytes[1..]; // Skip Type, include Profile + Static
     assert_eq!(crc_payload_slice.len(), 1 + P1_STATIC_CHAIN_LENGTH_BYTES);
-    let crc = test_crc_calculators.calculate_rohc_crc8(crc_payload_slice);
+    let crc = test_crc_calculators.crc8(crc_payload_slice);
     ir_packet_bytes.push(crc);
 
     assert_eq!(

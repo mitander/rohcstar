@@ -166,7 +166,7 @@ impl Profile1CompressorContext {
 
         // Reset TS stride detection state
         self.ts_stride = None;
-        self.ts_offset = Timestamp::new(0); // Will be properly set by first call to update_ts_stride_detection
+        self.ts_offset = Timestamp::new(0); // Will be properly set by first call to detect_ts_stride
         self.ts_stride_packets = 0;
         self.ts_scaled_mode = false;
     }
@@ -203,7 +203,7 @@ impl Profile1CompressorContext {
     ///
     /// # Returns
     /// `true` if TS scaled mode became active during this update, `false` otherwise.
-    pub fn update_ts_stride_detection(&mut self, current_packet_ts: Timestamp) -> bool {
+    pub fn detect_ts_stride(&mut self, current_packet_ts: Timestamp) -> bool {
         if self.rtp_ssrc == 0 {
             return false;
         }
@@ -747,7 +747,7 @@ mod tests {
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1000);
 
         // Packet 1 (ts_diff = 160) -> Starts detection
-        assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1160)));
+        assert!(!comp_ctx.detect_ts_stride(Timestamp::new(1160)));
         assert_eq!(comp_ctx.ts_stride, Some(160));
         assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000));
         assert_eq!(comp_ctx.ts_stride_packets, 1);
@@ -755,7 +755,7 @@ mod tests {
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1160); // Update after detection
 
         // Packet 2 (ts_diff = 160) -> Confidence builds
-        assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1320)));
+        assert!(!comp_ctx.detect_ts_stride(Timestamp::new(1320)));
         assert_eq!(comp_ctx.ts_stride, Some(160));
         assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000)); // Offset unchanged
         assert_eq!(comp_ctx.ts_stride_packets, 2);
@@ -763,7 +763,7 @@ mod tests {
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1320);
 
         // Packet 3 (ts_diff = 160) -> Threshold met, scaled_mode activates
-        assert!(comp_ctx.update_ts_stride_detection(Timestamp::new(1480))); // Returns true
+        assert!(comp_ctx.detect_ts_stride(Timestamp::new(1480))); // Returns true
         assert_eq!(comp_ctx.ts_stride, Some(160));
         assert_eq!(comp_ctx.ts_offset, Timestamp::new(1000)); // ts_offset remains from initial stride detection
         assert_eq!(comp_ctx.ts_stride_packets, 3);
@@ -771,13 +771,13 @@ mod tests {
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1480);
 
         // Packet 4 (ts_diff = 160) -> Stays active
-        assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1640))); // No longer newly_activated
+        assert!(!comp_ctx.detect_ts_stride(Timestamp::new(1640))); // No longer newly_activated
         assert!(comp_ctx.ts_scaled_mode);
         assert_eq!(comp_ctx.ts_stride_packets, 4);
         comp_ctx.last_sent_rtp_ts_full = Timestamp::new(1640);
 
         // Packet 5 (ts_diff = 100) -> Stride broken, attempts to start new
-        assert!(!comp_ctx.update_ts_stride_detection(Timestamp::new(1740)));
+        assert!(!comp_ctx.detect_ts_stride(Timestamp::new(1740)));
         assert_eq!(comp_ctx.ts_stride, Some(100));
         assert_eq!(comp_ctx.ts_offset, Timestamp::new(1640));
         assert_eq!(comp_ctx.ts_stride_packets, 1);

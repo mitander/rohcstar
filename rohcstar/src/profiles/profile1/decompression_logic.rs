@@ -38,7 +38,7 @@ use crate::traits::RohcDecompressorContext;
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - CRC mismatch, invalid profile ID, or parsing failure
-pub(super) fn parse_and_reconstruct_ir(
+pub(super) fn parse_ir(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -80,7 +80,7 @@ pub(super) fn parse_and_reconstruct_ir(
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
-pub(super) fn parse_and_reconstruct_uo0(
+pub(super) fn parse_uo0(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -113,7 +113,7 @@ pub(super) fn parse_and_reconstruct_uo0(
         new_timestamp,
         context.last_reconstructed_rtp_marker, // UO-0 implies marker is unchanged from context
     );
-    let calculated_crc3 = crc_calculators.calculate_rohc_crc3(&crc_input_bytes);
+    let calculated_crc3 = crc_calculators.crc3(&crc_input_bytes);
 
     if calculated_crc3 != parsed_uo0.crc3 {
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -151,7 +151,7 @@ pub(super) fn parse_and_reconstruct_uo0(
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
-pub(super) fn parse_and_reconstruct_uo1_sn(
+pub(super) fn parse_uo1_sn(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -179,7 +179,7 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
         new_timestamp,
         parsed_uo1.marker, // UO-1-SN carries the marker bit.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     if calculated_crc8 != parsed_uo1.crc8 {
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -219,7 +219,7 @@ pub(super) fn parse_and_reconstruct_uo1_sn(
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
-pub(super) fn parse_and_reconstruct_uo1_ts(
+pub(super) fn parse_uo1_ts(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -261,7 +261,7 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
         decoded_ts,
         context.last_reconstructed_rtp_marker, // UO-1-TS implies marker is unchanged.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     if calculated_crc8 != parsed_uo1_ts.crc8 {
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -301,7 +301,7 @@ pub(super) fn parse_and_reconstruct_uo1_ts(
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
-pub(super) fn parse_and_reconstruct_uo1_id(
+pub(super) fn parse_uo1_id(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -344,7 +344,7 @@ pub(super) fn parse_and_reconstruct_uo1_id(
         context.last_reconstructed_rtp_marker, // UO-1-ID implies marker is unchanged.
         ip_id_lsb_from_packet as u8,           // CRC is over the LSBs, not the decoded value.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     if calculated_crc8 != parsed_uo1_id.crc8 {
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -384,7 +384,7 @@ pub(super) fn parse_and_reconstruct_uo1_id(
 ///
 /// # Errors
 /// - [`RohcError::Parsing`] - Parsing, TS reconstruction, or CRC validation failure
-pub(super) fn parse_and_reconstruct_uo1_rtp(
+pub(super) fn parse_uo1_rtp(
     context: &mut Profile1DecompressorContext,
     packet_bytes: &[u8],
     crc_calculators: &CrcCalculators,
@@ -418,7 +418,7 @@ pub(super) fn parse_and_reconstruct_uo1_rtp(
         reconstructed_ts,
         parsed_uo1_rtp.marker, // UO-1-RTP carries the marker.
     );
-    let calculated_crc8 = crc_calculators.calculate_rohc_crc8(&crc_input_bytes);
+    let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     if calculated_crc8 != parsed_uo1_rtp.crc8 {
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
@@ -587,7 +587,7 @@ mod tests {
     ) -> Vec<u8> {
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
         let crc_input = prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, marker);
-        let crc3 = crc_calculators.calculate_rohc_crc3(&crc_input);
+        let crc3 = crc_calculators.crc3(&crc_input);
 
         let uo0_packet = Uo0Packet {
             cid: None,
@@ -609,7 +609,7 @@ mod tests {
         let expected_ts = Timestamp::new(1160);
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators);
+        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -628,17 +628,17 @@ mod tests {
 
         // Packet 1: SN 50 → 51, TS 2000 → 2160
         let uo0_1 = build_uo0_with_crc(51, Timestamp::new(2160), false, ssrc, &crc_calculators);
-        let result1 = parse_and_reconstruct_uo0(&mut context, &uo0_1, &crc_calculators).unwrap();
+        let result1 = parse_uo0(&mut context, &uo0_1, &crc_calculators).unwrap();
         assert_eq!(result1.rtp_timestamp, Timestamp::new(2160));
 
         // Packet 2: SN 51 → 52, TS 2160 → 2320
         let uo0_2 = build_uo0_with_crc(52, Timestamp::new(2320), false, ssrc, &crc_calculators);
-        let result2 = parse_and_reconstruct_uo0(&mut context, &uo0_2, &crc_calculators).unwrap();
+        let result2 = parse_uo0(&mut context, &uo0_2, &crc_calculators).unwrap();
         assert_eq!(result2.rtp_timestamp, Timestamp::new(2320));
 
         // Packet 3: SN 52 → 53, TS 2320 → 2480
         let uo0_3 = build_uo0_with_crc(53, Timestamp::new(2480), false, ssrc, &crc_calculators);
-        let result3 = parse_and_reconstruct_uo0(&mut context, &uo0_3, &crc_calculators).unwrap();
+        let result3 = parse_uo0(&mut context, &uo0_3, &crc_calculators).unwrap();
         assert_eq!(result3.rtp_timestamp, Timestamp::new(2480));
     }
 
@@ -653,7 +653,7 @@ mod tests {
         let expected_ts = Timestamp::new(1000); // Should remain unchanged
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -669,7 +669,7 @@ mod tests {
         let expected_ts = Timestamp::new((u32::MAX - 80).wrapping_add(ts_stride));
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -689,7 +689,7 @@ mod tests {
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
         let crc_input =
             prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, target_marker);
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
             sn_lsb,
@@ -700,7 +700,7 @@ mod tests {
         };
         let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
 
-        let result = parse_and_reconstruct_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -729,7 +729,7 @@ mod tests {
             false,
             ip_id_lsb,
         );
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
             ip_id_lsb: Some(ip_id_lsb as u16),
@@ -739,7 +739,7 @@ mod tests {
         };
         let uo1_bytes = build_profile1_uo1_id_packet(&uo1_packet).unwrap();
 
-        let result = parse_and_reconstruct_uo1_id(&mut context, &uo1_bytes, &crc_calculators);
+        let result = parse_uo1_id(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -756,14 +756,13 @@ mod tests {
         // Packet 1: UO-0, SN 400 → 401, TS 5000 → 5160
         let uo0_bytes =
             build_uo0_with_crc(401, Timestamp::new(5160), false, ssrc, &crc_calculators);
-        let result1 =
-            parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result1 = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result1.rtp_timestamp, Timestamp::new(5160));
 
         // Packet 2: UO-1-SN, SN 401 → 402, TS 5160 → 5320
         let sn_lsb = encode_lsb(402u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
         let crc_input = prepare_generic_uo_crc_input_payload(ssrc, 402, Timestamp::new(5320), true);
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
             sn_lsb,
@@ -773,8 +772,7 @@ mod tests {
             ..Default::default()
         };
         let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
-        let result2 =
-            parse_and_reconstruct_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
+        let result2 = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
         assert_eq!(result2.rtp_timestamp, Timestamp::new(5320));
     }
 
@@ -790,7 +788,7 @@ mod tests {
         let expected_ts = Timestamp::new(11600);
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -807,8 +805,7 @@ mod tests {
             let uo0_bytes =
                 build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-            let result =
-                parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+            let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
             assert_eq!(result.rtp_timestamp, expected_ts);
         }
     }
@@ -832,7 +829,7 @@ mod tests {
             ts_decompressor_will_use, // Decompressor's basis for CRC check
             context.last_reconstructed_rtp_marker,
         );
-        let correct_crc3 = crc_calculators.calculate_rohc_crc3(&correct_crc_input);
+        let correct_crc3 = crc_calculators.crc3(&correct_crc_input);
 
         // Ensure wrong_crc3 is actually different and still 3-bit
         let wrong_crc3_in_packet = (correct_crc3 + 1) & 0x07;
@@ -844,7 +841,7 @@ mod tests {
         };
         let uo0_bytes_bad_crc = build_profile1_uo0_packet(&uo0_packet_with_bad_crc).unwrap();
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
+        let result = parse_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
         assert!(
             result.is_err(),
             "Decompression should fail due to CRC mismatch, got: {:?}",
@@ -885,7 +882,7 @@ mod tests {
         // SN increments implicitly
         let expected_sn = 101;
         let crc_input = prepare_generic_uo_crc_input_payload(ssrc, expected_sn, new_ts, false);
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         // Build packet manually to ensure proper format
         let packet_bytes = vec![
@@ -895,7 +892,7 @@ mod tests {
             crc8,
         ];
 
-        let result = parse_and_reconstruct_uo1_ts(&mut context, &packet_bytes, &crc_calculators);
+        let result = parse_uo1_ts(&mut context, &packet_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -919,7 +916,7 @@ mod tests {
 
         let crc_input =
             prepare_generic_uo_crc_input_payload(ssrc, expected_sn, expected_ts, marker);
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         // Build packet manually
         let packet_bytes = vec![
@@ -933,7 +930,7 @@ mod tests {
             crc8,
         ];
 
-        let result = parse_and_reconstruct_uo1_rtp(&mut context, &packet_bytes, &crc_calculators);
+        let result = parse_uo1_rtp(&mut context, &packet_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -951,7 +948,7 @@ mod tests {
 
         let packet_bytes = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 1, 0xFF]; // Example UO-1-RTP
 
-        let result = parse_and_reconstruct_uo1_rtp(&mut context, &packet_bytes, &crc_calculators);
+        let result = parse_uo1_rtp(&mut context, &packet_bytes, &crc_calculators);
         assert!(result.is_err());
 
         if let Err(RohcError::InvalidState(msg)) = result {
@@ -980,14 +977,14 @@ mod tests {
         ir_packet_payload_for_crc.push(u8::from(wrong_profile_id)); // The differing profile ID
         ir_packet_payload_for_crc.extend_from_slice(&[0u8; P1_STATIC_CHAIN_LENGTH_BYTES]); // Dummy static chain
 
-        let crc_over_payload = crc_calculators.calculate_rohc_crc8(&ir_packet_payload_for_crc);
+        let crc_over_payload = crc_calculators.crc8(&ir_packet_payload_for_crc);
 
         let mut full_ir_static_packet_bytes = Vec::new();
         full_ir_static_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY); // Type: IR-STATIC (D=0)
         full_ir_static_packet_bytes.extend_from_slice(&ir_packet_payload_for_crc); // Profile ID + Static Chain
         full_ir_static_packet_bytes.push(crc_over_payload); // Calculated CRC
 
-        let result = parse_and_reconstruct_ir(
+        let result = parse_ir(
             &mut context,
             &full_ir_static_packet_bytes, // Pass the full packet including type octet
             &crc_calculators,
@@ -1023,7 +1020,7 @@ mod tests {
         let expected_ts = Timestamp::new(1000); // UO-0 implies TS unchanged if no stride
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let _ = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let _ = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
 
         // Verify context was updated
         assert_eq!(context.last_reconstructed_rtp_sn_full, target_sn);
@@ -1096,7 +1093,7 @@ mod tests {
             &crc_calculators,
         );
 
-        let result = parse_and_reconstruct_uo0(&mut context, &uo0_bytes, &crc_calculators);
+        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().rtp_sequence_number, target_sn);
     }
@@ -1121,7 +1118,7 @@ mod tests {
             expected_ts_for_crc, // Use implicitly calculated TS for CRC
             target_marker,
         );
-        let crc8 = crc_calculators.calculate_rohc_crc8(&crc_input);
+        let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
             sn_lsb,
@@ -1132,7 +1129,7 @@ mod tests {
         };
         let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
 
-        let result = parse_and_reconstruct_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
         assert!(
             result.is_ok(),
             "Parsing UO-1-SN for marker transition failed: {:?}",
