@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Quick Checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Format check
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Run tests
+      run: cargo test --all
+
+  performance:
+    name: Performance Regression
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Install benchmark dependencies
+      run: sudo apt-get update && sudo apt-get install -y bc
+
+    - name: Performance regression check
+      run: |
+        chmod +x scripts/bench-regression-check.sh
+        ./scripts/bench-regression-check.sh
+      working-directory: rohcstar
+
+  simulation:
+    name: Deterministic Simulation
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-sim-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Quick simulation run
+      run: |
+        cd rohcstar-sim
+        cargo run -- fuzz --iterations 50 --packets 100 --seed 12345
+
+    - name: Replay simulation
+      run: |
+        cd rohcstar-sim
+        cargo run -- replay --seed 12345 --packets 100
+
+    - name: Upload simulation logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: simulation-logs
+        path: rohcstar-sim/rohc_sim_failures.log
+        retention-days: 7

@@ -1,7 +1,7 @@
 # ROHCスター
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-<!-- TODO: Add CI Status Badge when available: [![CI Status](https://github.com/your_username/rohcstar/actions/workflows/rust.yml/badge.svg)](https://github.com/your_username/rohcstar/actions) -->
+[![CI Status](https://github.com/mitander/rohcstar/actions/workflows/ci.yml/badge.svg)](https://github.com/mitander/rohcstar/actions)
 
 **Rohcstar is a modern and memory-safe Rust implementation of the Robust Header Compression (ROHC) framework.**
 
