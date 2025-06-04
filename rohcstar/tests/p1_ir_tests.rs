@@ -23,7 +23,7 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
-use rohcstar::profiles::profile1::packet_processor::build_profile1_ir_packet;
+use rohcstar::profiles::profile1::packet_processor::serialize_ir;
 use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
@@ -39,7 +39,7 @@ fn p1_ir_packet_with_corrupted_crc_fails() {
     let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
-    let mut ir_packet_bytes = build_profile1_ir_packet(&ir_data, &test_crc_calculators).unwrap();
+    let mut ir_packet_bytes = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
 
     let crc_index = ir_packet_bytes.len() - 1;
     ir_packet_bytes[crc_index] = ir_packet_bytes[crc_index].wrapping_add(1);
@@ -61,7 +61,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
     let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
-    let mut ir_packet_bytes = build_profile1_ir_packet(&ir_data, &test_crc_calculators).unwrap();
+    let mut ir_packet_bytes = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
 
     if ir_packet_bytes.len() > 1 {
         ir_packet_bytes[1] = RohcProfile::UdpIp.into();
@@ -92,7 +92,7 @@ fn p1_ir_packet_too_short_fails() {
     let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
-    let ir_packet_bytes_full = build_profile1_ir_packet(&ir_data, &test_crc_calculators).unwrap();
+    let ir_packet_bytes_full = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
     // Minimum IR-STATIC length: Type + Profile + Static Chain + CRC
     let min_valid_ir_len = 1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + 1;
 
@@ -203,7 +203,7 @@ fn p1_ir_packet_large_cid_not_supported_by_builder() {
     let large_cid = 16u16; // CID > 15
     let ir_data = create_ir_packet_data(large_cid, 0x12345678, 100, 1000);
 
-    let result = build_profile1_ir_packet(&ir_data, &test_crc_calculators);
+    let result = serialize_ir(&ir_data, &test_crc_calculators);
     match result {
         Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name,

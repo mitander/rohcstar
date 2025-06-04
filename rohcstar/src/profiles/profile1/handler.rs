@@ -321,7 +321,7 @@ mod tests {
             ts_stride: None,
             crc8: 0,
         };
-        let ir_packet_bytes = super::super::packet_processor::build_profile1_ir_packet(
+        let ir_packet_bytes = super::super::packet_processor::serialize_ir(
             &ir_data_content,
             &handler.crc_calculators,
         )

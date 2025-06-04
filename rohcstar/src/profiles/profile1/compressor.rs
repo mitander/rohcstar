@@ -15,9 +15,8 @@
 use super::constants::*;
 use super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::packet_processor::{
-    build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_id_packet,
-    build_profile1_uo1_rtp_packet, build_profile1_uo1_sn_packet, build_profile1_uo1_ts_packet,
-    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
+    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload, serialize_ir,
+    serialize_uo0, serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn, serialize_uo1_ts,
 };
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
@@ -145,8 +144,7 @@ pub(super) fn compress_as_ir(
         ts_stride: stride_to_signal,
     };
 
-    let packet =
-        build_profile1_ir_packet(&ir_data, crc_calculators).map_err(RohcError::Building)?;
+    let packet = serialize_ir(&ir_data, crc_calculators).map_err(RohcError::Building)?;
 
     // Perform stride detection BEFORE updating context state to avoid race condition
     if scaled_mode_failed {
@@ -452,7 +450,7 @@ fn build_uo0_packet(
         sn_lsb,
         crc3,
     };
-    build_profile1_uo0_packet(&uo0_data).map_err(RohcError::Building)
+    serialize_uo0(&uo0_data).map_err(RohcError::Building)
 }
 
 fn build_uo1_ts_packet(
@@ -478,7 +476,7 @@ fn build_uo1_ts_packet(
         crc8,
         ..Default::default()
     };
-    build_profile1_uo1_ts_packet(&uo1_packet_data).map_err(RohcError::Building)
+    serialize_uo1_ts(&uo1_packet_data).map_err(RohcError::Building)
 }
 
 fn build_uo1_sn_packet(
@@ -524,7 +522,7 @@ fn build_uo1_sn_packet(
         crc8: calculated_crc8,
         ..Default::default()
     };
-    build_profile1_uo1_sn_packet(&uo1_sn_data).map_err(RohcError::Building)
+    serialize_uo1_sn(&uo1_sn_data).map_err(RohcError::Building)
 }
 
 // Builds a UO-1-ID packet when IP identification changes but SN increments by 1.
@@ -571,7 +569,7 @@ fn build_uo1_id_packet(
         crc8: calculated_crc8,
         ..Default::default() // Marker is false in type byte, other LSBs None
     };
-    build_profile1_uo1_id_packet(&uo1_id_packet_data).map_err(RohcError::Building)
+    serialize_uo1_id(&uo1_id_packet_data).map_err(RohcError::Building)
 }
 
 // Builds a UO-1-RTP packet using TS_SCALED mode when TS follows the established stride.
@@ -608,7 +606,7 @@ fn build_uo1_rtp_packet(
         crc8: calculated_crc8,
         ..Default::default() // Other LSB fields are not used by UO-1-RTP.
     };
-    build_profile1_uo1_rtp_packet(&uo1_rtp_data).map_err(RohcError::Building)
+    serialize_uo1_rtp(&uo1_rtp_data).map_err(RohcError::Building)
 }
 
 #[cfg(test)]

@@ -1,15 +1,15 @@
 //! ROHC Profile 1 decompression logic for RTP/UDP/IP packets.
 //!
 //! This module implements the decompression-side packet processing for ROHC Profile 1,
-//! parsing compressed packet types (IR, UO-0, UO-1 variants) and reconstructing original
+//! decompressing compressed packet types (IR, UO-0, UO-1 variants) and reconstructing original
 //! headers. The decompressor maintains context state to handle LSB-encoded fields and
 //! implements timestamp stride inference for efficient RTP stream decompression.
 
 use super::context::Profile1DecompressorContext;
 use super::packet_processor::{
-    parse_profile1_ir_packet, parse_profile1_uo0_packet, parse_profile1_uo1_id_packet,
-    parse_profile1_uo1_rtp_packet, parse_profile1_uo1_sn_packet, parse_profile1_uo1_ts_packet,
-    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
+    deserialize_ir, deserialize_uo0, deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn,
+    deserialize_uo1_ts, prepare_generic_uo_crc_input_payload,
+    prepare_uo1_id_specific_crc_input_payload,
 };
 use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
 
@@ -20,9 +20,9 @@ use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::traits::RohcDecompressorContext;
 
-/// Parses an IR packet, updates decompressor context, and reconstructs full headers.
+/// Decompresses an IR packet, updates decompressor context, and reconstructs full headers.
 ///
-/// This function handles the core parsing of IR/IR-DYN packet fields, including
+/// This function handles the core decompression of IR/IR-DYN packet fields, including
 /// static chain information (IP addresses, ports, SSRC) and dynamic chain elements
 /// (SN, TS, Marker, optional TS_STRIDE). It initializes the decompressor context
 /// based on the received IR packet and validates the profile ID.
@@ -37,14 +37,14 @@ use crate::traits::RohcDecompressorContext;
 /// The reconstructed RTP/UDP/IPv4 headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - CRC mismatch, invalid profile ID, or parsing failure
-pub(super) fn parse_ir(
+/// - [`RohcError::Parsing`] - CRC mismatch, invalid profile ID, or decompression failure
+pub(super) fn decompress_as_ir(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
 ) -> Result<RtpUdpIpv4Headers, RohcError> {
-    let parsed_ir = parse_profile1_ir_packet(packet, context.cid(), crc_calculators)?;
+    let parsed_ir = deserialize_ir(packet, context.cid(), crc_calculators)?;
 
     if parsed_ir.profile_id != handler_profile_id {
         return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
@@ -64,7 +64,7 @@ pub(super) fn parse_ir(
     ))
 }
 
-/// Parses a UO-0 packet, validates CRC, updates decompressor context, and reconstructs headers.
+/// Decompresses a UO-0 packet, validates CRC, updates decompressor context, and reconstructs headers.
 ///
 /// UO-0 packets carry an LSB-encoded RTP Sequence Number and a 3-bit CRC.
 /// The RTP Timestamp is implicitly reconstructed based on the context's TS stride, if established.
@@ -79,8 +79,8 @@ pub(super) fn parse_ir(
 /// The reconstructed RTP/UDP/IPv4 headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
-pub(super) fn parse_uo0(
+/// - [`RohcError::Parsing`] - Decompression, CRC validation, or LSB decoding failure
+pub(super) fn decompress_as_uo0(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
@@ -92,7 +92,7 @@ pub(super) fn parse_uo0(
     } else {
         Some(context.cid() as u8)
     };
-    let parsed_uo0 = parse_profile1_uo0_packet(packet, cid_for_parse)?;
+    let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
 
     let decoded_sn = decode_lsb(
         parsed_uo0.sn_lsb as u64,
@@ -132,7 +132,7 @@ pub(super) fn parse_uo0(
     ))
 }
 
-/// Parses a UO-1-SN packet, validates CRC, updates context, and reconstructs headers.
+/// Decompresses a UO-1-SN packet, validates CRC, updates context, and reconstructs headers.
 ///
 /// UO-1-SN packets carry LSB-encoded RTP Sequence Number and the current RTP Marker bit.
 /// The RTP Timestamp is implicitly reconstructed using the context's TS stride.
@@ -146,15 +146,15 @@ pub(super) fn parse_uo0(
 /// The reconstructed headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - Parsing, CRC validation, or LSB decoding failure
-pub(super) fn parse_uo1_sn(
+/// - [`RohcError::Parsing`] - Decompression, CRC validation, or LSB decoding failure
+pub(super) fn decompress_as_uo1_sn(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
 ) -> Result<RtpUdpIpv4Headers, RohcError> {
     debug_assert_eq!(packet.len(), 3, "UO-1-SN core packet must be 3 bytes long.");
 
-    let parsed_uo1 = parse_profile1_uo1_sn_packet(packet)?;
+    let parsed_uo1 = deserialize_uo1_sn(packet)?;
 
     let decoded_sn = decode_lsb(
         parsed_uo1.sn_lsb as u64,
@@ -195,7 +195,7 @@ pub(super) fn parse_uo1_sn(
     ))
 }
 
-/// Parses a UO-1-TS packet, validates CRC, updates context, and reconstructs headers.
+/// Decompresses a UO-1-TS packet, validates CRC, updates context, and reconstructs headers.
 ///
 /// UO-1-TS packets carry an LSB-encoded RTP Timestamp. The RTP Sequence Number is
 /// implicitly reconstructed as `last_reconstructed_sn + 1`.
@@ -210,15 +210,15 @@ pub(super) fn parse_uo1_sn(
 /// The reconstructed headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
-pub(super) fn parse_uo1_ts(
+/// - [`RohcError::Parsing`] - Decompression, CRC, or LSB decoding failure
+pub(super) fn decompress_as_uo1_ts(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
 ) -> Result<RtpUdpIpv4Headers, RohcError> {
     debug_assert_eq!(packet.len(), 4, "UO-1-TS core packet must be 4 bytes long.");
 
-    let parsed_uo1_ts = parse_profile1_uo1_ts_packet(packet)?;
+    let parsed_uo1_ts = deserialize_uo1_ts(packet)?;
 
     let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
@@ -272,7 +272,7 @@ pub(super) fn parse_uo1_ts(
     ))
 }
 
-/// Parses a UO-1-ID packet, validates CRC, updates context, and reconstructs headers.
+/// Decompresses a UO-1-ID packet, validates CRC, updates context, and reconstructs headers.
 ///
 /// UO-1-ID packets carry an LSB-encoded IP Identification. The RTP Sequence Number
 /// is implicitly reconstructed as `last_reconstructed_sn + 1`.
@@ -288,15 +288,15 @@ pub(super) fn parse_uo1_ts(
 /// The reconstructed headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - Parsing, CRC, or LSB decoding failure
-pub(super) fn parse_uo1_id(
+/// - [`RohcError::Parsing`] - Decompression, CRC, or LSB decoding failure
+pub(super) fn decompress_as_uo1_id(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
 ) -> Result<RtpUdpIpv4Headers, RohcError> {
     debug_assert_eq!(packet.len(), 3, "UO-1-ID core packet must be 3 bytes long.");
 
-    let parsed_uo1_id = parse_profile1_uo1_id_packet(packet)?;
+    let parsed_uo1_id = deserialize_uo1_id(packet)?;
 
     let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
     let decoded_ts = calculate_reconstructed_ts_implicit_sn_plus_one(context);
@@ -352,11 +352,11 @@ pub(super) fn parse_uo1_id(
     ))
 }
 
-/// Parses a UO-1-RTP packet, validates CRC, updates context, and reconstructs headers.
+/// Decompresses a UO-1-RTP packet, validates CRC, updates context, and reconstructs headers.
 ///
 /// UO-1-RTP packets carry a TS_SCALED value for the RTP Timestamp and the current Marker bit.
 /// The RTP Sequence Number is implicitly reconstructed as `last_reconstructed_sn + 1`.
-/// Successful decoding requires an established TS stride and offset in the context.
+/// Successful decompression requires an established TS stride and offset in the context.
 ///
 /// # Parameters
 /// - `context`: Mutable decompressor context (must have TS stride/offset).
@@ -367,8 +367,8 @@ pub(super) fn parse_uo1_id(
 /// The reconstructed headers.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - Parsing, TS reconstruction, or CRC validation failure
-pub(super) fn parse_uo1_rtp(
+/// - [`RohcError::Parsing`] - Decompression, TS reconstruction, or CRC validation failure
+pub(super) fn decompress_as_uo1_rtp(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
@@ -379,7 +379,7 @@ pub(super) fn parse_uo1_rtp(
         "UO-1-RTP core packet must be 3 bytes long."
     );
 
-    let parsed_uo1_rtp = parse_profile1_uo1_rtp_packet(packet)?;
+    let parsed_uo1_rtp = deserialize_uo1_rtp(packet)?;
 
     let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
@@ -520,7 +520,7 @@ mod tests {
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
     use crate::profiles::profile1::packet_processor::{
-        build_profile1_uo0_packet, build_profile1_uo1_id_packet, build_profile1_uo1_sn_packet,
+        serialize_uo0, serialize_uo1_id, serialize_uo1_sn,
     };
     use crate::profiles::profile1::packet_types::{Uo0Packet, Uo1Packet};
     use crate::profiles::profile1::*;
@@ -578,7 +578,7 @@ mod tests {
             sn_lsb,
             crc3,
         };
-        build_profile1_uo0_packet(&uo0_packet).unwrap()
+        serialize_uo0(&uo0_packet).unwrap()
     }
 
     #[test]
@@ -593,7 +593,7 @@ mod tests {
         let expected_ts = Timestamp::new(1160);
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators);
+        let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -613,19 +613,22 @@ mod tests {
         // Packet 1: SN 50 → 51, TS 2000 → 2160
         let first_packet =
             build_uo0_with_crc(51, Timestamp::new(2160), false, ssrc, &crc_calculators);
-        let first_headers = parse_uo0(&mut context, &first_packet, &crc_calculators).unwrap();
+        let first_headers =
+            decompress_as_uo0(&mut context, &first_packet, &crc_calculators).unwrap();
         assert_eq!(first_headers.rtp_timestamp, Timestamp::new(2160));
 
         // Packet 2: SN 51 → 52, TS 2160 → 2320
         let second_packet =
             build_uo0_with_crc(52, Timestamp::new(2320), false, ssrc, &crc_calculators);
-        let second_headers = parse_uo0(&mut context, &second_packet, &crc_calculators).unwrap();
+        let second_headers =
+            decompress_as_uo0(&mut context, &second_packet, &crc_calculators).unwrap();
         assert_eq!(second_headers.rtp_timestamp, Timestamp::new(2320));
 
         // Packet 3: SN 52 → 53, TS 2320 → 2480
         let third_packet =
             build_uo0_with_crc(53, Timestamp::new(2480), false, ssrc, &crc_calculators);
-        let third_headers = parse_uo0(&mut context, &third_packet, &crc_calculators).unwrap();
+        let third_headers =
+            decompress_as_uo0(&mut context, &third_packet, &crc_calculators).unwrap();
         assert_eq!(third_headers.rtp_timestamp, Timestamp::new(2480));
     }
 
@@ -640,7 +643,7 @@ mod tests {
         let expected_ts = Timestamp::new(1000); // Should remain unchanged
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -656,7 +659,7 @@ mod tests {
         let expected_ts = Timestamp::new((u32::MAX - 80).wrapping_add(ts_stride));
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -685,9 +688,9 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
+        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
 
-        let result = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -724,9 +727,9 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = build_profile1_uo1_id_packet(&uo1_packet).unwrap();
+        let uo1_bytes = serialize_uo1_id(&uo1_packet).unwrap();
 
-        let result = parse_uo1_id(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_id(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -743,7 +746,7 @@ mod tests {
         // Packet 1: UO-0, SN 400 → 401, TS 5000 → 5160
         let uo0_packet =
             build_uo0_with_crc(401, Timestamp::new(5160), false, ssrc, &crc_calculators);
-        let uo0_headers = parse_uo0(&mut context, &uo0_packet, &crc_calculators).unwrap();
+        let uo0_headers = decompress_as_uo0(&mut context, &uo0_packet, &crc_calculators).unwrap();
         assert_eq!(uo0_headers.rtp_timestamp, Timestamp::new(5160));
 
         // Packet 2: UO-1-SN, SN 401 → 402, TS 5160 → 5320
@@ -758,8 +761,8 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
-        let uo1_headers = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
+        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
+        let uo1_headers = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
         assert_eq!(uo1_headers.rtp_timestamp, Timestamp::new(5320));
     }
 
@@ -775,7 +778,7 @@ mod tests {
         let expected_ts = Timestamp::new(11600);
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
         assert_eq!(result.rtp_timestamp, expected_ts);
     }
 
@@ -792,7 +795,7 @@ mod tests {
             let uo0_bytes =
                 build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-            let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+            let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
             assert_eq!(result.rtp_timestamp, expected_ts);
         }
     }
@@ -826,9 +829,9 @@ mod tests {
             sn_lsb,
             crc3: wrong_crc3_in_packet,
         };
-        let uo0_bytes_bad_crc = build_profile1_uo0_packet(&uo0_packet_with_bad_crc).unwrap();
+        let uo0_bytes_bad_crc = serialize_uo0(&uo0_packet_with_bad_crc).unwrap();
 
-        let result = parse_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
+        let result = decompress_as_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
         assert!(
             result.is_err(),
             "Decompression should fail due to CRC mismatch, got: {:?}",
@@ -879,7 +882,7 @@ mod tests {
             crc8,
         ];
 
-        let result = parse_uo1_ts(&mut context, &packet, &crc_calculators);
+        let result = decompress_as_uo1_ts(&mut context, &packet, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -917,7 +920,7 @@ mod tests {
             crc8,
         ];
 
-        let result = parse_uo1_rtp(&mut context, &packet, &crc_calculators);
+        let result = decompress_as_uo1_rtp(&mut context, &packet, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -935,7 +938,7 @@ mod tests {
 
         let packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 1, 0xFF]; // Example UO-1-RTP
 
-        let result = parse_uo1_rtp(&mut context, &packet, &crc_calculators);
+        let result = decompress_as_uo1_rtp(&mut context, &packet, &crc_calculators);
         assert!(result.is_err());
 
         if let Err(RohcError::InvalidState(msg)) = result {
@@ -971,7 +974,7 @@ mod tests {
         full_ir_static_packet_bytes.extend_from_slice(&ir_packet_payload_for_crc); // Profile ID + Static Chain
         full_ir_static_packet_bytes.push(crc_over_payload); // Calculated CRC
 
-        let result = parse_ir(
+        let result = decompress_as_ir(
             &mut context,
             &full_ir_static_packet_bytes, // Pass the full packet including type octet
             &crc_calculators,
@@ -1007,7 +1010,7 @@ mod tests {
         let expected_ts = Timestamp::new(1000); // UO-0 implies TS unchanged if no stride
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        let _ = parse_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
+        let _ = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
 
         // Verify context was updated
         assert_eq!(context.last_reconstructed_rtp_sn_full, target_sn);
@@ -1080,7 +1083,7 @@ mod tests {
             &crc_calculators,
         );
 
-        let result = parse_uo0(&mut context, &uo0_bytes, &crc_calculators);
+        let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().rtp_sequence_number, target_sn);
     }
@@ -1114,9 +1117,9 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = build_profile1_uo1_sn_packet(&uo1_packet).unwrap();
+        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
 
-        let result = parse_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
         assert!(
             result.is_ok(),
             "Parsing UO-1-SN for marker transition failed: {:?}",

@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::crc::CrcCalculators;
 use crate::packet_defs::RohcProfile;
 use crate::profiles::profile1::{
-    IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::build_profile1_ir_packet,
+    IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::serialize_ir,
     protocol_types::Timestamp,
 };
 use crate::traits::ProfileHandler;
@@ -51,7 +51,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         crc8: 0,
     };
 
-    match build_profile1_ir_packet(&sample_ir_data_for_harness, &crc_calculators) {
+    match serialize_ir(&sample_ir_data_for_harness, &crc_calculators) {
         Ok(sample_ir_bytes) => {
             let mut decompressor_context_dyn =
                 p1_handler.create_decompressor_context(cid, Instant::now());

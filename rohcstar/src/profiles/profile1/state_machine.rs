@@ -107,7 +107,8 @@ pub(super) fn process_ir_packet(
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
-    match decompressor::parse_ir(context, packet_bytes, crc_calculators, handler_profile_id) {
+    match decompressor::decompress_as_ir(context, packet_bytes, crc_calculators, handler_profile_id)
+    {
         Ok(reconstructed_rtp_headers) => {
             context.mode = Profile1DecompressorMode::FullContext;
             context.consecutive_crc_failures_in_fc = 0;
@@ -156,18 +157,20 @@ pub(super) fn process_uo_packet_in_fc_mode(
     );
 
     let outcome: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
-        Profile1PacketType::Uo0 => decompressor::parse_uo0(context, packet_bytes, crc_calculators),
+        Profile1PacketType::Uo0 => {
+            decompressor::decompress_as_uo0(context, packet_bytes, crc_calculators)
+        }
         Profile1PacketType::Uo1Sn { .. } => {
-            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Ts => {
-            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Unknown(val) => {
             return Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
@@ -210,16 +213,16 @@ pub(super) fn process_packet_in_sc_mode(
 
     let parse_reconstruct_result: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
         Profile1PacketType::Uo1Ts => {
-            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Sn { .. } => {
-            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo0 => {
             // UO-0 is not a dynamic updater. Receiving it in SC is an invalid sequence.
@@ -296,18 +299,20 @@ pub(super) fn process_packet_in_so_mode(
     );
 
     let parse_reconstruct_result: Result<RtpUdpIpv4Headers, RohcError> = match discriminated_type {
-        Profile1PacketType::Uo0 => decompressor::parse_uo0(context, packet_bytes, crc_calculators),
+        Profile1PacketType::Uo0 => {
+            decompressor::decompress_as_uo0(context, packet_bytes, crc_calculators)
+        }
         Profile1PacketType::Uo1Sn { .. } => {
-            decompressor::parse_uo1_sn(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_sn(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Ts => {
-            decompressor::parse_uo1_ts(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_ts(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Id => {
-            decompressor::parse_uo1_id(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_id(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompressor::parse_uo1_rtp(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo1_rtp(context, packet_bytes, crc_calculators)
         }
         Profile1PacketType::Unknown(val) => {
             return Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
@@ -352,8 +357,7 @@ mod tests {
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
     use crate::profiles::profile1::packet_processor::{
-        build_profile1_ir_packet, build_profile1_uo0_packet, build_profile1_uo1_sn_packet,
-        prepare_generic_uo_crc_input_payload,
+        prepare_generic_uo_crc_input_payload, serialize_ir, serialize_uo0, serialize_uo1_sn,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
     use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
@@ -443,7 +447,7 @@ mod tests {
             crc8: 0xFF, // Likely wrong CRC against actual context values
             ..Default::default()
         };
-        let uo1_sn_bytes_bad = build_profile1_uo1_sn_packet(&uo1_sn_data_bad_crc).unwrap();
+        let uo1_sn_bytes_bad = serialize_uo1_sn(&uo1_sn_data_bad_crc).unwrap();
 
         for _ in 0..P1_DECOMPRESSOR_SC_TO_NC_K2 {
             let _ = process_packet_in_sc_mode(
@@ -470,7 +474,7 @@ mod tests {
             cid: None,
             ..Default::default()
         };
-        let uo1_sn_bytes_bad = build_profile1_uo1_sn_packet(&uo1_sn_data_bad_crc).unwrap();
+        let uo1_sn_bytes_bad = serialize_uo1_sn(&uo1_sn_data_bad_crc).unwrap();
 
         // Cause K2-1 CRC failures
         for _ in 0..(P1_DECOMPRESSOR_SC_TO_NC_K2 - 1) {
@@ -526,7 +530,7 @@ mod tests {
                 crc8: crc_calculators.crc8(&crc_input_good),
                 ..uo1_sn_data_good
             };
-            let uo1_sn_bytes_good = build_profile1_uo1_sn_packet(&uo1_sn_data_good_crc).unwrap();
+            let uo1_sn_bytes_good = serialize_uo1_sn(&uo1_sn_data_good_crc).unwrap();
 
             let result = process_packet_in_sc_mode(
                 &mut context,
@@ -590,7 +594,7 @@ mod tests {
             crc8: crc_calculators.crc8(&crc_input),
             ..uo1_sn_data_good
         };
-        let uo1_sn_bytes_good = build_profile1_uo1_sn_packet(&uo1_sn_data_good_crc).unwrap();
+        let uo1_sn_bytes_good = serialize_uo1_sn(&uo1_sn_data_good_crc).unwrap();
 
         let result = process_packet_in_sc_mode(
             &mut context,
@@ -620,7 +624,7 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         };
-        let uo0_bytes_bad = build_profile1_uo0_packet(&uo0_data_bad_crc).unwrap();
+        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
 
         for i in 0..P1_SO_MAX_CONSECUTIVE_FAILURES {
             if i == P1_SO_MAX_CONSECUTIVE_FAILURES - 1 {
@@ -661,7 +665,7 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         };
-        let uo0_bytes_bad = build_profile1_uo0_packet(&uo0_data_bad_crc).unwrap();
+        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
 
         // One failure should push it below
         let _ = process_packet_in_so_mode(
@@ -695,7 +699,7 @@ mod tests {
             sn_lsb: sn_lsb_good,
             ..Default::default()
         };
-        let uo0_bytes_good = build_profile1_uo0_packet(&uo0_data_good_crc).unwrap();
+        let uo0_bytes_good = serialize_uo0(&uo0_data_good_crc).unwrap();
 
         // Success
         let _ = process_packet_in_so_mode(
@@ -716,7 +720,7 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         }; // Likely invalid combination
-        let uo0_bytes_bad = build_profile1_uo0_packet(&uo0_data_bad_crc).unwrap();
+        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
         let _ = process_packet_in_so_mode(
             &mut context,
             &uo0_bytes_bad,
@@ -744,7 +748,7 @@ mod tests {
             static_rtp_ssrc: 0x1A2B3C4D,
             ..Default::default()
         };
-        let ir_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        let ir_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
 
         let _ = process_ir_packet(
             &mut context,

@@ -1,9 +1,9 @@
-//! ROHC (Robust Header Compression) Profile 1 specific packet parsing and building functions.
+//! ROHC (Robust Header Compression) Profile 1 specific packet serialization and deserialization functions.
 //!
 //! This module provides the low-level utilities to:
-//! 1. Parse raw byte arrays representing ROHC Profile 1 packets (IR, UO-0, UO-1-SN, etc.)
+//! 1. Deserialize raw byte arrays representing ROHC Profile 1 packets (IR, UO-0, UO-1-SN, etc.)
 //!    into their corresponding structured Rust types (`IrPacket`, `Uo0Packet`, `Uo1Packet`).
-//! 2. Build raw byte arrays (for transmission) from these Profile 1 packet structs.
+//! 2. Serialize these Profile 1 packet structs into raw byte arrays for transmission.
 //! 3. Parse uncompressed RTP/UDP/IPv4 headers from a raw byte stream into the
 //!    `RtpUdpIpv4Headers` struct.
 
@@ -21,7 +21,7 @@ use crate::crc::CrcCalculators;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 
-/// Parses raw bytes representing an RTP/UDP/IPv4 packet into `RtpUdpIpv4Headers`.
+/// Deserializes raw bytes representing an RTP/UDP/IPv4 packet into `RtpUdpIpv4Headers`.
 ///
 /// This function assumes the input `data` starts with the IPv4 header. It performs
 /// basic validation of header lengths and protocol types.
@@ -36,7 +36,9 @@ use crate::packet_defs::RohcProfile;
 /// - [`RohcParsingError::NotEnoughData`] - Insufficient data for header parsing
 /// - [`RohcParsingError::InvalidIpVersion`] - Non-IPv4 packet
 /// - [`RohcParsingError::UnsupportedProtocol`] - Non-UDP protocol in IP header
-pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
+pub fn deserialize_rtp_udp_ipv4_headers(
+    data: &[u8],
+) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < IPV4_MIN_HEADER_LENGTH_BYTES {
         return Err(RohcParsingError::NotEnoughData {
             needed: IPV4_MIN_HEADER_LENGTH_BYTES,
@@ -205,9 +207,9 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
     })
 }
 
-/// Builds a ROHC Profile 1 IR (Initialization/Refresh) packet.
+/// Serializes a ROHC Profile 1 IR (Initialization/Refresh) packet.
 ///
-/// This function constructs the byte representation of an IR or IR-DYN packet.
+/// This function serializes an `IrPacket` structure into its byte representation for transmission.
 /// It includes an Add-CID octet if the CID is small and non-zero.
 /// The CRC-8 is calculated over the profile, static chain, and dynamic chain (if present).
 /// If `ir_data.ts_stride` is `Some`, the TS_STRIDE_PRESENT flag is set in the RTP_Flags
@@ -218,11 +220,11 @@ pub fn parse_rtp_udp_ipv4_headers(data: &[u8]) -> Result<RtpUdpIpv4Headers, Rohc
 /// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 computation.
 ///
 /// # Returns
-/// The built IR packet as a byte vector.
+/// The serialized IR packet as a byte vector.
 ///
 /// # Errors
-/// - [`RohcBuildingError`] - Packet construction fails due to invalid field values
-pub fn build_profile1_ir_packet(
+/// - [`RohcBuildingError`] - Packet serialization fails due to invalid field values
+pub fn serialize_ir(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcBuildingError> {
@@ -325,12 +327,12 @@ pub fn build_profile1_ir_packet(
     Ok(packet)
 }
 
-/// Parses a ROHC Profile 1 IR (Initialization/Refresh) packet.
+/// Deserializes a ROHC Profile 1 IR (Initialization/Refresh) packet.
 ///
 /// The input `core_packet_bytes` should be the ROHC packet content starting
 /// with the ROHC packet type octet.
 /// The `cid_from_engine` must be provided by the caller.
-/// This function now checks for and parses the optional TS_STRIDE extension
+/// This function checks for and deserializes the optional TS_STRIDE extension
 /// in the dynamic chain if the corresponding flag in RTP_Flags is set.
 ///
 /// # Parameters
@@ -339,11 +341,11 @@ pub fn build_profile1_ir_packet(
 /// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 verification.
 ///
 /// # Returns
-/// The parsed IR packet data.
+/// The deserialized IR packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data, invalid type, or CRC mismatch
-pub fn parse_profile1_ir_packet(
+pub fn deserialize_ir(
     core_packet_bytes: &[u8],
     cid_from_engine: u16,
     crc_calculators: &CrcCalculators,
@@ -513,17 +515,17 @@ pub fn parse_profile1_ir_packet(
     })
 }
 
-/// Builds a ROHC Profile 1 UO-0 packet.
+/// Serializes a ROHC Profile 1 UO-0 packet.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-0 packet.
 ///
 /// # Returns
-/// The built UO-0 packet as a byte vector.
+/// The serialized UO-0 packet as a byte vector.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-0 packet
-pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
     debug_assert!(
         packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
         "SN LSB value {} too large for {} bits",
@@ -577,18 +579,18 @@ pub fn build_profile1_uo0_packet(packet_data: &Uo0Packet) -> Result<Vec<u8>, Roh
     Ok(final_packet)
 }
 
-/// Parses a ROHC Profile 1 UO-0 packet.
+/// Deserializes a ROHC Profile 1 UO-0 packet.
 ///
 /// # Parameters
 /// - `core_packet_data`: Byte slice of the core UO-0 packet (single byte).
 /// - `cid_from_engine`: Optional CID if Add-CID was processed by the engine.
 ///
 /// # Returns
-/// The parsed UO-0 packet data.
+/// The deserialized UO-0 packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Incorrect length or invalid packet type
-pub fn parse_profile1_uo0_packet(
+pub fn deserialize_uo0(
     core_packet_data: &[u8],
     cid_from_engine: Option<u8>,
 ) -> Result<Uo0Packet, RohcParsingError> {
@@ -630,17 +632,17 @@ pub fn parse_profile1_uo0_packet(
     })
 }
 
-/// Builds a ROHC Profile 1 UO-1-SN packet.
+/// Serializes a ROHC Profile 1 UO-1-SN packet.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-SN packet.
 ///
 /// # Returns
-/// The built UO-1-SN packet as a byte vector.
+/// The serialized UO-1-SN packet as a byte vector.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-SN packet
-pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     debug_assert_eq!(
         packet_data.num_sn_lsb_bits, P1_UO1_SN_LSB_WIDTH_DEFAULT,
         "UO-1-SN requires {} LSB bits, got {}",
@@ -699,19 +701,17 @@ pub fn build_profile1_uo1_sn_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
     }
 }
 
-/// Parses a ROHC Profile 1 UO-1-SN packet.
+/// Deserializes a ROHC Profile 1 UO-1-SN packet.
 ///
 /// # Parameters
 /// - `core_packet_bytes`: Byte slice of the core UO-1-SN packet.
 ///
 /// # Returns
-/// The parsed UO-1-SN packet data.
+/// The deserialized UO-1-SN packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data or invalid packet type
-pub fn parse_profile1_uo1_sn_packet(
-    core_packet_bytes: &[u8],
-) -> Result<Uo1Packet, RohcParsingError> {
+pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_SN_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-SN should be 3 bytes");
 
@@ -749,17 +749,17 @@ pub fn parse_profile1_uo1_sn_packet(
     })
 }
 
-/// Builds a ROHC Profile 1 UO-1-TS packet.
+/// Serializes a ROHC Profile 1 UO-1-TS packet.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-TS packet.
 ///
 /// # Returns
-/// The built UO-1-TS packet as a byte vector.
+/// The serialized UO-1-TS packet as a byte vector.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-TS packet
-pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ts_lsb =
         packet_data
             .ts_lsb
@@ -820,19 +820,17 @@ pub fn build_profile1_uo1_ts_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
     }
 }
 
-/// Parses a ROHC Profile 1 UO-1-TS packet.
+/// Deserializes a ROHC Profile 1 UO-1-TS packet.
 ///
 /// # Parameters
 /// - `core_packet_bytes`: Byte slice of the core UO-1-TS packet.
 ///
 /// # Returns
-/// The parsed UO-1-TS packet data.
+/// The deserialized UO-1-TS packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data or invalid packet type
-pub fn parse_profile1_uo1_ts_packet(
-    core_packet_bytes: &[u8],
-) -> Result<Uo1Packet, RohcParsingError> {
+pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_TS_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 4, "UO-1-TS should be 4 bytes");
 
@@ -869,17 +867,17 @@ pub fn parse_profile1_uo1_ts_packet(
     })
 }
 
-/// Builds a ROHC Profile 1 UO-1-ID packet.
+/// Serializes a ROHC Profile 1 UO-1-ID packet.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-ID packet.
 ///
 /// # Returns
-/// The built UO-1-ID packet as a byte vector.
+/// The serialized UO-1-ID packet as a byte vector.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-ID packet
-pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ip_id_lsb =
         packet_data
             .ip_id_lsb
@@ -946,19 +944,17 @@ pub fn build_profile1_uo1_id_packet(packet_data: &Uo1Packet) -> Result<Vec<u8>, 
     }
 }
 
-/// Parses a ROHC Profile 1 UO-1-ID packet.
+/// Deserializes a ROHC Profile 1 UO-1-ID packet.
 ///
 /// # Parameters
 /// - `core_packet_bytes`: Byte slice of the core UO-1-ID packet.
 ///
 /// # Returns
-/// The parsed UO-1-ID packet data.
+/// The deserialized UO-1-ID packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data or invalid packet type
-pub fn parse_profile1_uo1_id_packet(
-    core_packet_bytes: &[u8],
-) -> Result<Uo1Packet, RohcParsingError> {
+pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_IPID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-ID should be 3 bytes");
 
@@ -995,19 +991,17 @@ pub fn parse_profile1_uo1_id_packet(
     })
 }
 
-/// Builds a ROHC Profile 1 UO-1-RTP packet.
+/// Serializes a ROHC Profile 1 UO-1-RTP packet.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-RTP packet.
 ///
 /// # Returns
-/// The built UO-1-RTP packet as a byte vector.
+/// The serialized UO-1-RTP packet as a byte vector.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-RTP packet
-pub fn build_profile1_uo1_rtp_packet(
-    packet_data: &Uo1Packet,
-) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
     let ts_scaled_val =
         packet_data
             .ts_scaled
@@ -1053,19 +1047,17 @@ pub fn build_profile1_uo1_rtp_packet(
     }
 }
 
-/// Parses a ROHC Profile 1 UO-1-RTP packet.
+/// Deserializes a ROHC Profile 1 UO-1-RTP packet.
 ///
 /// # Parameters
 /// - `core_packet_bytes`: Byte slice of the core UO-1-RTP packet.
 ///
 /// # Returns
-/// The parsed UO-1-RTP packet data.
+/// The deserialized UO-1-RTP packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data or invalid packet type
-pub fn parse_profile1_uo1_rtp_packet(
-    core_packet_bytes: &[u8],
-) -> Result<Uo1Packet, RohcParsingError> {
+pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 3;
     debug_assert_eq!(expected_len, 3, "UO-1-RTP should be 3 bytes");
 
@@ -1217,17 +1209,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_rtp_udp_ipv4_headers_valid() {
+    fn deserialize_rtp_udp_ipv4_headers_valid() {
         let packet_bytes = build_sample_rtp_packet_bytes(123, 0x12345678, 1000);
-        let headers = parse_rtp_udp_ipv4_headers(&packet_bytes).unwrap();
+        let headers = deserialize_rtp_udp_ipv4_headers(&packet_bytes).unwrap();
         assert_eq!(headers.rtp_sequence_number, 123);
         assert_eq!(headers.rtp_timestamp, Timestamp::new(1000));
     }
 
     #[test]
-    fn parse_rtp_udp_ipv4_headers_too_short() {
+    fn deserialize_rtp_udp_ipv4_headers_too_short() {
         let short_packet = vec![0x45, 0x00];
-        let result = parse_rtp_udp_ipv4_headers(&short_packet);
+        let result = deserialize_rtp_udp_ipv4_headers(&short_packet);
         assert!(
             matches!(result, Err(RohcParsingError::NotEnoughData {needed, got, ..}) if needed == IPV4_MIN_HEADER_LENGTH_BYTES && got == 2)
         );
@@ -1250,11 +1242,11 @@ mod tests {
             ts_stride: None, // No TS stride for this test case
             crc8: 0,
         };
-        let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
         assert_eq!(built_bytes.len(), 26); // CID 0: type(1) + profile(1) + static(16) + dyn(7) + crc(1)
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes, 0, &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
         assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
@@ -1281,7 +1273,7 @@ mod tests {
             ts_stride: Some(160), // With TS stride
             crc8: 0,
         };
-        let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
         assert_eq!(built_bytes.len(), 30); // +4 bytes for TS_STRIDE extension
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
@@ -1292,7 +1284,7 @@ mod tests {
             "TS Stride bit not set in IR"
         );
 
-        let parsed_ir = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes, 0, &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
         assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
@@ -1320,12 +1312,12 @@ mod tests {
             ts_stride: None,
             crc8: 0,
         };
-        let built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
         assert_eq!(built_bytes.len(), 27); // +1 byte for Add-CID
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let parsed_ir = parse_profile1_ir_packet(&built_bytes[1..], 5, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes[1..], 5, &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 5);
         assert_eq!(
             parsed_ir.dyn_rtp_timestamp,
@@ -1344,11 +1336,11 @@ mod tests {
             dyn_rtp_timestamp: Timestamp::new(100),
             ..Default::default()
         };
-        let mut built_bytes = build_profile1_ir_packet(&ir_content, &crc_calculators).unwrap();
+        let mut built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
         let crc_idx = built_bytes.len() - 1;
         built_bytes[crc_idx] = built_bytes[crc_idx].wrapping_add(1);
 
-        let result = parse_profile1_ir_packet(&built_bytes, 0, &crc_calculators);
+        let result = deserialize_ir(&built_bytes, 0, &crc_calculators);
         assert!(matches!(result, Err(RohcParsingError::CrcMismatch { .. })));
     }
 
@@ -1362,13 +1354,13 @@ mod tests {
             ..Default::default()
         };
 
-        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
         assert_eq!(built_bytes.len(), 3);
         assert_eq!(built_bytes[0], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
         assert_eq!(built_bytes[1], 123); // TS_SCALED
         assert_eq!(built_bytes[2], 0xAB); // CRC
 
-        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes).unwrap();
+        let parsed = deserialize_uo1_rtp(&built_bytes).unwrap();
         assert_eq!(parsed.ts_scaled, Some(123));
         assert!(!parsed.marker);
         assert_eq!(parsed.crc8, 0xAB);
@@ -1384,7 +1376,7 @@ mod tests {
             ..Default::default()
         };
 
-        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
         assert_eq!(built_bytes.len(), 3);
         assert_eq!(
             built_bytes[0],
@@ -1393,7 +1385,7 @@ mod tests {
         assert_eq!(built_bytes[1], 10);
         assert_eq!(built_bytes[2], 0xCD);
 
-        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes).unwrap();
+        let parsed = deserialize_uo1_rtp(&built_bytes).unwrap();
         assert_eq!(parsed.ts_scaled, Some(10));
         assert!(parsed.marker);
         assert_eq!(parsed.crc8, 0xCD);
@@ -1409,14 +1401,14 @@ mod tests {
             ..Default::default()
         };
 
-        let built_bytes = build_profile1_uo1_rtp_packet(&uo1_rtp_data).unwrap();
+        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
         assert_eq!(built_bytes.len(), 4); // Add-CID + core packet
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
         assert_eq!(built_bytes[2], 255);
         assert_eq!(built_bytes[3], 0xFE);
 
-        let parsed = parse_profile1_uo1_rtp_packet(&built_bytes[1..]).unwrap(); // Parse core part
+        let parsed = deserialize_uo1_rtp(&built_bytes[1..]).unwrap(); // Parse core part
         assert_eq!(parsed.ts_scaled, Some(255));
         assert!(!parsed.marker);
         assert_eq!(parsed.crc8, 0xFE);
@@ -1431,7 +1423,7 @@ mod tests {
             crc8: 0xAB,
             ..Default::default()
         };
-        let result = build_profile1_uo1_rtp_packet(&uo1_rtp_data);
+        let result = serialize_uo1_rtp(&uo1_rtp_data);
         assert!(
             matches!(result, Err(RohcBuildingError::InvalidFieldValueForBuild { field_name, .. }) if field_name == "ts_scaled")
         );
@@ -1440,7 +1432,7 @@ mod tests {
     #[test]
     fn parse_uo1_rtp_packet_too_short() {
         let short_packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 123]; // Missing CRC
-        let result = parse_profile1_uo1_rtp_packet(&short_packet);
+        let result = deserialize_uo1_rtp(&short_packet);
         assert!(matches!(
             result,
             Err(RohcParsingError::NotEnoughData {
@@ -1454,7 +1446,7 @@ mod tests {
     #[test]
     fn parse_uo1_rtp_wrong_discriminator() {
         let wrong_packet = vec![P1_UO_1_SN_PACKET_TYPE_PREFIX, 123, 0xAB]; // UO-1-SN type
-        let result = parse_profile1_uo1_rtp_packet(&wrong_packet);
+        let result = deserialize_uo1_rtp(&wrong_packet);
         assert!(matches!(
             result,
             Err(RohcParsingError::InvalidPacketType { .. })

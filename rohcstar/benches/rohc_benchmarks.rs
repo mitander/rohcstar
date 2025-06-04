@@ -5,7 +5,8 @@ use rohcstar::{
     engine::RohcEngine,
     packet_defs::{GenericUncompressedHeaders, RohcProfile},
     profiles::profile1::{
-        Profile1Handler, RtpUdpIpv4Headers, Timestamp, packet_processor::parse_rtp_udp_ipv4_headers,
+        Profile1Handler, RtpUdpIpv4Headers, Timestamp,
+        packet_processor::deserialize_rtp_udp_ipv4_headers,
     },
     time::SystemClock,
 };
@@ -99,7 +100,7 @@ fn bench_packet_parsing(c: &mut Criterion) {
     let minimal_packet = create_minimal_rtp_packet();
     group.throughput(Throughput::Bytes(minimal_packet.len() as u64));
     group.bench_function("minimal_rtp_packet", |b| {
-        b.iter(|| parse_rtp_udp_ipv4_headers(black_box(&minimal_packet)))
+        b.iter(|| deserialize_rtp_udp_ipv4_headers(black_box(&minimal_packet)))
     });
 
     // Benchmark packets with different CSRC counts
@@ -109,7 +110,7 @@ fn bench_packet_parsing(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("csrc_list", csrc_count),
             &packet,
-            |b, packet| b.iter(|| parse_rtp_udp_ipv4_headers(black_box(packet))),
+            |b, packet| b.iter(|| deserialize_rtp_udp_ipv4_headers(black_box(packet))),
         );
     }
 
