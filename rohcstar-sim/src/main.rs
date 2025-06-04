@@ -1,4 +1,4 @@
-//! ROHCStar Deterministic Simulator CLI.
+//! Rohcstar Deterministic Simulator CLI.
 //!
 //! This binary provides command-line interface to run various ROHC simulations:
 //! - Fuzzing: Run many simulations with randomized configurations.
@@ -20,7 +20,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "ROHCStar Deterministic Simulator", long_about = None)]
+#[command(author, version, about = "Rohcstar Deterministic Simulator", long_about = None)]
 struct CliArgs {
     /// Run mode: fuzz, replay, or stress.
     #[arg(value_enum)]

@@ -48,7 +48,7 @@
 
 ## Performance Benchmarking
 
-ROHCstar includes a comprehensive benchmark suite to measure and monitor performance of critical ROHC operations:
+Rohcstar includes a comprehensive benchmark suite to measure and monitor performance of critical ROHC operations:
 
 *   **Packet Parsing**: Raw parsing performance of RTP/UDP/IPv4 headers (>3 GiB/s)
 *   **LSB Operations**: Core W-LSB encoding/decoding algorithms (<5 ns per operation)

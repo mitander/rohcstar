@@ -1,4 +1,4 @@
-//! Integration tests for the ROHCStar deterministic simulator.
+//! Integration tests for the Rohcstar Deterministic Simulator.
 //!
 //! Tests end-to-end simulation including packet generation, ROHC compression/decompression,
 //! channel simulation, and verification across various scenarios with perfect channels,

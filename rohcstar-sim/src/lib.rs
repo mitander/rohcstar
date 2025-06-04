@@ -1,4 +1,4 @@
-//! Core library for the ROHCStar Deterministic Simulator.
+//! Core library for the Rohcstar Deterministic Simulator.
 //!
 //! This library provides the main components for running deterministic simulations,
 //! including configuration, packet generation, a simulated channel, and the

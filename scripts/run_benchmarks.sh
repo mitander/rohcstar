@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# ROHCstar Benchmark Runner Script
-# 
+# Benchmark Runner Script
+#
 # This script provides convenient ways to run the ROHC performance benchmarks
 # with different configurations and output formats.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROHCSTAR_DIR="$SCRIPT_DIR/rohcstar"
+ROHCSTAR_DIR="$SCRIPT_DIR/../rohcstar"
 
 # Colors for output
 RED='\033[0;31m'
@@ -117,13 +117,13 @@ if [[ "$QUICK" == false && "$FULL" == false && "$TEST" == false ]]; then
     QUICK=true
 fi
 
-echo -e "${BLUE}ROHCstar Benchmark Runner${NC}"
+echo -e "${BLUE}ROHC Benchmark Runner${NC}"
 echo "=========================="
 
 # Check if we're in the right directory
 if [[ ! -d "$ROHCSTAR_DIR" ]]; then
     echo -e "${RED}Error: Could not find rohcstar directory at $ROHCSTAR_DIR${NC}"
-    echo "Please run this script from the ROHCstar repository root."
+    echo "Please run this script from the repository root."
     exit 1
 fi
 
