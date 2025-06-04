@@ -21,6 +21,45 @@ use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::traits::RohcDecompressorContext;
 
+/// Maximum number of lost packets to attempt recovery for in UO-1 packet types
+const MAX_SN_RECOVERY_ATTEMPTS: u16 = 8;
+
+/// Attempts to recover the correct sequence number for UO-1 packet types when CRC validation fails.
+///
+/// This function tries different possible sequence numbers to account for packet loss scenarios
+/// where the decompressor context's `last_reconstructed_sn` is behind the actual stream.
+/// It validates each candidate SN by computing the CRC and checking against the received CRC.
+fn attempt_sn_recovery_for_uo1<F>(
+    context: &Profile1DecompressorContext,
+    received_crc: u8,
+    crc_calculators: &CrcCalculators,
+    crc_error_type: &str,
+    mut crc_input_builder: F,
+) -> Result<u16, RohcError>
+where
+    F: FnMut(u16, Timestamp) -> Vec<u8>,
+{
+    for recovery_attempt in 0..=MAX_SN_RECOVERY_ATTEMPTS {
+        let candidate_sn = context
+            .last_reconstructed_rtp_sn_full
+            .wrapping_add(1 + recovery_attempt);
+        let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
+
+        let crc_input_bytes = crc_input_builder(candidate_sn, candidate_ts);
+        let calculated_crc = crc_calculators.crc8(&crc_input_bytes);
+
+        if calculated_crc == received_crc {
+            return Ok(candidate_sn);
+        }
+    }
+
+    Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
+        expected: received_crc,
+        calculated: 0,
+        crc_type: crc_error_type.to_string(),
+    }))
+}
+
 /// Decompresses an IR packet, updates decompressor context, and reconstructs full headers.
 ///
 /// This function handles the core decompression of IR/IR-DYN packet fields, including
@@ -243,8 +282,6 @@ fn decompress_as_uo1_ts(
 
     let parsed_uo1_ts = deserialize_uo1_ts(packet)?;
 
-    let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-
     let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or_else(|| {
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field_name: "ts_lsb".to_string(),
@@ -266,21 +303,35 @@ fn decompress_as_uo1_ts(
     )? as u32;
     let decoded_ts = Timestamp::new(decoded_ts_value);
 
+    // Try the expected SN first, then attempt recovery if CRC fails
+    let expected_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        decoded_sn,
+        expected_sn,
         decoded_ts,
-        context.last_reconstructed_rtp_marker, // UO-1-TS implies marker is unchanged.
+        context.last_reconstructed_rtp_marker,
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
-    if calculated_crc8 != parsed_uo1_ts.crc8 {
-        return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected: parsed_uo1_ts.crc8,
-            calculated: calculated_crc8,
-            crc_type: "CRC8-UO1TS".to_string(),
-        }));
-    }
+    let decoded_sn = if calculated_crc8 == parsed_uo1_ts.crc8 {
+        expected_sn
+    } else {
+        attempt_sn_recovery_for_uo1(
+            context,
+            parsed_uo1_ts.crc8,
+            crc_calculators,
+            "CRC8-UO1TS",
+            |candidate_sn, _candidate_ts| {
+                prepare_generic_uo_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    decoded_ts,
+                    context.last_reconstructed_rtp_marker,
+                )
+                .to_vec()
+            },
+        )?
+    };
 
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, decoded_sn);
     context.last_reconstructed_rtp_sn_full = decoded_sn;
@@ -310,9 +361,6 @@ fn decompress_as_uo1_id(
 
     let parsed_uo1_id = deserialize_uo1_id(packet)?;
 
-    let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-    let decoded_ts = calculate_reconstructed_ts_implicit_sn_plus_one(context);
-
     let ip_id_lsb_from_packet = parsed_uo1_id.ip_id_lsb.ok_or_else(|| {
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field_name: "ip_id_lsb".to_string(),
@@ -333,22 +381,39 @@ fn decompress_as_uo1_id(
         context.p_ip_id,
     )? as u16;
 
+    // Try the expected SN first, then attempt recovery if CRC fails
+    let expected_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
+    let expected_ts = calculate_reconstructed_ts_implicit_sn_plus_one(context);
     let crc_input_bytes = prepare_uo1_id_specific_crc_input_payload(
         context.rtp_ssrc,
-        decoded_sn,
-        decoded_ts,                            // Use the implicitly reconstructed TS.
-        context.last_reconstructed_rtp_marker, // UO-1-ID implies marker is unchanged.
-        ip_id_lsb_from_packet as u8,           // CRC is over the LSBs, not the decoded value.
+        expected_sn,
+        expected_ts,
+        context.last_reconstructed_rtp_marker,
+        ip_id_lsb_from_packet as u8,
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
-    if calculated_crc8 != parsed_uo1_id.crc8 {
-        return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected: parsed_uo1_id.crc8,
-            calculated: calculated_crc8,
-            crc_type: "CRC8-UO1ID".to_string(),
-        }));
-    }
+    let decoded_sn = if calculated_crc8 == parsed_uo1_id.crc8 {
+        expected_sn
+    } else {
+        attempt_sn_recovery_for_uo1(
+            context,
+            parsed_uo1_id.crc8,
+            crc_calculators,
+            "CRC8-UO1ID",
+            |candidate_sn, candidate_ts| {
+                prepare_uo1_id_specific_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    candidate_ts,
+                    context.last_reconstructed_rtp_marker,
+                    ip_id_lsb_from_packet as u8,
+                )
+                .to_vec()
+            },
+        )?
+    };
+    let decoded_ts = expected_ts;
 
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, decoded_sn);
     context.last_reconstructed_rtp_sn_full = decoded_sn;
@@ -382,8 +447,6 @@ fn decompress_as_uo1_rtp(
 
     let parsed_uo1_rtp = deserialize_uo1_rtp(packet)?;
 
-    let decoded_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-
     let ts_scaled_received = parsed_uo1_rtp.ts_scaled.ok_or_else(|| {
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field_name: "ts_scaled".to_string(),
@@ -391,29 +454,43 @@ fn decompress_as_uo1_rtp(
         })
     })?;
 
-    let decoded_ts = context
+    let expected_ts_from_scaled = context
         .reconstruct_ts_from_scaled(ts_scaled_received)
         .ok_or_else(|| {
             RohcError::InvalidState("Cannot reconstruct TS: stride not established".to_string())
         })?;
 
+    // Try the expected SN first, then attempt recovery if CRC fails
+    let expected_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        decoded_sn,
-        decoded_ts,
-        parsed_uo1_rtp.marker, // UO-1-RTP carries the marker.
+        expected_sn,
+        expected_ts_from_scaled,
+        parsed_uo1_rtp.marker,
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
-    if calculated_crc8 != parsed_uo1_rtp.crc8 {
-        return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected: parsed_uo1_rtp.crc8,
-            calculated: calculated_crc8,
-            crc_type: "CRC8-UO1RTP".to_string(),
-        }));
-    }
+    let decoded_sn = if calculated_crc8 == parsed_uo1_rtp.crc8 {
+        expected_sn
+    } else {
+        attempt_sn_recovery_for_uo1(
+            context,
+            parsed_uo1_rtp.crc8,
+            crc_calculators,
+            "CRC8-UO1RTP",
+            |candidate_sn, candidate_ts| {
+                prepare_generic_uo_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    candidate_ts,
+                    parsed_uo1_rtp.marker,
+                )
+                .to_vec()
+            },
+        )?
+    };
+    let decoded_ts = expected_ts_from_scaled;
 
-    // Enter TS_SCALED mode if stride known
     if context.ts_stride.is_some() && !context.ts_scaled_mode {
         context.ts_scaled_mode = true;
     }
