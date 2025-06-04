@@ -229,7 +229,7 @@ impl ProfileHandler for Profile1Handler {
                 // Delegate to mode-specific UO/other packet processing in state_machine
                 match context.mode {
                     Profile1DecompressorMode::FullContext => {
-                        state_machine::process_uo_packet_in_fc_mode(
+                        state_machine::process_packet_in_fc_mode(
                             context,
                             packet,
                             discriminated_type,
