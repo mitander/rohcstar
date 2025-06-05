@@ -13,7 +13,6 @@ use common::{
 use rohcstar::error::{RohcError, RohcParsingError};
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::Profile1DecompressorMode;
-use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{
     P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD, P1_UO_1_SN_MARKER_BIT_MASK,
     P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
@@ -39,8 +38,8 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     establish_ir_context(
         &mut engine,
         cid,
-        current_packet_headers.rtp_sequence_number,
-        current_packet_headers.rtp_timestamp.value(),
+        current_packet_headers.rtp_sequence_number.into(),
+        current_packet_headers.rtp_timestamp.into(),
         current_packet_headers.rtp_marker,
         ssrc,
     );
@@ -49,7 +48,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     headers_65535.ip_identification = current_packet_headers.ip_identification;
     let generic_65535 = GenericUncompressedHeaders::RtpUdpIpv4(headers_65535.clone());
     let compressed_65535 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_65535)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_65535)
         .unwrap();
     assert_eq!(compressed_65535.len(), 1);
     let decomp_65535 = engine
@@ -59,14 +58,14 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         .unwrap()
         .clone();
     assert_eq!(decomp_65535.rtp_sequence_number, 65535);
-    assert_eq!(decomp_65535.rtp_timestamp, Timestamp::new(initial_ts_val));
+    assert_eq!(decomp_65535.rtp_timestamp, initial_ts_val);
     current_packet_headers = headers_65535;
 
     let mut headers_0 = create_rtp_headers(0, initial_ts_val, initial_marker, ssrc);
     headers_0.ip_identification = current_packet_headers.ip_identification;
     let generic_0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_0.clone());
     let compressed_0 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_0)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_0)
         .unwrap();
     assert_eq!(compressed_0.len(), 1);
     let decomp_0 = engine
@@ -76,14 +75,14 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         .unwrap()
         .clone();
     assert_eq!(decomp_0.rtp_sequence_number, 0);
-    assert_eq!(decomp_0.rtp_timestamp, Timestamp::new(initial_ts_val));
+    assert_eq!(decomp_0.rtp_timestamp, initial_ts_val);
     current_packet_headers = headers_0;
 
     let mut headers_1 = create_rtp_headers(1, initial_ts_val, initial_marker, ssrc);
     headers_1.ip_identification = current_packet_headers.ip_identification;
     let generic_1 = GenericUncompressedHeaders::RtpUdpIpv4(headers_1.clone());
     let compressed_1 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_1)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_1)
         .unwrap();
     assert_eq!(compressed_1.len(), 1);
     let decomp_1 = engine
@@ -93,7 +92,7 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
         .unwrap()
         .clone();
     assert_eq!(decomp_1.rtp_sequence_number, 1);
-    assert_eq!(decomp_1.rtp_timestamp, Timestamp::new(initial_ts_val));
+    assert_eq!(decomp_1.rtp_timestamp, initial_ts_val);
 }
 
 /// Verifies UO-0 SN LSB encoding at interpretation window edges.
@@ -115,8 +114,8 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     establish_ir_context(
         &mut engine,
         cid,
-        ir_headers_for_context.rtp_sequence_number,
-        ir_headers_for_context.rtp_timestamp.value(),
+        ir_headers_for_context.rtp_sequence_number.into(),
+        ir_headers_for_context.rtp_timestamp.into(),
         ir_headers_for_context.rtp_marker,
         ssrc,
     );
@@ -130,7 +129,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     let generic_at_edge =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_at_edge_uncompressed.clone());
     let compressed_at_edge = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_at_edge)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_at_edge)
         .unwrap();
     assert_eq!(compressed_at_edge.len(), 1); // Expect UO-0
     let decomp_at_edge = engine
@@ -140,7 +139,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .unwrap()
         .clone();
     assert_eq!(decomp_at_edge.rtp_sequence_number, sn_at_edge);
-    assert_eq!(decomp_at_edge.rtp_timestamp, Timestamp::new(initial_ts_val));
+    assert_eq!(decomp_at_edge.rtp_timestamp, initial_ts_val);
     assert_eq!(decomp_at_edge.ip_identification, 0);
 
     // Test SN beyond +15 window, still UO-0 if TS stable
@@ -151,7 +150,11 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     let generic_next_to_edge =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_next_to_edge_uncompressed.clone());
     let compressed_next_to_edge = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_next_to_edge)
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_next_to_edge,
+        )
         .unwrap();
     assert_eq!(compressed_next_to_edge.len(), 1);
     let decomp_next_to_edge = engine
@@ -161,10 +164,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .unwrap()
         .clone();
     assert_eq!(decomp_next_to_edge.rtp_sequence_number, sn_next_to_edge);
-    assert_eq!(
-        decomp_next_to_edge.rtp_timestamp,
-        Timestamp::new(initial_ts_val)
-    );
+    assert_eq!(decomp_next_to_edge.rtp_timestamp, initial_ts_val);
     assert_eq!(decomp_next_to_edge.ip_identification, 0);
 
     // Re-establish context for larger jump test
@@ -175,8 +175,8 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     establish_ir_context(
         &mut engine,
         cid,
-        new_ir_headers_for_context.rtp_sequence_number,
-        new_ir_headers_for_context.rtp_timestamp.value(),
+        new_ir_headers_for_context.rtp_sequence_number.into(),
+        new_ir_headers_for_context.rtp_timestamp.into(),
         new_ir_headers_for_context.rtp_marker,
         ssrc,
     );
@@ -194,7 +194,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     .with_ip_id(ip_id_from_new_ir_context);
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
     let compressed_stride_packet = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_for_stride)
         .unwrap();
     assert_eq!(
         compressed_stride_packet.len(),
@@ -216,7 +216,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     assert_eq!(
         comp_ctx_check.last_sent_rtp_ts_full,
-        Timestamp::new(ts_for_stride_establish)
+        ts_for_stride_establish
     );
     let established_stride = comp_ctx_check.ts_stride.unwrap();
 
@@ -232,12 +232,16 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         initial_marker,
         ssrc,
     )
-    .with_ip_id(ip_id_from_new_ir_context.wrapping_add(1));
+    .with_ip_id(ip_id_from_new_ir_context + 1);
 
     let generic_outside_window =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window_uncompressed.clone());
     let compressed_outside_window = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_outside_window)
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_outside_window,
+        )
         .unwrap();
     assert_eq!(compressed_outside_window.len(), 3);
     assert_eq!(
@@ -255,7 +259,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
 
     // UO-1-SN uses implicit TS based on stride
     let expected_ts_for_decomp_uo1_sn =
-        Timestamp::new(ts_for_stride_establish.wrapping_add(16 * established_stride));
+        ts_for_stride_establish.wrapping_add(16 * established_stride);
     assert_eq!(
         decomp_outside_window.rtp_timestamp,
         expected_ts_for_decomp_uo1_sn
@@ -280,8 +284,8 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
     establish_ir_context(
         &mut engine,
         cid,
-        ir_headers_for_context.rtp_sequence_number,
-        ir_headers_for_context.rtp_timestamp.value(),
+        ir_headers_for_context.rtp_sequence_number.into(),
+        ir_headers_for_context.rtp_timestamp.into(),
         ir_headers_for_context.rtp_marker,
         ssrc,
     );
@@ -294,7 +298,7 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
         let generic_good_uo0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_good_uo0.clone());
 
         let mut compressed_uo0 = engine
-            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_good_uo0)
+            .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_good_uo0)
             .unwrap();
         assert_eq!(compressed_uo0.len(), 1);
 
@@ -339,8 +343,8 @@ fn p1_uo0_not_used_when_marker_changes() {
     establish_ir_context(
         &mut engine,
         cid,
-        ir_headers.rtp_sequence_number,
-        ir_headers.rtp_timestamp.value(),
+        ir_headers.rtp_sequence_number.into(),
+        ir_headers.rtp_timestamp.into(),
         ir_headers.rtp_marker,
         ssrc,
     );
@@ -353,7 +357,7 @@ fn p1_uo0_not_used_when_marker_changes() {
         .with_ip_id(ir_headers.ip_identification);
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
     let compressed_stride_packet = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_for_stride)
         .unwrap(); // Should be UO-1-TS
     assert_eq!(compressed_stride_packet.len(), 4);
     assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
@@ -383,7 +387,11 @@ fn p1_uo0_not_used_when_marker_changes() {
         GenericUncompressedHeaders::RtpUdpIpv4(headers_marker_change.clone());
 
     let compressed_packet = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_marker_change)
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_marker_change,
+        )
         .unwrap();
 
     // Expect UO-1-SN (3 bytes for CID 0) because marker changed
@@ -404,6 +412,6 @@ fn p1_uo0_not_used_when_marker_changes() {
     assert!(decomp_headers.rtp_marker); // Marker bit correctly reconstructed (true)
     assert_eq!(
         decomp_headers.rtp_timestamp,
-        Timestamp::new(ts_val_for_marker_change_packet)
+        ts_val_for_marker_change_packet
     ); // TS implicitly updated to 4320
 }

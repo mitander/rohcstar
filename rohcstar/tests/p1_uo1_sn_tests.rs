@@ -12,7 +12,6 @@ use common::{
 
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::RtpUdpIpv4Headers;
-use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{
     P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR,
     Profile1Handler,
@@ -32,12 +31,12 @@ fn establish_stride_after_ir(
 ) {
     let sn_for_stride = base_sn.wrapping_add(1);
     let ts_for_stride = base_ts_val.wrapping_add(stride_to_establish);
-    let headers_for_stride =
-        create_rtp_headers(sn_for_stride, ts_for_stride, base_marker, ssrc).with_ip_id(base_ip_id);
+    let headers_for_stride = create_rtp_headers(sn_for_stride, ts_for_stride, base_marker, ssrc)
+        .with_ip_id(base_ip_id.into());
 
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride);
     let compressed_stride_packet = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_for_stride)
         .unwrap();
 
     assert_eq!(compressed_stride_packet.len(), 4);
@@ -50,10 +49,7 @@ fn establish_stride_after_ir(
     let comp_ctx = get_compressor_context(engine, cid);
     assert_eq!(comp_ctx.ts_stride, Some(stride_to_establish));
     assert_eq!(comp_ctx.last_sent_rtp_sn_full, sn_for_stride);
-    assert_eq!(
-        comp_ctx.last_sent_rtp_ts_full,
-        Timestamp::new(ts_for_stride)
-    );
+    assert_eq!(comp_ctx.last_sent_rtp_ts_full, ts_for_stride);
     assert_eq!(comp_ctx.last_sent_rtp_marker, base_marker);
 }
 
@@ -89,17 +85,17 @@ fn p1_uo1_sn_with_sn_wraparound() {
     let sn1: u16 = 65532;
     let marker1 = true; // Marker changes
     let comp_ctx_p1 = get_compressor_context(&engine, cid);
-    let sn_delta_p1 = sn1.wrapping_sub(comp_ctx_p1.last_sent_rtp_sn_full); // 65532 - 65531 = 1
+    let sn_delta_p1 = sn1.wrapping_sub(comp_ctx_p1.last_sent_rtp_sn_full.value()); // 65532 - 65531 = 1
     let expected_ts1_val = comp_ctx_p1
         .last_sent_rtp_ts_full
         .value()
         .wrapping_add(sn_delta_p1 as u32 * stride_val); // 1160 + 1*160 = 1320
 
     let headers1 =
-        create_rtp_headers(sn1, expected_ts1_val, marker1, ssrc).with_ip_id(ip_id_from_ir);
+        create_rtp_headers(sn1, expected_ts1_val, marker1, ssrc).with_ip_id(ip_id_from_ir.into());
     let generic1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
     let compressed1 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic1)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic1)
         .unwrap();
 
     assert_eq!(compressed1.len(), 3);
@@ -120,22 +116,22 @@ fn p1_uo1_sn_with_sn_wraparound() {
         .clone();
     assert_eq!(decomp1.rtp_sequence_number, sn1);
     assert_eq!(decomp1.rtp_marker, marker1);
-    assert_eq!(decomp1.rtp_timestamp, Timestamp::new(expected_ts1_val));
+    assert_eq!(decomp1.rtp_timestamp, expected_ts1_val);
 
     let comp_ctx_p2 = get_compressor_context(&engine, cid);
     let sn2: u16 = 2;
     let marker2 = false;
-    let sn_delta_p2 = sn2.wrapping_sub(comp_ctx_p2.last_sent_rtp_sn_full);
+    let sn_delta_p2 = sn2.wrapping_sub(*comp_ctx_p2.last_sent_rtp_sn_full);
     let expected_ts2_val = comp_ctx_p2
         .last_sent_rtp_ts_full
         .value()
         .wrapping_add(sn_delta_p2 as u32 * stride_val);
 
     let headers2 =
-        create_rtp_headers(sn2, expected_ts2_val, marker2, ssrc).with_ip_id(ip_id_from_ir);
+        create_rtp_headers(sn2, expected_ts2_val, marker2, ssrc).with_ip_id(ip_id_from_ir.into());
     let generic2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2.clone());
     let compressed2 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic2)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic2)
         .unwrap();
 
     assert_eq!(compressed2.len(), 3);
@@ -153,7 +149,7 @@ fn p1_uo1_sn_with_sn_wraparound() {
         .clone();
     assert_eq!(decomp2.rtp_sequence_number, sn2);
     assert_eq!(decomp2.rtp_marker, marker2);
-    assert_eq!(decomp2.rtp_timestamp, Timestamp::new(expected_ts2_val));
+    assert_eq!(decomp2.rtp_timestamp, expected_ts2_val);
 }
 
 /// Tests rapid marker bit changes forcing UO-1-SN packet selection.
@@ -206,16 +202,16 @@ fn p1_rapid_marker_toggling_forces_uo1() {
         let ts_val_for_packet = prev_ts_in_comp.wrapping_add(sn_delta_for_comp as u32 * stride_val);
 
         let headers = create_rtp_headers(
-            current_loop_sn,
+            *current_loop_sn,
             ts_val_for_packet,
             current_marker_in_loop,
             ssrc,
         )
-        .with_ip_id(ip_id_from_ir);
+        .with_ip_id(ip_id_from_ir.into());
         let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
 
         let compressed = engine
-            .compress(cid, Some(RohcProfile::RtpUdpIp), &generic)
+            .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic)
             .unwrap_or_else(|e| {
                 panic!(
                     "Compress failed iter {}: SN={}, M={}, PrevSN={}, PrevTS={}, Err: {:?}",
@@ -271,8 +267,7 @@ fn p1_rapid_marker_toggling_forces_uo1() {
             i
         );
         assert_eq!(
-            decomp.rtp_timestamp,
-            Timestamp::new(ts_val_for_packet),
+            decomp.rtp_timestamp, ts_val_for_packet,
             "Loop {}: TS mismatch",
             i
         );
@@ -333,9 +328,9 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let target_ip_id_pos = base_ip_id_for_pos_jump;
 
     let headers_positive_jump = RtpUdpIpv4Headers {
-        rtp_ssrc: ssrc,
+        rtp_ssrc: ssrc.into(),
         rtp_sequence_number: target_sn_pos,
-        rtp_timestamp: Timestamp::new(target_ts_val_pos),
+        rtp_timestamp: target_ts_val_pos.into(),
         rtp_marker: target_marker_pos,
         ip_identification: target_ip_id_pos,
         ip_src: comp_ctx_base_pos.ip_source,
@@ -348,8 +343,11 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let generic_positive_jump =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_positive_jump.clone());
 
-    let compressed_positive_jump_result =
-        engine.compress(cid, Some(RohcProfile::RtpUdpIp), &generic_positive_jump);
+    let compressed_positive_jump_result = engine.compress(
+        cid.into(),
+        Some(RohcProfile::RtpUdpIp),
+        &generic_positive_jump,
+    );
 
     let compressed_positive_jump = compressed_positive_jump_result
         .expect("engine.compress call failed for positive jump UO-1-SN packet");
@@ -380,7 +378,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
         base_ts_val_for_pos_jump.wrapping_add(sn_delta_large_pos as u32 * stride_val);
     assert_eq!(
         decomp_headers_positive.rtp_timestamp,
-        Timestamp::new(expected_decomp_ts_positive)
+        expected_decomp_ts_positive
     );
 
     let comp_ctx_before_neg_jump = get_compressor_context(&engine, cid);
@@ -391,7 +389,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     );
     assert_eq!(
         comp_ctx_before_neg_jump.last_sent_rtp_ts_full,
-        Timestamp::new(expected_decomp_ts_positive)
+        expected_decomp_ts_positive
     );
     assert_eq!(
         comp_ctx_before_neg_jump.last_sent_rtp_marker,
@@ -409,7 +407,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let marker_jump_neg = !last_marker_for_neg_calc; // Toggle marker again
 
     // This TS calculation will result in a very large TS value, forcing IR by "Large TS jump"
-    let sn_delta_neg_effective_for_ts_calc = sn_jump_neg.wrapping_sub(last_sn_for_neg_calc);
+    let sn_delta_neg_effective_for_ts_calc = sn_jump_neg.wrapping_sub(*last_sn_for_neg_calc);
     let ts_for_neg_jump_header_forcing_ir = last_ts_for_neg_calc
         .wrapping_add(sn_delta_neg_effective_for_ts_calc as u32 * stride_val)
         .wrapping_add(50000); // Add large offset
@@ -424,7 +422,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let generic_jump_neg = GenericUncompressedHeaders::RtpUdpIpv4(headers_jump_neg.clone());
 
     let compressed_jump_neg = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_jump_neg)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_jump_neg)
         .unwrap();
 
     assert_eq!(
@@ -441,7 +439,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
             assert_eq!(decomp_neg_headers.rtp_marker, marker_jump_neg);
             assert_eq!(
                 decomp_neg_headers.rtp_timestamp,
-                Timestamp::new(ts_for_neg_jump_header_forcing_ir)
+                ts_for_neg_jump_header_forcing_ir
             );
         }
         Err(e) => panic!(
@@ -496,12 +494,12 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
     let sn_delta_uo0 = 15u16;
     let sn_uo0_target = sn_after_stride_packet.wrapping_add(sn_delta_uo0);
     let expected_ts_uo0 = ts_after_stride_packet.wrapping_add(sn_delta_uo0 as u32 * stride_val);
-    let headers_uo0 = create_rtp_headers(sn_uo0_target, expected_ts_uo0, initial_marker, ssrc)
-        .with_ip_id(ip_id_from_ir);
+    let headers_uo0 = create_rtp_headers(*sn_uo0_target, expected_ts_uo0, initial_marker, ssrc)
+        .with_ip_id(ip_id_from_ir.into());
 
     let compressed_uo0 = engine
         .compress(
-            cid,
+            cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo0.clone()),
         )
@@ -514,7 +512,6 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
     );
     let _ = engine.decompress(&compressed_uo0).unwrap();
 
-    // Assuming infer_ts_stride_from_decompressed_ts is fixed in context.rs:
     let decomp_ctx_after_uo0 = get_decompressor_context(&engine, cid);
     assert_eq!(
         decomp_ctx_after_uo0.ts_stride,
@@ -538,15 +535,15 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
         prev_ts_for_uo1.wrapping_add(sn_delta_uo1 as u32 * stride_val);
 
     let headers_uo1 = create_rtp_headers(
-        sn_force_uo1_target,
+        *sn_force_uo1_target,
         ts_compressor_will_use_for_uo1_crc,
         initial_marker,
         ssrc,
     )
-    .with_ip_id(ip_id_from_ir.wrapping_add(1));
+    .with_ip_id(ip_id_from_ir.wrapping_add(1).into());
 
     let compressed_uo1 = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo1.clone()))
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo1.clone()))
         .unwrap_or_else(|e| panic!("Compress failed for UO-1-SN (delta > 15): {:?}. Header SN: {}, TS: {}. Prev Comp SN: {}, TS: {}",
                                     e, sn_force_uo1_target, ts_compressor_will_use_for_uo1_crc, prev_sn_for_uo1, prev_ts_for_uo1));
     assert_eq!(
@@ -560,8 +557,5 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
     let decomp_uo1 = decomp_uo1_res.unwrap().as_rtp_udp_ipv4().unwrap().clone();
 
     assert_eq!(decomp_uo1.rtp_sequence_number, sn_force_uo1_target);
-    assert_eq!(
-        decomp_uo1.rtp_timestamp,
-        Timestamp::new(ts_compressor_will_use_for_uo1_crc)
-    );
+    assert_eq!(decomp_uo1.rtp_timestamp, ts_compressor_will_use_for_uo1_crc);
 }

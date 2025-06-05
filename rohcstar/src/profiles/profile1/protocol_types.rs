@@ -2,7 +2,7 @@
 //!
 //! This module defines the structure for representing combined uncompressed
 //! RTP/UDP/IPv4 headers, which are the target for compression and the result
-//! of decompression for Profile 1. It also includes the `Timestamp` newtype.
+//! of decompression for Profile 1.
 
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
@@ -11,72 +11,7 @@ use std::net::Ipv4Addr;
 use crate::constants::{
     DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_MAX_CSRC_COUNT, RTP_VERSION,
 };
-
-/// A newtype representing an RTP Timestamp.
-///
-/// This provides type safety for timestamp values, distinguishing them from generic `u32` integers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Timestamp(pub u32);
-
-impl Timestamp {
-    /// Creates a new `Timestamp`.
-    ///
-    /// # Returns
-    /// A new `Timestamp` wrapping the provided value.
-    #[inline]
-    pub fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the raw `u32` value of the timestamp.
-    ///
-    /// # Returns
-    /// The underlying timestamp value as a `u32`.
-    #[inline]
-    pub fn value(self) -> u32 {
-        self.0
-    }
-
-    /// Performs a wrapping addition with a `u32` value, returning a new `Timestamp`.
-    ///
-    /// # Returns
-    /// A new `Timestamp` with the result of wrapping addition.
-    #[inline]
-    pub fn wrapping_add(self, other_val: u32) -> Self {
-        Self(self.0.wrapping_add(other_val))
-    }
-
-    /// Calculates the wrapping difference between this timestamp and another.
-    ///
-    /// # Returns
-    /// The wrapping difference as a `u32`.
-    #[inline]
-    pub fn wrapping_diff(self, other: Timestamp) -> u32 {
-        self.0.wrapping_sub(other.0)
-    }
-
-    /// Converts the timestamp to big-endian bytes.
-    ///
-    /// # Returns
-    /// A 4-byte array containing the timestamp in big-endian format.
-    #[inline]
-    pub fn to_be_bytes(self) -> [u8; 4] {
-        self.0.to_be_bytes()
-    }
-}
-
-impl From<u32> for Timestamp {
-    fn from(value: u32) -> Self {
-        Timestamp(value)
-    }
-}
-
-impl From<Timestamp> for u32 {
-    fn from(value: Timestamp) -> Self {
-        value.0
-    }
-}
+use crate::types::{IpId, SequenceNumber, Ssrc, Timestamp};
 
 /// Represents the combined uncompressed headers for an RTP/UDP/IPv4 packet.
 ///
@@ -98,7 +33,7 @@ pub struct RtpUdpIpv4Headers {
     /// Total length of the IP datagram (header + data) in bytes.
     pub ip_total_length: u16,
     /// IP identification field, used for fragmentation and reassembly.
-    pub ip_identification: u16,
+    pub ip_identification: IpId,
     /// "Don't Fragment" (DF) flag in the IP header.
     pub ip_dont_fragment: bool,
     /// "More Fragments" (MF) flag in the IP header.
@@ -143,11 +78,11 @@ pub struct RtpUdpIpv4Headers {
     /// RTP payload type (PT). Identifies the format of the RTP payload.
     pub rtp_payload_type: u8,
     /// RTP sequence number. Incremented for each RTP data packet sent.
-    pub rtp_sequence_number: u16,
+    pub rtp_sequence_number: SequenceNumber,
     /// RTP timestamp. Reflects the sampling instant of the first octet in the RTP data packet.
     pub rtp_timestamp: Timestamp,
     /// RTP Synchronization Source (SSRC) identifier. Uniquely identifies the source of an RTP stream.
-    pub rtp_ssrc: u32,
+    pub rtp_ssrc: Ssrc,
     /// List of RTP Contributing Source (CSRC) identifiers.
     pub rtp_csrc_list: Vec<u32>,
 }
@@ -159,7 +94,7 @@ impl Default for RtpUdpIpv4Headers {
             ip_dscp: 0,
             ip_ecn: 0,
             ip_total_length: 0,
-            ip_identification: 0,
+            ip_identification: IpId::new(0),
             ip_dont_fragment: false,
             ip_more_fragments: false,
             ip_fragment_offset: 0,
@@ -178,9 +113,9 @@ impl Default for RtpUdpIpv4Headers {
             rtp_csrc_count: 0,
             rtp_marker: false,
             rtp_payload_type: 0,
-            rtp_sequence_number: 0,
+            rtp_sequence_number: SequenceNumber::new(0),
             rtp_timestamp: Timestamp::new(0),
-            rtp_ssrc: 0,
+            rtp_ssrc: Ssrc::new(0),
             rtp_csrc_list: Vec::new(),
         }
     }
@@ -200,8 +135,8 @@ impl RtpUdpIpv4Headers {
     /// Primarily a test helper.
     ///
     /// # Returns
-    /// Modified headers with the specified IP identification value.
-    pub fn with_ip_id(mut self, ip_id: u16) -> Self {
+    /// Headers with the specified IP identification value.
+    pub fn with_ip_id(mut self, ip_id: IpId) -> Self {
         self.ip_identification = ip_id;
         self
     }
@@ -218,8 +153,8 @@ mod tests {
         pub ip_dst: Ipv4Addr,
         pub udp_src_port: u16,
         pub udp_dst_port: u16,
-        pub rtp_ssrc: u32,
-        pub rtp_sequence_number: u16,
+        pub rtp_ssrc: Ssrc,
+        pub rtp_sequence_number: SequenceNumber,
         pub rtp_timestamp: Timestamp,
         pub rtp_marker: bool,
     }
@@ -254,7 +189,7 @@ mod tests {
         assert_eq!(headers.rtp_version, RTP_VERSION);
         assert!(headers.ip_src.is_unspecified());
         assert!(headers.is_csrc_count_valid());
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(0));
+        assert_eq!(headers.rtp_timestamp, 0);
     }
 
     #[test]
@@ -264,9 +199,9 @@ mod tests {
             ip_dst: Ipv4Addr::new(2, 2, 2, 2),
             udp_src_port: 1000,
             udp_dst_port: 2000,
-            rtp_ssrc: 0x12345678,
-            rtp_sequence_number: 100,
-            rtp_timestamp: Timestamp::new(10000),
+            rtp_ssrc: 0x12345678.into(),
+            rtp_sequence_number: 100.into(),
+            rtp_timestamp: 10000.into(),
             rtp_marker: true,
         };
         let headers = TestData::to_rtp_headers(test_data);
@@ -275,7 +210,7 @@ mod tests {
         assert_eq!(headers.udp_dst_port, 2000);
         assert_eq!(headers.rtp_ssrc, 0x12345678);
         assert_eq!(headers.rtp_sequence_number, 100);
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(10000));
+        assert_eq!(headers.rtp_timestamp, 10000);
         assert!(headers.rtp_marker);
         assert!(headers.is_csrc_count_valid());
     }
@@ -308,9 +243,9 @@ mod tests {
             ip_dst: Ipv4Addr::new(10, 0, 0, 1),
             udp_src_port: 12345,
             udp_dst_port: 54321,
-            rtp_ssrc: rand::random(),
-            rtp_sequence_number: 1001,
-            rtp_timestamp: Timestamp::new(3000),
+            rtp_ssrc: rand::random::<u32>().into(),
+            rtp_sequence_number: 1001.into(),
+            rtp_timestamp: 3000.into(),
             rtp_marker: false,
         };
         let headers = TestData::to_rtp_headers(test_data);
@@ -326,10 +261,10 @@ mod tests {
         let headers1 = RtpUdpIpv4Headers::default();
         assert_eq!(headers1.ip_identification, 0);
 
-        let headers2 = headers1.with_ip_id(12345);
+        let headers2 = headers1.with_ip_id(IpId::new(12345));
         assert_eq!(headers2.ip_identification, 12345);
 
-        let headers3 = headers2.with_ip_id(5);
+        let headers3 = headers2.with_ip_id(IpId::new(5));
         assert_eq!(headers3.ip_identification, 5);
     }
 

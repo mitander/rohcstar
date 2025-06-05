@@ -32,4 +32,4 @@ pub use self::context::{Profile1CompressorContext, Profile1DecompressorContext};
 pub use self::discriminator::Profile1PacketType;
 pub use self::handler::Profile1Handler;
 pub use self::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-pub use self::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+pub use self::protocol_types::RtpUdpIpv4Headers;

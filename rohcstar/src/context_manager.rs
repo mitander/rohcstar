@@ -10,6 +10,7 @@ use std::fmt::Debug;
 
 use crate::error::RohcError;
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+use crate::types::ContextId;
 
 /// Manages multiple ROHC contexts (both compressor and decompressor) indexed by CID.
 ///
@@ -19,9 +20,9 @@ use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
 #[derive(Debug, Default)]
 pub struct ContextManager {
     /// Stores active compressor contexts, keyed by their Context ID (CID).
-    compressor_contexts: HashMap<u16, Box<dyn RohcCompressorContext>>,
+    compressor_contexts: HashMap<ContextId, Box<dyn RohcCompressorContext>>,
     /// Stores active decompressor contexts, keyed by their Context ID (CID).
-    decompressor_contexts: HashMap<u16, Box<dyn RohcDecompressorContext>>,
+    decompressor_contexts: HashMap<ContextId, Box<dyn RohcDecompressorContext>>,
 }
 
 impl ContextManager {
@@ -42,7 +43,11 @@ impl ContextManager {
     /// # Parameters
     /// - `cid`: The Context ID for the context being added.
     /// - `context`: The `Box<dyn RohcCompressorContext>` to add.
-    pub fn add_compressor_context(&mut self, cid: u16, context: Box<dyn RohcCompressorContext>) {
+    pub fn add_compressor_context(
+        &mut self,
+        cid: ContextId,
+        context: Box<dyn RohcCompressorContext>,
+    ) {
         self.compressor_contexts.insert(cid, context);
     }
 
@@ -55,7 +60,7 @@ impl ContextManager {
     /// - `context`: The `Box<dyn RohcDecompressorContext>` to add.
     pub fn add_decompressor_context(
         &mut self,
-        cid: u16,
+        cid: ContextId,
         context: Box<dyn RohcDecompressorContext>,
     ) {
         self.decompressor_contexts.insert(cid, context);
@@ -73,11 +78,11 @@ impl ContextManager {
     /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_compressor_context_mut(
         &mut self,
-        cid: u16,
+        cid: ContextId,
     ) -> Result<&mut Box<dyn RohcCompressorContext>, RohcError> {
         self.compressor_contexts
             .get_mut(&cid)
-            .ok_or(RohcError::ContextNotFound(cid))
+            .ok_or(RohcError::ContextNotFound(cid.into()))
     }
 
     /// Retrieves a mutable reference to a decompressor context by its CID.
@@ -92,11 +97,11 @@ impl ContextManager {
     /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_decompressor_context_mut(
         &mut self,
-        cid: u16,
+        cid: ContextId,
     ) -> Result<&mut Box<dyn RohcDecompressorContext>, RohcError> {
         self.decompressor_contexts
             .get_mut(&cid)
-            .ok_or(RohcError::ContextNotFound(cid))
+            .ok_or(RohcError::ContextNotFound(cid.into()))
     }
 
     /// Retrieves an immutable reference to a compressor context by its CID.
@@ -111,7 +116,7 @@ impl ContextManager {
     /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_compressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
     ) -> Result<&dyn RohcCompressorContext, RohcError> {
         self.compressor_contexts
             .get(&cid)
@@ -119,7 +124,7 @@ impl ContextManager {
                 let context_ref: &dyn RohcCompressorContext = &**boxed_context_ref;
                 context_ref
             })
-            .ok_or(RohcError::ContextNotFound(cid))
+            .ok_or(RohcError::ContextNotFound(cid.into()))
     }
 
     /// Retrieves an immutable reference to a decompressor context by its CID.
@@ -134,7 +139,7 @@ impl ContextManager {
     /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
     pub fn get_decompressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
     ) -> Result<&dyn RohcDecompressorContext, RohcError> {
         self.decompressor_contexts
             .get(&cid)
@@ -142,7 +147,7 @@ impl ContextManager {
                 let context_ref: &dyn RohcDecompressorContext = &**boxed_context_ref;
                 context_ref
             })
-            .ok_or(RohcError::ContextNotFound(cid))
+            .ok_or(RohcError::ContextNotFound(cid.into()))
     }
     /// Removes a compressor context by its CID.
     ///
@@ -153,7 +158,7 @@ impl ContextManager {
     /// The removed `Box<dyn RohcCompressorContext>` if it existed, otherwise `None`.
     pub fn remove_compressor_context(
         &mut self,
-        cid: u16,
+        cid: ContextId,
     ) -> Option<Box<dyn RohcCompressorContext>> {
         self.compressor_contexts.remove(&cid)
     }
@@ -167,7 +172,7 @@ impl ContextManager {
     /// The removed `Box<dyn RohcDecompressorContext>` if it existed, otherwise `None`.
     pub fn remove_decompressor_context(
         &mut self,
-        cid: u16,
+        cid: ContextId,
     ) -> Option<Box<dyn RohcDecompressorContext>> {
         self.decompressor_contexts.remove(&cid)
     }
@@ -221,7 +226,7 @@ impl ContextManager {
     /// An iterator yielding (CID, context) pairs for all active compressor contexts.
     pub fn compressor_contexts_iter(
         &self,
-    ) -> impl Iterator<Item = (&u16, &Box<dyn RohcCompressorContext>)> {
+    ) -> impl Iterator<Item = (&ContextId, &Box<dyn RohcCompressorContext>)> {
         self.compressor_contexts.iter()
     }
 
@@ -233,7 +238,7 @@ impl ContextManager {
     /// An iterator yielding (CID, context) pairs for all active decompressor contexts.
     pub fn decompressor_contexts_iter(
         &self,
-    ) -> impl Iterator<Item = (&u16, &Box<dyn RohcDecompressorContext>)> {
+    ) -> impl Iterator<Item = (&ContextId, &Box<dyn RohcDecompressorContext>)> {
         self.decompressor_contexts.iter()
     }
 }
@@ -248,7 +253,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockCompressorCtx {
-        cid: u16,
+        cid: ContextId,
         data: String,
         last_accessed: Instant,
     }
@@ -257,7 +262,7 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::Uncompressed
         }
-        fn cid(&self) -> u16 {
+        fn cid(&self) -> ContextId {
             self.cid
         }
         fn as_any(&self) -> &dyn Any {
@@ -276,7 +281,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockDecompressorCtx {
-        cid: u16,
+        cid: ContextId,
         updates: u32,
         last_accessed: Instant,
     }
@@ -285,10 +290,10 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::RtpUdpIp
         }
-        fn cid(&self) -> u16 {
+        fn cid(&self) -> ContextId {
             self.cid
         }
-        fn set_cid(&mut self, new_cid: u16) {
+        fn set_cid(&mut self, new_cid: ContextId) {
             self.cid = new_cid;
         }
         fn as_any(&self) -> &dyn Any {
@@ -317,7 +322,7 @@ mod tests {
         let mut manager = ContextManager::new();
         let initial_time = Instant::now();
         let ctx1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
-            cid: 1,
+            cid: 1.into(),
             data: "flow1".to_string(),
             last_accessed: initial_time,
         });
@@ -352,7 +357,7 @@ mod tests {
         );
         assert_eq!(retrieved_ctx1_again.last_accessed(), time_after_update); // Check time persists
 
-        let result_non_existent = manager.get_compressor_context_mut(99);
+        let result_non_existent = manager.get_compressor_context_mut(99.into());
         assert!(matches!(
             result_non_existent,
             Err(RohcError::ContextNotFound(99))
@@ -364,7 +369,7 @@ mod tests {
         let mut manager = ContextManager::new();
         let initial_time = Instant::now();
         let ctx1: Box<dyn RohcDecompressorContext> = Box::new(MockDecompressorCtx {
-            cid: 2,
+            cid: 2.into(),
             updates: 0,
             last_accessed: initial_time,
         });
@@ -398,7 +403,7 @@ mod tests {
         );
         assert_eq!(retrieved_ctx1_again.last_accessed(), time_after_update);
 
-        let result_non_existent = manager.get_decompressor_context_mut(100);
+        let result_non_existent = manager.get_decompressor_context_mut(100.into());
         assert!(matches!(
             result_non_existent,
             Err(RohcError::ContextNotFound(100))
@@ -409,17 +414,17 @@ mod tests {
     fn remove_contexts() {
         let mut manager = ContextManager::new();
         manager.add_compressor_context(
-            1,
+            1.into(),
             Box::new(MockCompressorCtx {
-                cid: 1,
+                cid: 1.into(),
                 data: "".to_string(),
                 last_accessed: Instant::now(),
             }),
         );
         manager.add_decompressor_context(
-            2,
+            2.into(),
             Box::new(MockDecompressorCtx {
-                cid: 2,
+                cid: 2.into(),
                 updates: 0,
                 last_accessed: Instant::now(),
             }),
@@ -428,13 +433,13 @@ mod tests {
         assert_eq!(manager.compressor_context_count(), 1);
         assert_eq!(manager.decompressor_context_count(), 1);
 
-        let removed_comp_ctx = manager.remove_compressor_context(1);
+        let removed_comp_ctx = manager.remove_compressor_context(1.into());
         assert!(removed_comp_ctx.is_some());
         assert_eq!(removed_comp_ctx.unwrap().cid(), 1);
         assert_eq!(manager.compressor_context_count(), 0);
-        assert!(manager.remove_compressor_context(1).is_none());
+        assert!(manager.remove_compressor_context(1.into()).is_none());
 
-        let removed_decomp_ctx = manager.remove_decompressor_context(2);
+        let removed_decomp_ctx = manager.remove_decompressor_context(2.into());
         assert!(removed_decomp_ctx.is_some());
         assert_eq!(removed_decomp_ctx.unwrap().cid(), 2);
         assert_eq!(manager.decompressor_context_count(), 0);
@@ -444,33 +449,33 @@ mod tests {
     fn clear_contexts() {
         let mut manager = ContextManager::new();
         manager.add_compressor_context(
-            1,
+            1.into(),
             Box::new(MockCompressorCtx {
-                cid: 1,
+                cid: 1.into(),
                 data: "".to_string(),
                 last_accessed: Instant::now(),
             }),
         );
         manager.add_compressor_context(
-            2,
+            2.into(),
             Box::new(MockCompressorCtx {
-                cid: 2,
+                cid: 2.into(),
                 data: "".to_string(),
                 last_accessed: Instant::now(),
             }),
         );
         manager.add_decompressor_context(
-            3,
+            3.into(),
             Box::new(MockDecompressorCtx {
-                cid: 3,
+                cid: 3.into(),
                 updates: 0,
                 last_accessed: Instant::now(),
             }),
         );
         manager.add_decompressor_context(
-            4,
+            4.into(),
             Box::new(MockDecompressorCtx {
-                cid: 4,
+                cid: 3.into(),
                 updates: 0,
                 last_accessed: Instant::now(),
             }),
@@ -492,12 +497,12 @@ mod tests {
         let mut manager = ContextManager::new();
         let time1 = Instant::now();
         let ctx_v1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
-            cid: 1,
+            cid: 1.into(),
             data: "version1".to_string(),
             last_accessed: time1,
         });
-        manager.add_compressor_context(1, ctx_v1);
-        let retrieved_v1 = manager.get_compressor_context(1).unwrap();
+        manager.add_compressor_context(1.into(), ctx_v1);
+        let retrieved_v1 = manager.get_compressor_context(1.into()).unwrap();
         assert_eq!(
             retrieved_v1
                 .as_any()
@@ -511,13 +516,13 @@ mod tests {
         let time2 = Instant::now();
         assert!(time2 > time1); // Ensure time has advanced
         let ctx_v2: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
-            cid: 1, // Same CID
+            cid: 1.into(), // Same CID
             data: "version2".to_string(),
             last_accessed: time2,
         });
-        manager.add_compressor_context(1, ctx_v2); // Overwrite
+        manager.add_compressor_context(1.into(), ctx_v2); // Overwrite
         assert_eq!(manager.compressor_context_count(), 1);
-        let retrieved_v2 = manager.get_compressor_context(1).unwrap();
+        let retrieved_v2 = manager.get_compressor_context(1.into()).unwrap();
         assert_eq!(
             retrieved_v2
                 .as_any()

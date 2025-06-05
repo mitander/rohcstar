@@ -6,7 +6,7 @@
 //! incoming ROHC packets and for building outgoing ROHC packets.
 
 use crate::packet_defs::RohcProfile;
-use crate::profiles::profile1::protocol_types::Timestamp;
+use crate::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
@@ -18,7 +18,7 @@ use std::net::Ipv4Addr;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IrPacket {
     /// Context Identifier (CID) associated with this ROHC flow.
-    pub cid: u16,
+    pub cid: ContextId,
     /// ROHC Profile Identifier. For Profile 1, this must be `RohcProfile::RtpUdpIp`.
     pub profile_id: RohcProfile,
     /// The 8-bit CRC calculated over the IR packet's payload.
@@ -33,10 +33,10 @@ pub struct IrPacket {
     /// UDP destination port.
     pub static_udp_dst_port: u16,
     /// RTP Synchronization Source (SSRC) identifier.
-    pub static_rtp_ssrc: u32,
+    pub static_rtp_ssrc: Ssrc,
 
     /// RTP sequence number from dynamic chain.
-    pub dyn_rtp_sn: u16,
+    pub dyn_rtp_sn: SequenceNumber,
     /// RTP timestamp from dynamic chain.
     pub dyn_rtp_timestamp: Timestamp,
     /// RTP marker bit from dynamic chain.
@@ -50,15 +50,15 @@ impl Default for IrPacket {
     /// Creates a default `IrPacket` for Profile 1.
     fn default() -> Self {
         Self {
-            cid: 0,
+            cid: ContextId::new(0),
             profile_id: RohcProfile::RtpUdpIp,
             crc8: 0,
             static_ip_src: Ipv4Addr::UNSPECIFIED,
             static_ip_dst: Ipv4Addr::UNSPECIFIED,
             static_udp_src_port: 0,
             static_udp_dst_port: 0,
-            static_rtp_ssrc: 0,
-            dyn_rtp_sn: 0,
+            static_rtp_ssrc: Ssrc::new(0),
+            dyn_rtp_sn: SequenceNumber::new(0),
             dyn_rtp_timestamp: Timestamp::new(0),
             dyn_rtp_marker: false,
             ts_stride: None,
@@ -73,7 +73,7 @@ impl Default for IrPacket {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Uo0Packet {
     /// Optional small Context Identifier (CID), if an Add-CID octet was present.
-    pub cid: Option<u8>,
+    pub cid: Option<ContextId>,
     /// Least Significant Bits (LSBs) of the RTP Sequence Number.
     pub sn_lsb: u8,
     /// The 3-bit CRC.
@@ -87,7 +87,7 @@ pub struct Uo0Packet {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Uo1Packet {
     /// Optional small Context Identifier (CID).
-    pub cid: Option<u8>,
+    pub cid: Option<ContextId>,
     /// Least Significant Bits (LSBs) of the RTP Sequence Number (used in UO-1-SN).
     pub sn_lsb: u16,
     /// Number of LSBs used for `sn_lsb` (used in UO-1-SN).
@@ -120,26 +120,26 @@ mod tests {
         assert_eq!(default_ir.profile_id, RohcProfile::RtpUdpIp);
         assert_eq!(default_ir.static_ip_src, Ipv4Addr::UNSPECIFIED);
         assert_eq!(default_ir.dyn_rtp_sn, 0);
-        assert_eq!(default_ir.dyn_rtp_timestamp, Timestamp::new(0));
+        assert_eq!(default_ir.dyn_rtp_timestamp, 0);
         assert_eq!(default_ir.ts_stride, None);
 
         let custom_ir = IrPacket {
-            cid: 5,
+            cid: 5.into(),
             profile_id: RohcProfile::RtpUdpIp,
             crc8: 0xAB,
             static_ip_src: "1.2.3.4".parse().unwrap(),
             static_ip_dst: "5.6.7.8".parse().unwrap(),
             static_udp_src_port: 1000,
             static_udp_dst_port: 2000,
-            static_rtp_ssrc: 0x12345678,
-            dyn_rtp_sn: 100,
-            dyn_rtp_timestamp: Timestamp::new(1000),
+            static_rtp_ssrc: 0x12345678.into(),
+            dyn_rtp_sn: 100.into(),
+            dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: true,
             ts_stride: Some(160),
         };
         assert_eq!(custom_ir.cid, 5);
         assert_eq!(custom_ir.static_rtp_ssrc, 0x12345678);
-        assert_eq!(custom_ir.dyn_rtp_timestamp, Timestamp::new(1000));
+        assert_eq!(custom_ir.dyn_rtp_timestamp, 1000);
         assert!(custom_ir.dyn_rtp_marker);
         assert_eq!(custom_ir.ts_stride, Some(160));
     }
@@ -159,11 +159,11 @@ mod tests {
         assert_eq!(custom_uo0_cid0.sn_lsb, 10);
 
         let custom_uo0_cid5 = Uo0Packet {
-            cid: Some(5),
+            cid: Some(5.into()),
             sn_lsb: 0x0F,
             crc3: 0x07,
         };
-        assert_eq!(custom_uo0_cid5.cid, Some(5));
+        assert_eq!(custom_uo0_cid5.cid, Some(5.into()));
         assert_eq!(custom_uo0_cid5.crc3, 7);
     }
 
@@ -203,16 +203,16 @@ mod tests {
     #[test]
     fn packet_types_serde_roundtrip() {
         let ir = IrPacket {
-            cid: 1,
+            cid: 1.into(),
             profile_id: RohcProfile::RtpUdpIp,
             crc8: 1,
             static_ip_src: "1.1.1.1".parse().unwrap(),
             static_ip_dst: "2.2.2.2".parse().unwrap(),
             static_udp_src_port: 10,
             static_udp_dst_port: 20,
-            static_rtp_ssrc: 30,
-            dyn_rtp_sn: 40,
-            dyn_rtp_timestamp: Timestamp::new(50),
+            static_rtp_ssrc: 30.into(),
+            dyn_rtp_sn: 40.into(),
+            dyn_rtp_timestamp: 50.into(),
             dyn_rtp_marker: true,
             ts_stride: Some(80),
         };
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(ir, de_ir);
 
         let uo0 = Uo0Packet {
-            cid: Some(2),
+            cid: Some(2.into()),
             sn_lsb: 3,
             crc3: 4,
         };

@@ -19,6 +19,7 @@ use crate::crc::CrcCalculators;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
+use crate::types::ContextId;
 
 /// ROHC Profile 1 handler for RTP/UDP/IP packet compression.
 ///
@@ -75,7 +76,7 @@ impl ProfileHandler for Profile1Handler {
     /// A boxed Profile 1 compressor context ready for packet compression.
     fn create_compressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
         ir_refresh_interval: u32,
         creation_time: Instant,
     ) -> Box<dyn RohcCompressorContext> {
@@ -99,7 +100,7 @@ impl ProfileHandler for Profile1Handler {
     /// A boxed Profile 1 decompressor context ready for packet decompression.
     fn create_decompressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
         creation_time: Instant,
     ) -> Box<dyn RohcDecompressorContext> {
         let mut ctx = Profile1DecompressorContext::new(cid);
@@ -272,21 +273,21 @@ mod tests {
     use crate::packet_defs::GenericUncompressedHeaders;
     use crate::profiles::profile1::constants::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
     use crate::profiles::profile1::context::Profile1CompressorMode;
-    use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
 
     #[test]
     fn handler_calls_compressor_for_ir() {
         let handler = Profile1Handler::new();
-        let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+        let mut comp_ctx_dyn = handler.create_compressor_context(0.into(), 5, Instant::now());
         let comp_ctx = comp_ctx_dyn
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
             .unwrap();
 
         let headers1 = RtpUdpIpv4Headers {
-            rtp_ssrc: 0x12345678, // Set a specific SSRC for the packet
-            rtp_sequence_number: 100,
-            rtp_timestamp: Timestamp::new(1000),
+            rtp_ssrc: 0x12345678.into(), // Set a specific SSRC for the packet
+            rtp_sequence_number: 100.into(),
+            rtp_timestamp: 1000.into(),
             ..Default::default()
         };
         // Initialize context with this SSRC and force IR mode
@@ -305,18 +306,18 @@ mod tests {
     #[test]
     fn handler_calls_state_machine_for_ir_decompression() {
         let handler = Profile1Handler::new();
-        let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+        let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
         let ir_data_content = super::super::packet_types::IrPacket {
-            cid: 0,
+            cid: 0.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "1.1.1.1".parse().unwrap(),
             static_ip_dst: "2.2.2.2".parse().unwrap(),
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
-            static_rtp_ssrc: 0xABCDE,
-            dyn_rtp_sn: 10,
-            dyn_rtp_timestamp: Timestamp::new(1000),
+            static_rtp_ssrc: 0xABCDE.into(),
+            dyn_rtp_sn: 10.into(),
+            dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: false,
             ts_stride: None,
             crc8: 0,

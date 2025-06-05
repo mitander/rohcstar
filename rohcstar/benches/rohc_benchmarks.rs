@@ -5,10 +5,10 @@ use rohcstar::{
     engine::RohcEngine,
     packet_defs::{GenericUncompressedHeaders, RohcProfile},
     profiles::profile1::{
-        Profile1Handler, RtpUdpIpv4Headers, Timestamp,
-        packet_processor::deserialize_rtp_udp_ipv4_headers,
+        Profile1Handler, RtpUdpIpv4Headers, packet_processor::deserialize_rtp_udp_ipv4_headers,
     },
     time::SystemClock,
+    types::{IpId, SequenceNumber},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -85,10 +85,10 @@ fn create_test_headers() -> RtpUdpIpv4Headers {
         udp_src_port: 10000,
         udp_dst_port: 20000,
         rtp_ssrc: 0x12345678,
-        rtp_sequence_number: 100,
+        rtp_sequence_number: SequenceNumber::new(100),
         rtp_timestamp: Timestamp::new(1000),
         rtp_marker: false,
-        ip_identification: 0x1234,
+        ip_identification: IpId::new(0x1234),
         ..Default::default()
     }
 }

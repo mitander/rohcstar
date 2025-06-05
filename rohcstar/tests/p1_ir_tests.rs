@@ -24,7 +24,6 @@ use rohcstar::profiles::profile1::context::{
     Profile1DecompressorMode,
 };
 use rohcstar::profiles::profile1::packet_processor::serialize_ir;
-use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
     P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler,
@@ -36,7 +35,7 @@ use rohcstar::time::SystemClock;
 fn p1_ir_packet_with_corrupted_crc_fails() {
     let handler = Profile1Handler::new();
     let test_crc_calculators = CrcCalculators::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
     let mut ir_packet_bytes = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
@@ -58,7 +57,7 @@ fn p1_ir_packet_with_corrupted_crc_fails() {
 fn p1_ir_packet_with_wrong_profile_id_fails() {
     let handler = Profile1Handler::new();
     let test_crc_calculators = CrcCalculators::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
     let mut ir_packet_bytes = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
@@ -89,7 +88,7 @@ fn p1_ir_packet_with_wrong_profile_id_fails() {
 fn p1_ir_packet_too_short_fails() {
     let handler = Profile1Handler::new();
     let test_crc_calculators = CrcCalculators::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
     let ir_data = create_ir_packet_data(0, 0x12345678, 100, 1000);
     let ir_packet_bytes_full = serialize_ir(&ir_data, &test_crc_calculators).unwrap();
@@ -125,7 +124,7 @@ fn p1_ir_packet_too_short_fails() {
 #[test]
 fn p1_compressor_context_static_fields_remain_constant() {
     let handler = Profile1Handler::new();
-    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+    let mut comp_ctx_dyn = handler.create_compressor_context(0.into(), 5, Instant::now());
 
     let ssrc1 = 0x11111111;
     let headers1 = create_rtp_headers(100, 1000, false, ssrc1);
@@ -170,7 +169,7 @@ fn p1_compressor_context_static_fields_remain_constant() {
 #[test]
 fn p1_decompressor_stays_in_no_context_without_ir() {
     let handler = Profile1Handler::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
     let uo0_packet_bytes = vec![0x09]; // A valid UO-0 packet for SN LSB 1, CRC3 1
     let result = handler.decompress(decomp_ctx_dyn.as_mut(), &uo0_packet_bytes);
 
@@ -211,7 +210,7 @@ fn p1_ir_packet_large_cid_not_supported_by_builder() {
         }) => {
             assert_eq!(field_name, "CID");
             assert!(description.contains(&format!(
-                "Large CID {} for IR packet Add-CID not supported",
+                "Large CID CID{} for IR packet Add-CID not supported",
                 large_cid
             )));
         }
@@ -237,7 +236,7 @@ fn p1_multiple_flows_different_cids() {
     let generic1_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1_flow1.clone());
 
     let compressed1_flow1 = engine
-        .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic1_flow1)
+        .compress(cid1.into(), Some(RohcProfile::RtpUdpIp), &generic1_flow1)
         .unwrap();
     assert_eq!(
         compressed1_flow1[0],
@@ -252,7 +251,7 @@ fn p1_multiple_flows_different_cids() {
     let generic1_flow2 = GenericUncompressedHeaders::RtpUdpIpv4(headers1_flow2.clone());
 
     let compressed1_flow2 = engine
-        .compress(cid2, Some(RohcProfile::RtpUdpIp), &generic1_flow2)
+        .compress(cid2.into(), Some(RohcProfile::RtpUdpIp), &generic1_flow2)
         .unwrap();
     assert_eq!(
         compressed1_flow2[0],
@@ -265,20 +264,22 @@ fn p1_multiple_flows_different_cids() {
     assert_eq!(engine.context_manager().decompressor_context_count(), 2);
 
     let comp_ctx_cid1 = get_compressor_context(&engine, cid1);
-    let ip_id_in_cid1_context =
-        get_ip_id_established_by_ir(headers1_flow1.rtp_sequence_number, headers1_flow1.rtp_ssrc);
+    let ip_id_in_cid1_context = get_ip_id_established_by_ir(
+        headers1_flow1.rtp_sequence_number.into(),
+        *headers1_flow1.rtp_ssrc,
+    );
     assert_eq!(comp_ctx_cid1.last_sent_ip_id_full, ip_id_in_cid1_context);
 
     let sn2_flow1 = headers1_flow1.rtp_sequence_number.wrapping_add(1);
     let ts2_flow1_val = headers1_flow1.rtp_timestamp.value();
     let marker2_flow1 = headers1_flow1.rtp_marker;
 
-    let headers2_flow1 = create_rtp_headers(sn2_flow1, ts2_flow1_val, marker2_flow1, ssrc1)
-        .with_ip_id(ip_id_in_cid1_context); // IP-ID same for UO-0
+    let headers2_flow1 = create_rtp_headers(*sn2_flow1, ts2_flow1_val, marker2_flow1, ssrc1)
+        .with_ip_id(ip_id_in_cid1_context.into()); // IP-ID same for UO-0
 
     let generic2_flow1 = GenericUncompressedHeaders::RtpUdpIpv4(headers2_flow1.clone());
     let compressed2_flow1 = engine
-        .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic2_flow1)
+        .compress(cid1.into(), Some(RohcProfile::RtpUdpIp), &generic2_flow1)
         .unwrap();
 
     assert_eq!(compressed2_flow1.len(), 2); // Add-CID + UO-0 byte
@@ -294,10 +295,7 @@ fn p1_multiple_flows_different_cids() {
     assert_eq!(decompressed2_flow1.rtp_ssrc, ssrc1);
     assert_eq!(decompressed2_flow1.rtp_sequence_number, sn2_flow1);
     assert_eq!(decompressed2_flow1.rtp_marker, marker2_flow1);
-    assert_eq!(
-        decompressed2_flow1.rtp_timestamp,
-        Timestamp::new(ts2_flow1_val)
-    );
+    assert_eq!(decompressed2_flow1.rtp_timestamp, ts2_flow1_val);
     assert_eq!(decompressed2_flow1.ip_identification, 0); // IP-ID reconstructed from LSBs or context (here, default 0 for UO-0)
 }
 
@@ -305,7 +303,7 @@ fn p1_multiple_flows_different_cids() {
 #[test]
 fn p1_ssrc_change_forces_context_reinitialization_and_ir() {
     let handler = Profile1Handler::new();
-    let mut comp_ctx_dyn = handler.create_compressor_context(0, 5, Instant::now());
+    let mut comp_ctx_dyn = handler.create_compressor_context(0.into(), 5, Instant::now());
 
     let ssrc1 = 0xAAAA0001;
     let headers1 = create_rtp_headers(200, 2000, false, ssrc1);
@@ -347,7 +345,7 @@ fn p1_ir_refresh_interval_edge_cases() {
     let handler = Profile1Handler::new();
     let ssrc = 0xCCCC0001;
 
-    let mut comp_ctx_dyn_0 = handler.create_compressor_context(0, 0, Instant::now());
+    let mut comp_ctx_dyn_0 = handler.create_compressor_context(0.into(), 0, Instant::now());
     let headers_ir0 = create_rtp_headers(1, 10, false, ssrc);
     let generic_ir0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir0.clone());
     let _ = handler
@@ -375,7 +373,7 @@ fn p1_ir_refresh_interval_edge_cases() {
     assert_eq!(comp_ctx_0.fo_packets_sent_since_ir, 9); // Counter still increments
 
     // Test with ir_refresh_interval = 1 (every packet is IR after initial)
-    let mut comp_ctx_dyn_1 = handler.create_compressor_context(0, 1, Instant::now());
+    let mut comp_ctx_dyn_1 = handler.create_compressor_context(0.into(), 1, Instant::now());
     let headers_ir1_1 = create_rtp_headers(101, 1010, false, ssrc);
     let compressed_ir1_1 = handler
         .compress(
@@ -407,7 +405,7 @@ fn p1_ir_refresh_interval_edge_cases() {
     // Test with a larger interval
     let large_interval = 3u32;
     let mut comp_ctx_dyn_large =
-        handler.create_compressor_context(0, large_interval, Instant::now());
+        handler.create_compressor_context(0.into(), large_interval, Instant::now());
     let headers_ir_large_init = create_rtp_headers(201, 2010, false, ssrc);
     let _ = handler
         .compress(
@@ -466,7 +464,7 @@ fn p1_ir_refresh_interval_edge_cases() {
 fn p1_ir_packet_with_static_only_d_bit_0_parse_successfully() {
     let handler = Profile1Handler::new();
     let test_crc_calculators = CrcCalculators::new();
-    let mut decomp_ctx_dyn = handler.create_decompressor_context(0, Instant::now());
+    let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
     // Manually construct IR-STATIC packet bytes
     let ir_data_for_static_part = create_ir_packet_data(0, 0xFEEDF00D, 10, 100); // Dyn values are placeholders
@@ -497,7 +495,7 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_successfully() {
             assert_eq!(h.rtp_ssrc, ir_data_for_static_part.static_rtp_ssrc);
             // Dynamic fields should be zeroed/default for IR-STATIC
             assert_eq!(h.rtp_sequence_number, 0);
-            assert_eq!(h.rtp_timestamp, Timestamp::new(0));
+            assert_eq!(h.rtp_timestamp, 0);
             assert!(!h.rtp_marker);
         }
         Ok(other) => panic!(
@@ -527,17 +525,14 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
     assert_eq!(decomp_ctx1.mode, Profile1DecompressorMode::FullContext);
     assert_eq!(decomp_ctx1.rtp_ssrc, ssrc1);
     assert_eq!(decomp_ctx1.last_reconstructed_rtp_sn_full, 10);
-    assert_eq!(
-        decomp_ctx1.last_reconstructed_rtp_ts_full,
-        Timestamp::new(100)
-    );
+    assert_eq!(decomp_ctx1.last_reconstructed_rtp_ts_full, 100,);
     assert!(!decomp_ctx1.last_reconstructed_rtp_marker);
 
     // Send a UO packet to confirm FC state
-    let headers_uo = create_rtp_headers(11, 100, false, ssrc1).with_ip_id(ip_id_from_ir1);
+    let headers_uo = create_rtp_headers(11, 100, false, ssrc1).with_ip_id(ip_id_from_ir1.into());
     let generic_uo = GenericUncompressedHeaders::RtpUdpIpv4(headers_uo);
     let compressed_uo = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_uo)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_uo)
         .unwrap();
     let _ = engine.decompress(&compressed_uo).unwrap();
 
@@ -547,13 +542,10 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
 
     let decomp_ctx2 = get_decompressor_context(&engine, cid);
     assert_eq!(decomp_ctx2.mode, Profile1DecompressorMode::FullContext); // Should reset to FC
-    assert_eq!(decomp_ctx2.rtp_ssrc, ssrc2); // Updated SSRC
-    assert_eq!(decomp_ctx2.last_reconstructed_rtp_sn_full, 50); // Updated SN
-    assert_eq!(
-        decomp_ctx2.last_reconstructed_rtp_ts_full,
-        Timestamp::new(500)
-    ); // Updated TS
-    assert!(decomp_ctx2.last_reconstructed_rtp_marker); // Updated Marker
+    assert_eq!(decomp_ctx2.rtp_ssrc, ssrc2);
+    assert_eq!(decomp_ctx2.last_reconstructed_rtp_sn_full, 50);
+    assert_eq!(decomp_ctx2.last_reconstructed_rtp_ts_full, 500,);
+    assert!(decomp_ctx2.last_reconstructed_rtp_marker);
     assert_eq!(decomp_ctx2.consecutive_crc_failures_in_fc, 0); // Reset on IR
 }
 
@@ -585,7 +577,11 @@ fn p1_ir_packet_processing_performance() {
     (0..num_packets).for_each(|i| {
         let cid = i as u16; // Use unique CIDs to force new context creation
         let compressed = engine
-            .compress(cid, Some(RohcProfile::RtpUdpIp), &uncompressed_packets[i])
+            .compress(
+                cid.into(),
+                Some(RohcProfile::RtpUdpIp),
+                &uncompressed_packets[i],
+            )
             .unwrap();
         compressed_packets.push(compressed);
     });

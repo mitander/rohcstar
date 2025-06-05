@@ -12,7 +12,7 @@ use super::packet_processor::{
     deserialize_uo1_ts, prepare_generic_uo_crc_input_payload,
     prepare_uo1_id_specific_crc_input_payload,
 };
-use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+use super::protocol_types::RtpUdpIpv4Headers;
 
 use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc::CrcCalculators;
@@ -20,6 +20,7 @@ use crate::encodings::decode_lsb;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::traits::RohcDecompressorContext;
+use crate::types::{IpId, SequenceNumber, Timestamp};
 
 /// Maximum number of lost packets to attempt recovery for in UO-1 packet types
 const MAX_SN_RECOVERY_ATTEMPTS: u16 = 8;
@@ -35,7 +36,7 @@ fn attempt_sn_recovery_for_uo1<F>(
     crc_calculators: &CrcCalculators,
     crc_error_type: &str,
     mut crc_input_builder: F,
-) -> Result<u16, RohcError>
+) -> Result<SequenceNumber, RohcError>
 where
     F: FnMut(u16, Timestamp) -> Vec<u8>,
 {
@@ -45,7 +46,7 @@ where
             .wrapping_add(1 + recovery_attempt);
         let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
 
-        let crc_input_bytes = crc_input_builder(candidate_sn, candidate_ts);
+        let crc_input_bytes = crc_input_builder(*candidate_sn, candidate_ts);
         let calculated_crc = crc_calculators.crc8(&crc_input_bytes);
 
         if calculated_crc == received_crc {
@@ -174,22 +175,22 @@ fn decompress_as_uo0(
     let cid_for_parse = if context.cid() == 0 {
         None
     } else {
-        Some(context.cid() as u8)
+        Some(context.cid())
     };
     let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
 
     let decoded_sn = decode_lsb(
         parsed_uo0.sn_lsb as u64,
-        context.last_reconstructed_rtp_sn_full as u64,
+        context.last_reconstructed_rtp_sn_full.as_u64(),
         context.expected_lsb_sn_width,
         context.p_sn,
     )? as u16;
 
-    let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn);
+    let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        decoded_sn,
+        decoded_sn.into(),
         decoded_ts,
         context.last_reconstructed_rtp_marker, // UO-0 implies marker is unchanged from context
     );
@@ -203,13 +204,13 @@ fn decompress_as_uo0(
         }));
     }
 
-    context.infer_ts_stride_from_decompressed_ts(decoded_ts, decoded_sn);
-    context.last_reconstructed_rtp_sn_full = decoded_sn;
+    context.infer_ts_stride_from_decompressed_ts(decoded_ts, SequenceNumber::new(decoded_sn));
+    context.last_reconstructed_rtp_sn_full = decoded_sn.into();
     context.last_reconstructed_rtp_ts_full = decoded_ts;
 
     Ok(reconstruct_headers_from_context(
         context,
-        decoded_sn,
+        decoded_sn.into(),
         decoded_ts,
         context.last_reconstructed_rtp_marker,
         context.last_reconstructed_ip_id_full,
@@ -231,16 +232,16 @@ fn decompress_as_uo1_sn(
 
     let decoded_sn = decode_lsb(
         parsed_uo1.sn_lsb as u64,
-        context.last_reconstructed_rtp_sn_full as u64,
+        context.last_reconstructed_rtp_sn_full.as_u64(),
         parsed_uo1.num_sn_lsb_bits,
         context.p_sn,
     )? as u16;
 
-    let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn);
+    let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        decoded_sn,
+        decoded_sn.into(),
         decoded_ts,
         parsed_uo1.marker, // UO-1-SN carries the marker bit.
     );
@@ -254,14 +255,14 @@ fn decompress_as_uo1_sn(
         }));
     }
 
-    context.infer_ts_stride_from_decompressed_ts(decoded_ts, decoded_sn);
-    context.last_reconstructed_rtp_sn_full = decoded_sn;
+    context.infer_ts_stride_from_decompressed_ts(decoded_ts, SequenceNumber::new(decoded_sn));
+    context.last_reconstructed_rtp_sn_full = decoded_sn.into();
     context.last_reconstructed_rtp_ts_full = decoded_ts;
     context.last_reconstructed_rtp_marker = parsed_uo1.marker;
 
     Ok(reconstruct_headers_from_context(
         context,
-        decoded_sn,
+        decoded_sn.into(),
         decoded_ts,
         parsed_uo1.marker,
         context.last_reconstructed_ip_id_full,
@@ -324,7 +325,7 @@ fn decompress_as_uo1_ts(
             |candidate_sn, _candidate_ts| {
                 prepare_generic_uo_crc_input_payload(
                     context.rtp_ssrc,
-                    candidate_sn,
+                    SequenceNumber::new(candidate_sn),
                     decoded_ts,
                     context.last_reconstructed_rtp_marker,
                 )
@@ -376,7 +377,7 @@ fn decompress_as_uo1_id(
 
     let decoded_ip_id = decode_lsb(
         ip_id_lsb_from_packet as u64,
-        context.last_reconstructed_ip_id_full as u64,
+        context.last_reconstructed_ip_id_full.as_u64(),
         num_ip_id_lsb_bits,
         context.p_ip_id,
     )? as u16;
@@ -404,7 +405,7 @@ fn decompress_as_uo1_id(
             |candidate_sn, candidate_ts| {
                 prepare_uo1_id_specific_crc_input_payload(
                     context.rtp_ssrc,
-                    candidate_sn,
+                    SequenceNumber::new(candidate_sn),
                     candidate_ts,
                     context.last_reconstructed_rtp_marker,
                     ip_id_lsb_from_packet as u8,
@@ -418,14 +419,14 @@ fn decompress_as_uo1_id(
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, decoded_sn);
     context.last_reconstructed_rtp_sn_full = decoded_sn;
     context.last_reconstructed_rtp_ts_full = decoded_ts;
-    context.last_reconstructed_ip_id_full = decoded_ip_id;
+    context.last_reconstructed_ip_id_full = decoded_ip_id.into();
 
     Ok(reconstruct_headers_from_context(
         context,
         decoded_sn,
         decoded_ts,
         context.last_reconstructed_rtp_marker,
-        decoded_ip_id,
+        decoded_ip_id.into(),
     ))
 }
 
@@ -481,7 +482,7 @@ fn decompress_as_uo1_rtp(
             |candidate_sn, candidate_ts| {
                 prepare_generic_uo_crc_input_payload(
                     context.rtp_ssrc,
-                    candidate_sn,
+                    SequenceNumber::new(candidate_sn),
                     candidate_ts,
                     parsed_uo1_rtp.marker,
                 )
@@ -517,10 +518,10 @@ fn decompress_as_uo1_rtp(
 /// by ROHC Profile 1 are set to default or common values.
 fn reconstruct_headers_from_context(
     context: &Profile1DecompressorContext,
-    sn: u16,
+    sn: SequenceNumber,
     ts: Timestamp,
     marker: bool,
-    ip_id: u16,
+    ip_id: IpId,
 ) -> RtpUdpIpv4Headers {
     debug_assert_ne!(
         context.rtp_ssrc, 0,
@@ -537,7 +538,6 @@ fn reconstruct_headers_from_context(
         rtp_timestamp: ts,
         rtp_marker: marker,
         ip_identification: ip_id,
-        // Fixed values for Profile 1
         ip_ihl: IPV4_STANDARD_IHL,
         ip_dscp: 0,
         ip_ecn: 0,
@@ -567,7 +567,7 @@ fn reconstruct_headers_from_context(
 /// reconstructed timestamp is returned (as per RFC 3095 UO-0 behavior when TS is static).
 fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
-    decoded_sn: u16,
+    decoded_sn: SequenceNumber,
 ) -> Timestamp {
     if let Some(stride) = context.ts_stride {
         let sn_delta = decoded_sn.wrapping_sub(context.last_reconstructed_rtp_sn_full);
@@ -627,12 +627,12 @@ mod tests {
         ip_id: u16,
         ssrc: u32,
     ) -> Profile1DecompressorContext {
-        let mut context = Profile1DecompressorContext::new(0);
-        context.rtp_ssrc = ssrc;
-        context.last_reconstructed_rtp_sn_full = sn;
-        context.last_reconstructed_rtp_ts_full = Timestamp::new(ts);
+        let mut context = Profile1DecompressorContext::new(0.into());
+        context.rtp_ssrc = ssrc.into();
+        context.last_reconstructed_rtp_sn_full = sn.into();
+        context.last_reconstructed_rtp_ts_full = ts.into();
         context.last_reconstructed_rtp_marker = marker;
-        context.last_reconstructed_ip_id_full = ip_id;
+        context.last_reconstructed_ip_id_full = ip_id.into();
         context.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         context.mode = Profile1DecompressorMode::FullContext;
         context
@@ -644,14 +644,14 @@ mod tests {
         ts_stride: u32,
         ssrc: u32,
     ) -> Profile1DecompressorContext {
-        let mut context = Profile1DecompressorContext::new(0);
-        context.rtp_ssrc = ssrc;
-        context.last_reconstructed_rtp_sn_full = initial_sn;
-        context.last_reconstructed_rtp_ts_full = Timestamp::new(initial_ts);
+        let mut context = Profile1DecompressorContext::new(0.into());
+        context.rtp_ssrc = ssrc.into();
+        context.last_reconstructed_rtp_sn_full = initial_sn.into();
+        context.last_reconstructed_rtp_ts_full = initial_ts.into();
         context.last_reconstructed_rtp_marker = false;
-        context.last_reconstructed_ip_id_full = 100;
+        context.last_reconstructed_ip_id_full = 100.into();
         context.ts_stride = Some(ts_stride);
-        context.ts_offset = Timestamp::new(initial_ts);
+        context.ts_offset = initial_ts.into();
         context.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         context.mode = Profile1DecompressorMode::FullContext;
         context
@@ -665,7 +665,12 @@ mod tests {
         crc_calculators: &CrcCalculators,
     ) -> Vec<u8> {
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap() as u8;
-        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            target_sn.into(),
+            expected_ts,
+            marker,
+        );
         let crc3 = crc_calculators.crc3(&crc_input);
 
         let uo0_packet = Uo0Packet {
@@ -685,7 +690,7 @@ mod tests {
 
         // SN 100 → 101, TS should be 1000 + 160 = 1160
         let target_sn = 101;
-        let expected_ts = Timestamp::new(1160);
+        let expected_ts: Timestamp = 1160.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
         let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators);
@@ -706,25 +711,21 @@ mod tests {
         let mut context = create_context_with_stride(50, 2000, ts_stride, ssrc);
 
         // Packet 1: SN 50 → 51, TS 2000 → 2160
-        let first_packet =
-            build_uo0_with_crc(51, Timestamp::new(2160), false, ssrc, &crc_calculators);
+        let first_packet = build_uo0_with_crc(51, 2160.into(), false, ssrc, &crc_calculators);
         let first_headers =
             decompress_as_uo0(&mut context, &first_packet, &crc_calculators).unwrap();
-        assert_eq!(first_headers.rtp_timestamp, Timestamp::new(2160));
-
+        assert_eq!(first_headers.rtp_timestamp, 2160);
         // Packet 2: SN 51 → 52, TS 2160 → 2320
-        let second_packet =
-            build_uo0_with_crc(52, Timestamp::new(2320), false, ssrc, &crc_calculators);
+        let second_packet = build_uo0_with_crc(52, 2320.into(), false, ssrc, &crc_calculators);
         let second_headers =
             decompress_as_uo0(&mut context, &second_packet, &crc_calculators).unwrap();
-        assert_eq!(second_headers.rtp_timestamp, Timestamp::new(2320));
+        assert_eq!(second_headers.rtp_timestamp, 2320);
 
         // Packet 3: SN 52 → 53, TS 2320 → 2480
-        let third_packet =
-            build_uo0_with_crc(53, Timestamp::new(2480), false, ssrc, &crc_calculators);
+        let third_packet = build_uo0_with_crc(53, 2480.into(), false, ssrc, &crc_calculators);
         let third_headers =
             decompress_as_uo0(&mut context, &third_packet, &crc_calculators).unwrap();
-        assert_eq!(third_headers.rtp_timestamp, Timestamp::new(2480));
+        assert_eq!(third_headers.rtp_timestamp, 2480);
     }
 
     #[test]
@@ -735,7 +736,7 @@ mod tests {
         // No stride set in create_test_context by default
 
         let target_sn = 101;
-        let expected_ts = Timestamp::new(1000); // Should remain unchanged
+        let expected_ts: Timestamp = 1000.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
         let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
@@ -751,11 +752,12 @@ mod tests {
 
         // SN wraps: 65535 → 0, TS wraps
         let target_sn = 0;
-        let expected_ts = Timestamp::new((u32::MAX - 80).wrapping_add(ts_stride));
+        let expected_ts_val = (u32::MAX - 80).wrapping_add(ts_stride);
+        let expected_ts: Timestamp = expected_ts_val.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
         let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
-        assert_eq!(result.rtp_timestamp, expected_ts);
+        assert_eq!(result.rtp_timestamp, expected_ts_val);
     }
 
     #[test]
@@ -768,12 +770,17 @@ mod tests {
 
         // SN 200 → 205 (delta=5), TS should be 3000 + (5 * 160) = 3800
         let target_sn = 205;
-        let expected_ts = Timestamp::new(3800);
+        let expected_ts_val = 3800;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let target_marker = true;
 
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input =
-            prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, target_marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            target_sn.into(),
+            expected_ts,
+            target_marker,
+        );
         let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
@@ -789,7 +796,7 @@ mod tests {
         assert!(result.is_ok());
 
         let headers = result.unwrap();
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
     }
 
     #[test]
@@ -802,14 +809,15 @@ mod tests {
 
         // SN 300 → 301 (delta=1), TS should be 4000 + 160 = 4160
         let target_sn = 301;
-        let expected_ts = Timestamp::new(4160);
+        let expected_ts_val = 4160;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let target_ip_id = 35;
         let ip_id_lsb =
             encode_lsb(target_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT).unwrap() as u8;
 
         let crc_input = prepare_uo1_id_specific_crc_input_payload(
-            ssrc,
-            target_sn,
+            ssrc.into(),
+            target_sn.into(),
             expected_ts,
             false,
             ip_id_lsb,
@@ -828,7 +836,7 @@ mod tests {
         assert!(result.is_ok());
 
         let headers = result.unwrap();
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
     }
 
     #[test]
@@ -839,14 +847,14 @@ mod tests {
         let mut context = create_context_with_stride(400, 5000, ts_stride, ssrc);
 
         // Packet 1: UO-0, SN 400 → 401, TS 5000 → 5160
-        let uo0_packet =
-            build_uo0_with_crc(401, Timestamp::new(5160), false, ssrc, &crc_calculators);
+        let uo0_packet = build_uo0_with_crc(401, 5160.into(), false, ssrc, &crc_calculators);
         let uo0_headers = decompress_as_uo0(&mut context, &uo0_packet, &crc_calculators).unwrap();
-        assert_eq!(uo0_headers.rtp_timestamp, Timestamp::new(5160));
+        assert_eq!(uo0_headers.rtp_timestamp, 5160);
 
         // Packet 2: UO-1-SN, SN 401 → 402, TS 5160 → 5320
         let sn_lsb = encode_lsb(402u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, 402, Timestamp::new(5320), true);
+        let crc_input =
+            prepare_generic_uo_crc_input_payload(ssrc.into(), 402.into(), 5320.into(), true);
         let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
@@ -858,7 +866,7 @@ mod tests {
         };
         let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
         let uo1_headers = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
-        assert_eq!(uo1_headers.rtp_timestamp, Timestamp::new(5320));
+        assert_eq!(uo1_headers.rtp_timestamp, 5320);
     }
 
     #[test]
@@ -870,11 +878,12 @@ mod tests {
 
         // Large SN jump: 1000 → 1010 (delta=10), TS should be 10000 + (10 * 160) = 11600
         let target_sn = 1010;
-        let expected_ts = Timestamp::new(11600);
+        let expected_ts_val = 11600;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
         let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
-        assert_eq!(result.rtp_timestamp, expected_ts);
+        assert_eq!(result.rtp_timestamp, expected_ts_val);
     }
 
     #[test]
@@ -886,15 +895,15 @@ mod tests {
             let mut context = create_context_with_stride(100, 1000, stride, ssrc);
 
             let target_sn = 102; // delta = 2
-            let expected_ts = Timestamp::new(1000 + (2 * stride));
+            let expected_ts_val = 1000 + (2 * stride);
+            let expected_ts: Timestamp = expected_ts_val.into();
             let uo0_bytes =
                 build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
             let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
-            assert_eq!(result.rtp_timestamp, expected_ts);
+            assert_eq!(result.rtp_timestamp, expected_ts_val);
         }
     }
-
     #[test]
     fn p1_crc_mismatch_detection() {
         let crc_calculators = CrcCalculators::new();
@@ -905,18 +914,17 @@ mod tests {
         let target_sn = 101u16;
         let sn_lsb = encode_lsb(target_sn as u64, context.expected_lsb_sn_width).unwrap() as u8;
 
-        // Calculate the TS the decompressor WILL use for its internal CRC check
-        let ts_decompressor_will_use = calculate_reconstructed_ts_implicit(&context, target_sn);
+        let ts_decompressor_will_use =
+            calculate_reconstructed_ts_implicit(&context, target_sn.into());
 
         let correct_crc_input = prepare_generic_uo_crc_input_payload(
-            ssrc,
-            target_sn,
-            ts_decompressor_will_use, // Decompressor's basis for CRC check
+            ssrc.into(),
+            target_sn.into(),
+            ts_decompressor_will_use,
             context.last_reconstructed_rtp_marker,
         );
         let correct_crc3 = crc_calculators.crc3(&correct_crc_input);
 
-        // Ensure wrong_crc3 is actually different and still 3-bit
         let wrong_crc3_in_packet = (correct_crc3 + 1) & 0x07;
 
         let uo0_packet_with_bad_crc = Uo0Packet {
@@ -934,8 +942,8 @@ mod tests {
         );
 
         if let Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected,   // This is the CRC from the packet
-            calculated, // This is what the decompressor calculated
+            expected,
+            calculated,
             crc_type,
         })) = result
         {
@@ -960,16 +968,15 @@ mod tests {
         let mut context = create_test_context(100, 1000, false, 10, ssrc);
         context.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
 
-        // Build UO-1-TS packet
-        let new_ts = Timestamp::new(1500);
+        let new_ts_val = 1500;
+        let new_ts: Timestamp = new_ts_val.into();
         let ts_lsb = encode_lsb(new_ts.value() as u64, P1_UO1_TS_LSB_WIDTH_DEFAULT).unwrap() as u16;
 
-        // SN increments implicitly
         let expected_sn = 101;
-        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, expected_sn, new_ts, false);
+        let crc_input =
+            prepare_generic_uo_crc_input_payload(ssrc.into(), expected_sn.into(), new_ts, false);
         let crc8 = crc_calculators.crc8(&crc_input);
 
-        // Build packet manually to ensure proper format
         let packet = vec![
             P1_UO_1_TS_DISCRIMINATOR,
             (ts_lsb >> 8) as u8,
@@ -982,7 +989,7 @@ mod tests {
 
         let headers = result.unwrap();
         assert_eq!(headers.rtp_sequence_number, expected_sn);
-        assert_eq!(headers.rtp_timestamp, new_ts);
+        assert_eq!(headers.rtp_timestamp, new_ts_val);
     }
 
     #[test]
@@ -993,17 +1000,20 @@ mod tests {
         let mut context = create_context_with_stride(100, 1000, ts_stride, ssrc);
         context.ts_scaled_mode = true;
 
-        // Build UO-1-RTP packet with TS_SCALED = 2
         let ts_scaled = 2u8;
         let expected_sn = 101;
-        let expected_ts = Timestamp::new(1000 + (2 * ts_stride)); // 1320
+        let expected_ts_val = 1000 + (2 * ts_stride); // 1320
+        let expected_ts: Timestamp = expected_ts_val.into();
         let marker = true;
 
-        let crc_input =
-            prepare_generic_uo_crc_input_payload(ssrc, expected_sn, expected_ts, marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            expected_sn.into(),
+            expected_ts,
+            marker,
+        );
         let crc8 = crc_calculators.crc8(&crc_input);
 
-        // Build packet manually
         let packet = vec![
             P1_UO_1_RTP_DISCRIMINATOR_BASE
                 | (if marker {
@@ -1020,7 +1030,7 @@ mod tests {
 
         let headers = result.unwrap();
         assert_eq!(headers.rtp_sequence_number, expected_sn);
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
         assert_eq!(headers.rtp_marker, marker);
     }
 
@@ -1029,9 +1039,8 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let ssrc = 0xAAAAAAAA;
         let mut context = create_test_context(100, 1000, false, 10, ssrc);
-        // No stride set (ts_stride = None by default from create_test_context)
 
-        let packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 1, 0xFF]; // Example UO-1-RTP
+        let packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 1, 0xFF];
 
         let result = decompress_as_uo1_rtp(&mut context, &packet, &crc_calculators);
         assert!(result.is_err());
@@ -1053,27 +1062,25 @@ mod tests {
     #[test]
     fn p1_ir_packet_profile_mismatch() {
         let crc_calculators = CrcCalculators::new();
-        let mut context = Profile1DecompressorContext::new(0); // Fresh context for parsing
+        let mut context = Profile1DecompressorContext::new(0.into());
+        let wrong_profile_id = RohcProfile::UdpIp;
 
-        let wrong_profile_id = RohcProfile::UdpIp; // Profile 0x02, different from P1 (0x01)
-
-        // Construct a minimal but complete IR-STATIC packet
         let mut ir_packet_payload_for_crc = Vec::new();
-        ir_packet_payload_for_crc.push(u8::from(wrong_profile_id)); // The differing profile ID
-        ir_packet_payload_for_crc.extend_from_slice(&[0u8; P1_STATIC_CHAIN_LENGTH_BYTES]); // Dummy static chain
+        ir_packet_payload_for_crc.push(u8::from(wrong_profile_id));
+        ir_packet_payload_for_crc.extend_from_slice(&[0u8; P1_STATIC_CHAIN_LENGTH_BYTES]);
 
         let crc_over_payload = crc_calculators.crc8(&ir_packet_payload_for_crc);
 
         let mut full_ir_static_packet_bytes = Vec::new();
-        full_ir_static_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY); // Type: IR-STATIC (D=0)
-        full_ir_static_packet_bytes.extend_from_slice(&ir_packet_payload_for_crc); // Profile ID + Static Chain
-        full_ir_static_packet_bytes.push(crc_over_payload); // Calculated CRC
+        full_ir_static_packet_bytes.push(P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY);
+        full_ir_static_packet_bytes.extend_from_slice(&ir_packet_payload_for_crc);
+        full_ir_static_packet_bytes.push(crc_over_payload);
 
         let result = decompress_as_ir(
             &mut context,
-            &full_ir_static_packet_bytes, // Pass the full packet including type octet
+            &full_ir_static_packet_bytes,
             &crc_calculators,
-            RohcProfile::RtpUdpIp, // Handler expects RtpUdpIp
+            RohcProfile::RtpUdpIp,
         );
 
         assert!(
@@ -1102,58 +1109,57 @@ mod tests {
         let mut context = create_test_context(100, 1000, false, 10, ssrc);
 
         let target_sn = 101;
-        let expected_ts = Timestamp::new(1000); // UO-0 implies TS unchanged if no stride
+        let expected_ts_val = 1000; // UO-0 implies TS unchanged if no stride
+        let expected_ts: Timestamp = expected_ts_val.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
         let _ = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators).unwrap();
 
-        // Verify context was updated
         assert_eq!(context.last_reconstructed_rtp_sn_full, target_sn);
-        assert_eq!(context.last_reconstructed_rtp_ts_full, expected_ts);
+        assert_eq!(context.last_reconstructed_rtp_ts_full, expected_ts_val);
         assert!(!context.last_reconstructed_rtp_marker);
     }
 
     #[test]
     fn p1_stride_inference_updates() {
         let mut context = create_test_context(100, 1000, false, 10, 0xCCCCCCCC);
-        // Initially no stride
         assert!(context.ts_stride.is_none());
 
-        context.last_reconstructed_rtp_sn_full = 100;
-        context.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
-
-        context.infer_ts_stride_from_decompressed_ts(Timestamp::new(1200), 101);
-
+        context.last_reconstructed_rtp_sn_full = 100.into();
+        context.last_reconstructed_rtp_ts_full = 1000.into();
+        context.infer_ts_stride_from_decompressed_ts(1200.into(), 101.into());
         assert_eq!(context.ts_stride, Some(200));
-        assert_eq!(context.ts_offset, Timestamp::new(1000));
+        assert_eq!(context.ts_offset, 1000);
     }
 
     #[test]
     fn p1_reconstruct_headers_values() {
-        let mut context = Profile1DecompressorContext::new(0);
-        context.rtp_ssrc = 0xDEADBEEF;
+        let mut context = Profile1DecompressorContext::new(0.into());
+        context.rtp_ssrc = 0xDEADBEEF.into();
         context.ip_source = "10.0.0.1".parse().unwrap();
         context.ip_destination = "10.0.0.2".parse().unwrap();
         context.udp_source_port = 5000;
         context.udp_destination_port = 6000;
 
-        let headers =
-            reconstruct_headers_from_context(&context, 12345, Timestamp::new(98765), true, 54321);
+        let headers = reconstruct_headers_from_context(
+            &context,
+            12345.into(),
+            98765.into(),
+            true,
+            54321.into(),
+        );
 
-        // Verify static chain
         assert_eq!(headers.rtp_ssrc, 0xDEADBEEF);
         assert_eq!(headers.ip_src.to_string(), "10.0.0.1");
         assert_eq!(headers.ip_dst.to_string(), "10.0.0.2");
         assert_eq!(headers.udp_src_port, 5000);
         assert_eq!(headers.udp_dst_port, 6000);
 
-        // Verify dynamic fields
         assert_eq!(headers.rtp_sequence_number, 12345);
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(98765));
+        assert_eq!(headers.rtp_timestamp, 98765);
         assert!(headers.rtp_marker);
         assert_eq!(headers.ip_identification, 54321);
 
-        // Verify defaults
         assert_eq!(headers.ip_ttl, DEFAULT_IPV4_TTL);
         assert_eq!(headers.ip_protocol, IP_PROTOCOL_UDP);
         assert_eq!(headers.rtp_version, RTP_VERSION);
@@ -1164,19 +1170,10 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let ssrc = 0xEEEEEEEE;
         let mut context = create_test_context(65530, 1000, false, 10, ssrc);
-        context.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT; // e.g., 4 bits
+        context.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
 
-        // Test wraparound: 65530 → 2 (SN_LSB should be 2)
-        // Ref is 65530, LSB width is 4, p_offset is 0 for SN.
-        // decode_lsb(2, 65530, 4, 0) should yield 2.
         let target_sn = 2;
-        let uo0_bytes = build_uo0_with_crc(
-            target_sn,
-            Timestamp::new(1000),
-            false,
-            ssrc,
-            &crc_calculators,
-        );
+        let uo0_bytes = build_uo0_with_crc(target_sn, 1000.into(), false, ssrc, &crc_calculators);
 
         let result = decompress_as_uo0(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
@@ -1187,20 +1184,19 @@ mod tests {
     fn p1_marker_bit_transitions() {
         let crc_calculators = CrcCalculators::new();
         let ssrc = 0xFFFFFFFF;
-        let mut context = create_test_context(100, 1000, false, 10, ssrc); // Marker is false in context
-        context.expected_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT; // Assume UO-1-SN for marker bit encoding
-        context.ts_stride = Some(160); // UO-1-SN needs stride for TS reconstruction.
+        let mut context = create_test_context(100, 1000, false, 10, ssrc);
+        context.expected_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
+        context.ts_stride = Some(160);
 
-        // UO-1-SN with marker bit set
         let target_sn = 101;
         let target_marker = true;
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let expected_ts_for_crc = calculate_reconstructed_ts_implicit(&context, target_sn);
+        let expected_ts_for_crc = calculate_reconstructed_ts_implicit(&context, target_sn.into());
 
         let crc_input = prepare_generic_uo_crc_input_payload(
-            ssrc,
-            target_sn,
-            expected_ts_for_crc, // Use implicitly calculated TS for CRC
+            ssrc.into(),
+            target_sn.into(),
+            expected_ts_for_crc,
             target_marker,
         );
         let crc8 = crc_calculators.crc8(&crc_input);
@@ -1240,16 +1236,16 @@ mod tests {
         let mut context = create_context_with_stride(100, 1000, ts_stride, ssrc);
 
         let target_sn = 101;
-        let expected_ts = Timestamp::new(1160);
+        let expected_ts_val = 1160;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let uo0_bytes = build_uo0_with_crc(target_sn, expected_ts, false, ssrc, &crc_calculators);
 
-        // Test that decompress_as_uo correctly dispatches to decompress_as_uo0
         let result = decompress_as_uo(&mut context, &uo0_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
         assert_eq!(headers.rtp_sequence_number, target_sn);
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
     }
 
     #[test]
@@ -1261,12 +1257,17 @@ mod tests {
         context.expected_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
 
         let target_sn = 205;
-        let expected_ts = Timestamp::new(3800);
+        let expected_ts_val = 3800;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let target_marker = true;
 
         let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
-        let crc_input =
-            prepare_generic_uo_crc_input_payload(ssrc, target_sn, expected_ts, target_marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            target_sn.into(),
+            expected_ts,
+            target_marker,
+        );
         let crc8 = crc_calculators.crc8(&crc_input);
 
         let uo1_packet = Uo1Packet {
@@ -1278,12 +1279,11 @@ mod tests {
         };
         let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
 
-        // Test that decompress_as_uo correctly dispatches to decompress_as_uo1_sn
         let result = decompress_as_uo(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
         assert_eq!(headers.rtp_marker, target_marker);
     }
 
@@ -1294,11 +1294,13 @@ mod tests {
         let mut context = create_test_context(100, 1000, false, 10, ssrc);
         context.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
 
-        let new_ts = Timestamp::new(1500);
+        let new_ts_val = 1500;
+        let new_ts: Timestamp = new_ts_val.into();
         let ts_lsb = encode_lsb(new_ts.value() as u64, P1_UO1_TS_LSB_WIDTH_DEFAULT).unwrap() as u16;
 
         let expected_sn = 101;
-        let crc_input = prepare_generic_uo_crc_input_payload(ssrc, expected_sn, new_ts, false);
+        let crc_input =
+            prepare_generic_uo_crc_input_payload(ssrc.into(), expected_sn.into(), new_ts, false);
         let crc8 = crc_calculators.crc8(&crc_input);
 
         let packet = vec![
@@ -1308,13 +1310,12 @@ mod tests {
             crc8,
         ];
 
-        // Test that decompress_as_uo correctly dispatches to decompress_as_uo1_ts
         let result = decompress_as_uo(&mut context, &packet, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
         assert_eq!(headers.rtp_sequence_number, expected_sn);
-        assert_eq!(headers.rtp_timestamp, new_ts);
+        assert_eq!(headers.rtp_timestamp, new_ts_val);
     }
 
     #[test]
@@ -1325,18 +1326,17 @@ mod tests {
         let mut context = create_context_with_stride(300, 4000, ts_stride, ssrc);
         context.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
 
-        // Set up IP-ID reference value for LSB decoding to work correctly
-        let target_ip_id = 300; // Use a value close to what's likely in context
-        context.last_reconstructed_ip_id_full = 291; // Set reference for LSB decoding
-
+        let target_ip_id = 300;
+        context.last_reconstructed_ip_id_full = 291.into();
         let target_sn = 301;
-        let expected_ts = Timestamp::new(4160);
+        let expected_ts_val = 4160;
+        let expected_ts: Timestamp = expected_ts_val.into();
         let ip_id_lsb =
             encode_lsb(target_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT).unwrap() as u8;
 
         let crc_input = prepare_uo1_id_specific_crc_input_payload(
-            ssrc,
-            target_sn,
+            ssrc.into(),
+            target_sn.into(),
             expected_ts,
             false,
             ip_id_lsb,
@@ -1351,12 +1351,11 @@ mod tests {
         };
         let uo1_bytes = serialize_uo1_id(&uo1_packet).unwrap();
 
-        // Test that decompress_as_uo correctly dispatches to decompress_as_uo1_id
         let result = decompress_as_uo(&mut context, &uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
         assert_eq!(headers.ip_identification, target_ip_id);
     }
 
@@ -1370,11 +1369,16 @@ mod tests {
 
         let ts_scaled = 2u8;
         let expected_sn = 101;
-        let expected_ts = Timestamp::new(1000 + (2 * ts_stride));
+        let expected_ts_val = 1000 + (2 * ts_stride);
+        let expected_ts: Timestamp = expected_ts_val.into();
         let marker = true;
 
-        let crc_input =
-            prepare_generic_uo_crc_input_payload(ssrc, expected_sn, expected_ts, marker);
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            expected_sn.into(),
+            expected_ts,
+            marker,
+        );
         let crc8 = crc_calculators.crc8(&crc_input);
 
         let packet = vec![
@@ -1388,13 +1392,12 @@ mod tests {
             crc8,
         ];
 
-        // Test that decompress_as_uo correctly dispatches to decompress_as_uo1_rtp
         let result = decompress_as_uo(&mut context, &packet, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
         assert_eq!(headers.rtp_sequence_number, expected_sn);
-        assert_eq!(headers.rtp_timestamp, expected_ts);
+        assert_eq!(headers.rtp_timestamp, expected_ts_val);
         assert_eq!(headers.rtp_marker, marker);
     }
 
@@ -1403,7 +1406,7 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let mut context = create_test_context(100, 1000, false, 10, 0x12345678);
 
-        let ir_packet = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN, 0x01]; // IR-DYN packet type
+        let ir_packet = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN, 0x01];
 
         let result = decompress_as_uo(&mut context, &ir_packet, &crc_calculators);
         assert!(result.is_err());
@@ -1426,7 +1429,7 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let mut context = create_test_context(100, 1000, false, 10, 0x12345678);
 
-        let unknown_packet = vec![0xFF]; // Unknown packet type
+        let unknown_packet = vec![0xFF];
 
         let result = decompress_as_uo(&mut context, &unknown_packet, &crc_calculators);
         assert!(result.is_err());

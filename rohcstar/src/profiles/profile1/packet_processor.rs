@@ -11,7 +11,7 @@ use std::net::Ipv4Addr;
 
 use super::constants::*;
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-use super::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::{
     IP_PROTOCOL_UDP, IPV4_MIN_HEADER_LENGTH_BYTES, IPV4_STANDARD_IHL,
     ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK, RTP_MIN_HEADER_LENGTH_BYTES,
@@ -20,6 +20,7 @@ use crate::constants::{
 use crate::crc::CrcCalculators;
 use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
+use crate::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
 
 /// Deserializes raw bytes representing an RTP/UDP/IPv4 packet into `RtpUdpIpv4Headers`.
 ///
@@ -141,12 +142,12 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         data[rtp_start_offset + 6],
         data[rtp_start_offset + 7],
     ]);
-    let rtp_ssrc_val = u32::from_be_bytes([
+    let rtp_ssrc_val = Ssrc::new(u32::from_be_bytes([
         data[rtp_start_offset + 8],
         data[rtp_start_offset + 9],
         data[rtp_start_offset + 10],
         data[rtp_start_offset + 11],
-    ]);
+    ]));
 
     let mut rtp_csrc_list_val = Vec::with_capacity(rtp_csrc_count_val as usize);
     let mut current_csrc_offset = rtp_start_offset + RTP_MIN_HEADER_LENGTH_BYTES;
@@ -181,7 +182,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         ip_dscp,
         ip_ecn,
         ip_total_length,
-        ip_identification,
+        ip_identification: ip_identification.into(),
         ip_dont_fragment,
         ip_more_fragments,
         ip_fragment_offset,
@@ -200,8 +201,8 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         rtp_csrc_count: rtp_csrc_count_val,
         rtp_marker: rtp_marker_flag,
         rtp_payload_type: rtp_payload_type_val,
-        rtp_sequence_number: rtp_seq_num,
-        rtp_timestamp: Timestamp::new(rtp_ts_u32),
+        rtp_sequence_number: rtp_seq_num.into(),
+        rtp_timestamp: rtp_ts_u32.into(),
         rtp_ssrc: rtp_ssrc_val,
         rtp_csrc_list: rtp_csrc_list_val,
     })
@@ -238,7 +239,8 @@ pub fn serialize_ir(
 
     // Add-CID octet if needed
     if ir_data.cid > 0 && ir_data.cid <= 15 {
-        packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid as u8 & ROHC_SMALL_CID_MASK));
+        packet
+            .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid.0 as u8 & ROHC_SMALL_CID_MASK));
     } else if ir_data.cid > 15 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field_name: "CID".to_string(),
@@ -347,7 +349,7 @@ pub fn serialize_ir(
 /// - [`RohcParsingError`] - Not enough data, invalid type, or CRC mismatch
 pub fn deserialize_ir(
     core_packet_bytes: &[u8],
-    cid_from_engine: u16,
+    cid_from_engine: ContextId,
     crc_calculators: &CrcCalculators,
 ) -> Result<IrPacket, RohcParsingError> {
     debug_assert!(!core_packet_bytes.is_empty(), "IR packet cannot be empty");
@@ -451,12 +453,12 @@ pub fn deserialize_ir(
         core_packet_bytes[current_offset_for_fields + 1],
     ]);
     current_offset_for_fields += 2;
-    let static_rtp_ssrc = u32::from_be_bytes([
+    let static_rtp_ssrc = Ssrc::new(u32::from_be_bytes([
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
         core_packet_bytes[current_offset_for_fields + 2],
         core_packet_bytes[current_offset_for_fields + 3],
-    ]);
+    ]));
     current_offset_for_fields += 4;
 
     let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker, parsed_ts_stride) = if d_bit_set {
@@ -508,7 +510,7 @@ pub fn deserialize_ir(
         static_udp_src_port,
         static_udp_dst_port,
         static_rtp_ssrc,
-        dyn_rtp_sn,
+        dyn_rtp_sn: SequenceNumber::new(dyn_rtp_sn),
         dyn_rtp_timestamp: Timestamp::new(dyn_rtp_timestamp_val),
         dyn_rtp_marker,
         ts_stride: parsed_ts_stride,
@@ -558,7 +560,8 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
 
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
-            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet
+                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
         } else {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
                 field_name: "cid".to_string(),
@@ -592,7 +595,7 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
 /// - [`RohcParsingError`] - Incorrect length or invalid packet type
 pub fn deserialize_uo0(
     core_packet_data: &[u8],
-    cid_from_engine: Option<u8>,
+    cid_from_engine: Option<ContextId>,
 ) -> Result<Uo0Packet, RohcParsingError> {
     debug_assert_eq!(
         core_packet_data.len(),
@@ -682,7 +685,8 @@ pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
             let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet
+                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
             final_packet.extend_from_slice(&core_packet_bytes);
             Ok(final_packet)
         } else if cid_val == 0 {
@@ -801,7 +805,8 @@ pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
             let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet
+                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
             final_packet.extend_from_slice(&core_packet_bytes);
             Ok(final_packet)
         } else if cid_val == 0 {
@@ -925,7 +930,8 @@ pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
             let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet
+                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
             final_packet.extend_from_slice(&core_packet_bytes);
             Ok(final_packet)
         } else if cid_val == 0 {
@@ -1028,7 +1034,8 @@ pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildin
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
             let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet.push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (cid_val & ROHC_SMALL_CID_MASK));
+            final_packet
+                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
             final_packet.extend_from_slice(&core_packet_bytes);
             Ok(final_packet)
         } else if cid_val == 0 {
@@ -1115,8 +1122,8 @@ pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPa
 /// A fixed-size array containing the CRC input payload.
 #[inline]
 pub(crate) fn prepare_generic_uo_crc_input_payload(
-    context_ssrc: u32,
-    sn_for_crc: u16,
+    context_ssrc: Ssrc,
+    sn_for_crc: SequenceNumber,
     ts_for_crc: Timestamp,
     marker_for_crc: bool,
 ) -> [u8; P1_UO_CRC_INPUT_LENGTH_BYTES] {
@@ -1128,7 +1135,7 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
     let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES];
 
     crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
-    crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
+    crc_input[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());
     crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
     crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
 
@@ -1156,8 +1163,8 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
 /// A fixed-size array containing the CRC input payload.
 #[inline]
 pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
-    context_ssrc: u32,
-    sn_for_crc: u16,
+    context_ssrc: Ssrc,
+    sn_for_crc: SequenceNumber,
     ts_for_crc: Timestamp,
     marker_for_crc: bool,
     ip_id_lsb_for_crc: u8,
@@ -1171,7 +1178,7 @@ pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
     let mut crc_input = [0u8; P1_UO_CRC_INPUT_LENGTH_BYTES + 1];
 
     crc_input[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
-    crc_input[4..6].copy_from_slice(&sn_for_crc.to_be_bytes());
+    crc_input[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());
     crc_input[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
     crc_input[10] = if marker_for_crc { 0x01 } else { 0x00 };
     crc_input[11] = ip_id_lsb_for_crc;
@@ -1213,7 +1220,7 @@ mod tests {
         let packet_bytes = build_sample_rtp_packet_bytes(123, 0x12345678, 1000);
         let headers = deserialize_rtp_udp_ipv4_headers(&packet_bytes).unwrap();
         assert_eq!(headers.rtp_sequence_number, 123);
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(1000));
+        assert_eq!(headers.rtp_timestamp, 1000);
     }
 
     #[test]
@@ -1229,28 +1236,29 @@ mod tests {
     fn build_and_parse_ir_packet_cid0() {
         let crc_calculators = CrcCalculators::new();
         let ir_content = IrPacket {
-            cid: 0,
+            // IrPacket is a type definition from SUT, usage is necessary
+            cid: 0.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "1.1.1.1".parse().unwrap(),
             static_ip_dst: "2.2.2.2".parse().unwrap(),
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
-            static_rtp_ssrc: 0xABC,
-            dyn_rtp_sn: 10,
-            dyn_rtp_timestamp: Timestamp::new(100),
+            static_rtp_ssrc: 0xABC.into(),
+            dyn_rtp_sn: 10.into(),
+            dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: true,
-            ts_stride: None, // No TS stride for this test case
+            ts_stride: None,
             crc8: 0,
         };
         let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 26); // CID 0: type(1) + profile(1) + static(16) + dyn(7) + crc(1)
+        assert_eq!(built_bytes.len(), 26);
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let parsed_ir = deserialize_ir(&built_bytes, 0, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes, 0.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
-        assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
-        assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content.dyn_rtp_timestamp);
+        assert_eq!(parsed_ir.dyn_rtp_sn, 10);
+        assert_eq!(parsed_ir.dyn_rtp_timestamp, 100);
         assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
         assert_eq!(parsed_ir.ts_stride, None);
         assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
@@ -1260,21 +1268,21 @@ mod tests {
     fn build_and_parse_ir_packet_cid0_with_ts_stride() {
         let crc_calculators = CrcCalculators::new();
         let ir_content = IrPacket {
-            cid: 0,
+            cid: 0.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "1.1.1.1".parse().unwrap(),
             static_ip_dst: "2.2.2.2".parse().unwrap(),
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
-            static_rtp_ssrc: 0xABC,
-            dyn_rtp_sn: 10,
-            dyn_rtp_timestamp: Timestamp::new(100),
+            static_rtp_ssrc: 0xABC.into(),
+            dyn_rtp_sn: 10.into(),
+            dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: false,
-            ts_stride: Some(160), // With TS stride
+            ts_stride: Some(160),
             crc8: 0,
         };
         let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 30); // +4 bytes for TS_STRIDE extension
+        assert_eq!(built_bytes.len(), 30);
         assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
         let rtp_flags_octet_absolute_index = 24;
@@ -1284,11 +1292,11 @@ mod tests {
             "TS Stride bit not set in IR"
         );
 
-        let parsed_ir = deserialize_ir(&built_bytes, 0, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes, 0.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
-        assert_eq!(parsed_ir.dyn_rtp_sn, ir_content.dyn_rtp_sn);
-        assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content.dyn_rtp_timestamp);
+        assert_eq!(parsed_ir.dyn_rtp_sn, 10);
+        assert_eq!(parsed_ir.dyn_rtp_timestamp, 100);
         assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
         assert_eq!(parsed_ir.ts_stride, Some(160));
         assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
@@ -1299,30 +1307,27 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let ir_content_ts_val: u32 = 50;
         let ir_content = IrPacket {
-            cid: 5,
-            dyn_rtp_timestamp: Timestamp::new(ir_content_ts_val),
+            cid: 5.into(),
+            dyn_rtp_timestamp: ir_content_ts_val.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "0.0.0.0".parse().unwrap(),
             static_ip_dst: "0.0.0.0".parse().unwrap(),
             static_udp_src_port: 0,
             static_udp_dst_port: 0,
-            static_rtp_ssrc: 0,
-            dyn_rtp_sn: 0,
+            static_rtp_ssrc: 0.into(),
+            dyn_rtp_sn: 0.into(),
             dyn_rtp_marker: false,
             ts_stride: None,
             crc8: 0,
         };
         let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 27); // +1 byte for Add-CID
+        assert_eq!(built_bytes.len(), 27);
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let parsed_ir = deserialize_ir(&built_bytes[1..], 5, &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(&built_bytes[1..], 5.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 5);
-        assert_eq!(
-            parsed_ir.dyn_rtp_timestamp,
-            Timestamp::new(ir_content_ts_val)
-        );
+        assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content_ts_val);
         assert_eq!(parsed_ir.static_rtp_ssrc, 0);
         assert_eq!(parsed_ir.dyn_rtp_sn, 0);
         assert_eq!(parsed_ir.ts_stride, None);
@@ -1332,22 +1337,23 @@ mod tests {
     fn parse_ir_packet_crc_mismatch() {
         let crc_calculators = CrcCalculators::new();
         let ir_content = IrPacket {
-            cid: 0,
-            dyn_rtp_timestamp: Timestamp::new(100),
+            cid: 0.into(),
+            dyn_rtp_timestamp: 100.into(),
             ..Default::default()
         };
         let mut built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
         let crc_idx = built_bytes.len() - 1;
         built_bytes[crc_idx] = built_bytes[crc_idx].wrapping_add(1);
 
-        let result = deserialize_ir(&built_bytes, 0, &crc_calculators);
+        let result = deserialize_ir(&built_bytes, 0.into(), &crc_calculators);
         assert!(matches!(result, Err(RohcParsingError::CrcMismatch { .. })));
     }
 
     #[test]
     fn build_and_parse_uo1_rtp_packet_cid0_marker_false() {
         let uo1_rtp_data = Uo1Packet {
-            cid: None, // Implicit CID 0
+            // Uo1Packet is a type definition from SUT
+            cid: None,
             marker: false,
             ts_scaled: Some(123),
             crc8: 0xAB,
@@ -1356,9 +1362,9 @@ mod tests {
 
         let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
         assert_eq!(built_bytes.len(), 3);
-        assert_eq!(built_bytes[0], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
-        assert_eq!(built_bytes[1], 123); // TS_SCALED
-        assert_eq!(built_bytes[2], 0xAB); // CRC
+        assert_eq!(built_bytes[0], P1_UO_1_RTP_DISCRIMINATOR_BASE);
+        assert_eq!(built_bytes[1], 123);
+        assert_eq!(built_bytes[2], 0xAB);
 
         let parsed = deserialize_uo1_rtp(&built_bytes).unwrap();
         assert_eq!(parsed.ts_scaled, Some(123));
@@ -1381,7 +1387,7 @@ mod tests {
         assert_eq!(
             built_bytes[0],
             P1_UO_1_RTP_DISCRIMINATOR_BASE | P1_UO_1_RTP_MARKER_BIT_MASK
-        ); // M=1
+        );
         assert_eq!(built_bytes[1], 10);
         assert_eq!(built_bytes[2], 0xCD);
 
@@ -1394,7 +1400,7 @@ mod tests {
     #[test]
     fn build_and_parse_uo1_rtp_packet_small_cid() {
         let uo1_rtp_data = Uo1Packet {
-            cid: Some(5),
+            cid: Some(5.into()),
             marker: false,
             ts_scaled: Some(255),
             crc8: 0xFE,
@@ -1402,13 +1408,13 @@ mod tests {
         };
 
         let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
-        assert_eq!(built_bytes.len(), 4); // Add-CID + core packet
+        assert_eq!(built_bytes.len(), 4);
         assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
-        assert_eq!(built_bytes[1], P1_UO_1_RTP_DISCRIMINATOR_BASE); // M=0
+        assert_eq!(built_bytes[1], P1_UO_1_RTP_DISCRIMINATOR_BASE);
         assert_eq!(built_bytes[2], 255);
         assert_eq!(built_bytes[3], 0xFE);
 
-        let parsed = deserialize_uo1_rtp(&built_bytes[1..]).unwrap(); // Parse core part
+        let parsed = deserialize_uo1_rtp(&built_bytes[1..]).unwrap();
         assert_eq!(parsed.ts_scaled, Some(255));
         assert!(!parsed.marker);
         assert_eq!(parsed.crc8, 0xFE);
@@ -1419,7 +1425,7 @@ mod tests {
         let uo1_rtp_data = Uo1Packet {
             cid: None,
             marker: false,
-            ts_scaled: None, // Missing
+            ts_scaled: None,
             crc8: 0xAB,
             ..Default::default()
         };
@@ -1431,7 +1437,7 @@ mod tests {
 
     #[test]
     fn parse_uo1_rtp_packet_too_short() {
-        let short_packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 123]; // Missing CRC
+        let short_packet = vec![P1_UO_1_RTP_DISCRIMINATOR_BASE, 123];
         let result = deserialize_uo1_rtp(&short_packet);
         assert!(matches!(
             result,
@@ -1445,7 +1451,7 @@ mod tests {
 
     #[test]
     fn parse_uo1_rtp_wrong_discriminator() {
-        let wrong_packet = vec![P1_UO_1_SN_PACKET_TYPE_PREFIX, 123, 0xAB]; // UO-1-SN type
+        let wrong_packet = vec![P1_UO_1_SN_PACKET_TYPE_PREFIX, 123, 0xAB];
         let result = deserialize_uo1_rtp(&wrong_packet);
         assert!(matches!(
             result,
@@ -1455,34 +1461,44 @@ mod tests {
 
     #[test]
     fn test_generic_uo_crc_input_payload() {
-        let ssrc = 0x12345678u32;
-        let sn = 0xABCDu16;
-        let ts = Timestamp::new(0xDEADBEEF);
+        let ssrc = 0x12345678.into();
+        let sn_val = 0xABCDu16;
+        let ts_val = 0xDEADBEEFu32;
         let marker = true;
 
-        let payload = prepare_generic_uo_crc_input_payload(ssrc, sn, ts, marker);
+        // Let type inference determine the types of ts_arg and sn_arg
+        // based on the signature of prepare_generic_uo_crc_input_payload
+        // and the From<IntegerType> implementations for Timestamp and SequenceNumber.
+        let ts_arg = ts_val.into();
+        let sn_arg = sn_val.into();
+
+        let payload = prepare_generic_uo_crc_input_payload(ssrc, sn_arg, ts_arg, marker);
 
         assert_eq!(payload.len(), 11);
-        assert_eq!(&payload[0..4], &ssrc.to_be_bytes());
-        assert_eq!(&payload[4..6], &sn.to_be_bytes());
-        assert_eq!(&payload[6..10], &ts.to_be_bytes());
+        assert_eq!(&payload[0..4], &0x12345678u32.to_be_bytes());
+        assert_eq!(&payload[4..6], &sn_val.to_be_bytes());
+        assert_eq!(&payload[6..10], &ts_val.to_be_bytes());
         assert_eq!(payload[10], 0x01);
     }
 
     #[test]
     fn test_uo1_id_specific_crc_input_payload() {
-        let ssrc = 0x87654321u32;
-        let sn = 0x1234u16;
-        let ts = Timestamp::new(0xCAFEBABE);
+        let ssrc = 0x87654321.into();
+        let sn_val = 0x1234u16;
+        let ts_val = 0xCAFEBABE_u32;
         let marker = false;
         let ip_id_lsb = 0x42u8;
 
-        let payload = prepare_uo1_id_specific_crc_input_payload(ssrc, sn, ts, marker, ip_id_lsb);
+        let ts_arg = ts_val.into();
+        let sn_arg = sn_val.into();
+
+        let payload =
+            prepare_uo1_id_specific_crc_input_payload(ssrc, sn_arg, ts_arg, marker, ip_id_lsb);
 
         assert_eq!(payload.len(), 12);
-        assert_eq!(&payload[0..4], &ssrc.to_be_bytes());
-        assert_eq!(&payload[4..6], &sn.to_be_bytes());
-        assert_eq!(&payload[6..10], &ts.to_be_bytes());
+        assert_eq!(&payload[0..4], &0x87654321u32.to_be_bytes());
+        assert_eq!(&payload[4..6], &sn_val.to_be_bytes());
+        assert_eq!(&payload[6..10], &ts_val.to_be_bytes());
         assert_eq!(payload[10], 0x00);
         assert_eq!(payload[11], ip_id_lsb);
     }

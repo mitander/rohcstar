@@ -65,6 +65,7 @@ pub mod packet_defs;
 pub mod profiles;
 pub mod time;
 pub mod traits;
+pub mod types;
 
 pub use engine::RohcEngine;
 pub use error::{RohcBuildingError, RohcError, RohcParsingError};

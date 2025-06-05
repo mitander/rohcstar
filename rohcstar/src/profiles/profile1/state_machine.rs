@@ -332,22 +332,23 @@ mod tests {
         prepare_generic_uo_crc_input_payload, serialize_ir, serialize_uo0, serialize_uo1_sn,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-    use crate::profiles::profile1::protocol_types::{RtpUdpIpv4Headers, Timestamp};
+    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
+    use crate::types::{ContextId, SequenceNumber, Timestamp};
 
     // Helper for dummy headers in state machine tests where content doesn't matter
     fn create_dummy_rtp_headers() -> RtpUdpIpv4Headers {
         RtpUdpIpv4Headers {
-            rtp_ssrc: 1,
+            rtp_ssrc: 1.into(),
             ..Default::default()
         }
     }
 
     // Helper to create a basic decompressor context in a given mode
     fn setup_context_in_mode(mode: Profile1DecompressorMode) -> Profile1DecompressorContext {
-        let mut ctx = Profile1DecompressorContext::new(0);
+        let mut ctx = Profile1DecompressorContext::new(ContextId::new(0));
         ctx.mode = mode;
-        ctx.rtp_ssrc = 0x12345678; // Needed for CRC calculations
-        ctx.last_reconstructed_rtp_sn_full = 100;
+        ctx.rtp_ssrc = 0x12345678.into(); // Needed for CRC calculations
+        ctx.last_reconstructed_rtp_sn_full = SequenceNumber::new(100);
         ctx.last_reconstructed_rtp_ts_full = Timestamp::new(1000);
         ctx
     }
@@ -499,7 +500,7 @@ mod tests {
 
         let target_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
         let uo1_sn_data_good = Uo1Packet {
-            sn_lsb: crate::encodings::encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT)
+            sn_lsb: crate::encodings::encode_lsb(target_sn.as_u64(), P1_UO1_SN_LSB_WIDTH_DEFAULT)
                 .unwrap() as u16,
             num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
             marker: false,
@@ -600,8 +601,9 @@ mod tests {
         context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
 
         let next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-        let sn_lsb_good = crate::encodings::encode_lsb(next_sn as u64, P1_UO0_SN_LSB_WIDTH_DEFAULT)
-            .unwrap() as u8;
+        let sn_lsb_good =
+            crate::encodings::encode_lsb(next_sn.as_u64(), P1_UO0_SN_LSB_WIDTH_DEFAULT).unwrap()
+                as u8;
         let crc_input_good = prepare_generic_uo_crc_input_payload(
             context.rtp_ssrc,
             next_sn,
@@ -656,10 +658,10 @@ mod tests {
         context.sc_to_nc_k_failures = 1; // Should be reset
 
         let ir_content = IrPacket {
-            cid: 0,
+            cid: ContextId::new(0),
             profile_id: RohcProfile::RtpUdpIp,
-            static_rtp_ssrc: 0x1A2B3C4D,
-            dyn_rtp_sn: 150,
+            static_rtp_ssrc: 0x1A2B3C4D.into(),
+            dyn_rtp_sn: SequenceNumber::new(150),
             dyn_rtp_timestamp: Timestamp::new(15000),
             ..Default::default()
         };

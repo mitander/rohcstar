@@ -7,6 +7,8 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
+use crate::profiles::profile1::RtpUdpIpv4Headers;
+
 /// Supported ROHC profile identifiers.
 ///
 /// Each profile specifies a different set of protocols that can be compressed.
@@ -72,7 +74,7 @@ pub enum GenericUncompressedHeaders {
     /// Uncompressed headers for RTP/UDP/IPv4, typically processed by ROHC Profile 1.
     /// The actual struct `RtpUdpIpv4Headers` will be defined within the Profile 1 module.
     /// We use a fully qualified path here to indicate its future location.
-    RtpUdpIpv4(crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers),
+    RtpUdpIpv4(RtpUdpIpv4Headers),
 
     /// A raw byte payload primarily for testing or for profiles that handle opaque data.
     /// This allows mock profile handlers to easily construct and inspect `GenericUncompressedHeaders`.

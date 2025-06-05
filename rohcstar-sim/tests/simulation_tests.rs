@@ -4,7 +4,6 @@
 //! channel simulation, and verification across various scenarios with perfect channels,
 //! packet loss, marker variations, and CID handling.
 
-use rohcstar::profiles::profile1::Timestamp;
 use rohcstar_sim::{RohcSimulator, SimConfig, SimError};
 
 #[test]
@@ -24,15 +23,15 @@ fn packet_generator_produces_sequence() {
     let p1 = generator.next_packet().unwrap();
     assert_eq!(p1.rtp_ssrc, 111);
     assert_eq!(p1.rtp_sequence_number, 10);
-    assert_eq!(p1.rtp_timestamp, Timestamp::new(100));
+    assert_eq!(p1.rtp_timestamp, 100);
 
     let p2 = generator.next_packet().unwrap();
     assert_eq!(p2.rtp_sequence_number, 11);
-    assert_eq!(p2.rtp_timestamp, Timestamp::new(120));
+    assert_eq!(p2.rtp_timestamp, 120);
 
     let p3 = generator.next_packet().unwrap();
     assert_eq!(p3.rtp_sequence_number, 12);
-    assert_eq!(p3.rtp_timestamp, Timestamp::new(140));
+    assert_eq!(p3.rtp_timestamp, 140);
 
     assert!(generator.next_packet().is_none());
 }

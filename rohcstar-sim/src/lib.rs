@@ -11,7 +11,7 @@
 use rohcstar::engine::RohcEngine;
 use rohcstar::error::RohcError;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
-use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers, Timestamp};
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::mock_clock::MockClock;
 
 use rand::prelude::*;
@@ -159,11 +159,11 @@ impl PacketGenerator {
             ip_dst: "192.168.0.2".parse().unwrap(),
             udp_src_port: 10000,
             udp_dst_port: 20000,
-            rtp_ssrc: self.config.ssrc,
-            rtp_sequence_number: self.current_sn,
-            rtp_timestamp: Timestamp::new(ts_to_use_val),
+            rtp_ssrc: self.config.ssrc.into(),
+            rtp_sequence_number: self.current_sn.into(),
+            rtp_timestamp: ts_to_use_val.into(),
             rtp_marker: marker_to_use,
-            ip_identification: ip_id_to_use,
+            ip_identification: ip_id_to_use.into(),
             ..Default::default()
         };
 
@@ -316,12 +316,12 @@ impl RohcSimulator {
             let compressed_bytes = self
                 .compressor_engine
                 .compress(
-                    self.config.cid,
+                    self.config.cid.into(),
                     Some(RohcProfile::RtpUdpIp),
                     &generic_original_headers,
                 )
                 .map_err(|e| SimError::CompressionError {
-                    sn: current_sn_being_processed,
+                    sn: *current_sn_being_processed,
                     error: e,
                 })?;
 
@@ -339,7 +339,7 @@ impl RohcSimulator {
                     .decompressor_engine
                     .decompress(&received_bytes)
                     .map_err(|e| SimError::DecompressionError {
-                        sn: current_sn_being_processed,
+                        sn: *current_sn_being_processed,
                         error: e,
                     })?;
 
@@ -349,7 +349,7 @@ impl RohcSimulator {
                     GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers) => {
                         if decompressed_headers.rtp_ssrc != original_headers.rtp_ssrc {
                             return Err(SimError::VerificationError {
-                                sn: current_sn_being_processed,
+                                sn: *current_sn_being_processed,
                                 message: format!(
                                     "SSRC mismatch: expected {}, got {}",
                                     original_headers.rtp_ssrc, decompressed_headers.rtp_ssrc
@@ -378,7 +378,7 @@ impl RohcSimulator {
 
                             if !is_acceptable {
                                 return Err(SimError::VerificationError {
-                                    sn: current_sn_being_processed,
+                                    sn: *current_sn_being_processed,
                                     message: format!(
                                         "SN mismatch: expected {}, got {} (forward_diff: {}, backward_diff: {}, both exceed recovery limit {})",
                                         expected_sn,
@@ -395,7 +395,7 @@ impl RohcSimulator {
                                 != original_headers.rtp_sequence_number
                             {
                                 return Err(SimError::VerificationError {
-                                    sn: current_sn_being_processed,
+                                    sn: *current_sn_being_processed,
                                     message: format!(
                                         "SN mismatch: expected {}, got {}",
                                         original_headers.rtp_sequence_number,
@@ -414,7 +414,7 @@ impl RohcSimulator {
                             // This is expected with packet loss + marker changes - don't fail
                         } else if decompressed_headers.rtp_marker != original_headers.rtp_marker {
                             return Err(SimError::VerificationError {
-                                sn: current_sn_being_processed,
+                                sn: *current_sn_being_processed,
                                 message: format!(
                                     "Marker mismatch: expected {}, got {}",
                                     original_headers.rtp_marker, decompressed_headers.rtp_marker
@@ -434,7 +434,7 @@ impl RohcSimulator {
                             != original_headers.rtp_timestamp
                         {
                             return Err(SimError::VerificationError {
-                                sn: current_sn_being_processed,
+                                sn: *current_sn_being_processed,
                                 message: format!(
                                     "Timestamp mismatch: expected {:?}, got {:?}",
                                     original_headers.rtp_timestamp,
@@ -445,7 +445,7 @@ impl RohcSimulator {
                     }
                     _ => {
                         return Err(SimError::VerificationError {
-                            sn: current_sn_being_processed,
+                            sn: *current_sn_being_processed,
                             message: "Decompressed to unexpected header type".to_string(),
                         });
                     }

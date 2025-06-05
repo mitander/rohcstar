@@ -7,6 +7,8 @@
 
 use crate::error::RohcError;
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
+use crate::types::ContextId;
+
 use std::any::Any;
 use std::fmt::Debug;
 use std::time::Instant;
@@ -16,7 +18,7 @@ pub trait RohcCompressorContext: Send + Sync + Debug {
     /// Returns the ROHC Profile Identifier this context is configured for.
     fn profile_id(&self) -> RohcProfile;
     /// Returns the Context Identifier (CID) uniquely identifying this compression flow.
-    fn cid(&self) -> u16;
+    fn cid(&self) -> ContextId;
     /// Provides a reference to the context as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Provides a mutable reference to the context as `&mut dyn Any` for downcasting.
@@ -32,9 +34,9 @@ pub trait RohcDecompressorContext: Send + Sync + Debug {
     /// Returns the ROHC Profile Identifier this context is configured for.
     fn profile_id(&self) -> RohcProfile;
     /// Returns the Context Identifier (CID) of this decompression flow.
-    fn cid(&self) -> u16;
+    fn cid(&self) -> ContextId;
     /// Sets or updates the Context Identifier (CID) for this context.
-    fn set_cid(&mut self, cid: u16);
+    fn set_cid(&mut self, cid: ContextId);
     /// Provides a reference to the context as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Provides a mutable reference to the context as `&mut dyn Any` for downcasting.
@@ -61,7 +63,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// A `Box` containing a new `RohcCompressorContext`.
     fn create_compressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
         ir_refresh_interval: u32,
         creation_time: Instant,
     ) -> Box<dyn RohcCompressorContext>;
@@ -76,7 +78,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     /// A `Box` containing a new `RohcDecompressorContext`.
     fn create_decompressor_context(
         &self,
-        cid: u16,
+        cid: ContextId,
         creation_time: Instant,
     ) -> Box<dyn RohcDecompressorContext>;
 
@@ -124,7 +126,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockCompressorContext {
-        cid: u16,
+        cid: ContextId,
         profile: RohcProfile,
         last_accessed: Instant,
     }
@@ -133,7 +135,7 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             self.profile
         }
-        fn cid(&self) -> u16 {
+        fn cid(&self) -> ContextId {
             self.cid
         }
         fn as_any(&self) -> &dyn Any {
@@ -152,7 +154,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockDecompressorContext {
-        cid: u16,
+        cid: ContextId,
         profile: RohcProfile,
         last_accessed: Instant,
     }
@@ -161,10 +163,10 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             self.profile
         }
-        fn cid(&self) -> u16 {
+        fn cid(&self) -> ContextId {
             self.cid
         }
-        fn set_cid(&mut self, cid: u16) {
+        fn set_cid(&mut self, cid: ContextId) {
             self.cid = cid;
         }
         fn as_any(&self) -> &dyn Any {
@@ -192,7 +194,7 @@ mod tests {
         }
         fn create_compressor_context(
             &self,
-            cid: u16,
+            cid: ContextId,
             _ir_refresh_interval: u32,
             creation_time: Instant,
         ) -> Box<dyn RohcCompressorContext> {
@@ -204,7 +206,7 @@ mod tests {
         }
         fn create_decompressor_context(
             &self,
-            cid: u16,
+            cid: ContextId,
             creation_time: Instant,
         ) -> Box<dyn RohcDecompressorContext> {
             Box::new(MockDecompressorContext {
@@ -260,7 +262,7 @@ mod tests {
     fn mock_context_time_methods_work() {
         let now = Instant::now();
         let mut compressor_ctx = MockCompressorContext {
-            cid: 1,
+            cid: 1.into(),
             profile: RohcProfile::Uncompressed,
             last_accessed: now,
         };
@@ -270,7 +272,7 @@ mod tests {
         assert_eq!(compressor_ctx.last_accessed(), later);
 
         let mut decompressor_ctx = MockDecompressorContext {
-            cid: 1,
+            cid: 1.into(),
             profile: RohcProfile::Uncompressed,
             last_accessed: now,
         };
@@ -285,9 +287,9 @@ mod tests {
             profile: RohcProfile::Ip,
         };
         let creation_time = Instant::now();
-        let comp_ctx = handler.create_compressor_context(1, 10, creation_time);
+        let comp_ctx = handler.create_compressor_context(1.into(), 10, creation_time);
         assert_eq!(comp_ctx.last_accessed(), creation_time);
-        let decomp_ctx = handler.create_decompressor_context(1, creation_time);
+        let decomp_ctx = handler.create_decompressor_context(1.into(), creation_time);
         assert_eq!(decomp_ctx.last_accessed(), creation_time);
     }
 }

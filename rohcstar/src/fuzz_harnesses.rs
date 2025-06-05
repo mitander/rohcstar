@@ -9,10 +9,7 @@ use std::time::Instant;
 
 use crate::crc::CrcCalculators;
 use crate::packet_defs::RohcProfile;
-use crate::profiles::profile1::{
-    IrPacket as Profile1IrPacket, Profile1Handler, packet_processor::serialize_ir,
-    protocol_types::Timestamp,
-};
+use crate::profiles::profile1::{IrPacket, Profile1Handler, packet_processor::serialize_ir};
 use crate::traits::ProfileHandler;
 
 /// Fuzz tests the Profile 1 U-mode decompressor.
@@ -28,11 +25,11 @@ use crate::traits::ProfileHandler;
 /// - `data`: Fuzzer-generated input treated as ROHC packet
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let p1_handler = Profile1Handler::new();
-    let cid = 0u16;
     let crc_calculators = CrcCalculators::new();
+    let cid = 0.into();
 
     // Attempt to pre-condition the context to FullContext using a known-good IR packet.
-    let sample_ir_data_for_harness = Profile1IrPacket {
+    let sample_ir_data_for_harness = IrPacket {
         cid,
         profile_id: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1"
@@ -43,9 +40,9 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
             .expect("Harness: Static IP parsing failed"),
         static_udp_src_port: 100,
         static_udp_dst_port: 200,
-        static_rtp_ssrc: 12345,
-        dyn_rtp_sn: 1,
-        dyn_rtp_timestamp: Timestamp::new(1000),
+        static_rtp_ssrc: 12345.into(),
+        dyn_rtp_sn: 1.into(),
+        dyn_rtp_timestamp: 1000.into(),
         dyn_rtp_marker: false,
         ts_stride: None,
         crc8: 0,

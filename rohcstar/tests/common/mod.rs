@@ -15,7 +15,6 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
-use rohcstar::profiles::profile1::protocol_types::Timestamp;
 use rohcstar::profiles::profile1::{IrPacket, Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::{SystemClock, mock_clock::MockClock};
 use rohcstar::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
@@ -123,12 +122,13 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
         false,
         ssrc,
     );
-    let ip_id_for_final_ir = get_ip_id_established_by_ir(initial_setup_sn, ssrc).wrapping_add(1);
+    let ip_id_for_final_ir =
+        get_ip_id_established_by_ir(initial_setup_sn.wrapping_add(1), ssrc).wrapping_add(1);
 
     // Directly set stride detection state to bypass UO packet setup complexity
     let comp_ctx_dyn_setup = engine
         .context_manager_mut()
-        .get_compressor_context_mut(cid)
+        .get_compressor_context_mut(cid.into())
         .unwrap();
     let comp_ctx_concrete_setup = comp_ctx_dyn_setup
         .as_any_mut()
@@ -136,20 +136,20 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
         .unwrap();
 
     comp_ctx_concrete_setup.ts_stride = Some(stride);
-    comp_ctx_concrete_setup.ts_offset = Timestamp::new(initial_setup_ts_val);
+    comp_ctx_concrete_setup.ts_offset = initial_setup_ts_val.into();
     comp_ctx_concrete_setup.ts_stride_packets = P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD;
     comp_ctx_concrete_setup.ts_scaled_mode = true;
-    comp_ctx_concrete_setup.last_sent_rtp_sn_full = initial_setup_sn;
-    comp_ctx_concrete_setup.last_sent_rtp_ts_full = Timestamp::new(initial_setup_ts_val);
+    comp_ctx_concrete_setup.last_sent_rtp_sn_full = initial_setup_sn.into();
+    comp_ctx_concrete_setup.last_sent_rtp_ts_full = initial_setup_ts_val.into();
 
     // Send final IR packet with TS_STRIDE signaling
     let headers_final_ir = create_rtp_headers(final_ir_sn_val, final_ir_ts_val, false, ssrc)
-        .with_ip_id(ip_id_for_final_ir);
+        .with_ip_id(ip_id_for_final_ir.into());
 
     // Force IR mode
     let comp_ctx_dyn_final_ir = engine
         .context_manager_mut()
-        .get_compressor_context_mut(cid)
+        .get_compressor_context_mut(cid.into())
         .unwrap();
     let comp_ctx_concrete_final_ir = comp_ctx_dyn_final_ir
         .as_any_mut()
@@ -170,7 +170,7 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
 
     let compressed_final_ir = engine
         .compress(
-            cid,
+            cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &GenericUncompressedHeaders::RtpUdpIpv4(headers_final_ir),
         )
@@ -195,7 +195,7 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
 
     assert_eq!(
         comp_ctx_final_check.ts_offset,
-        Timestamp::new(final_ir_ts_val),
+        final_ir_ts_val,
         "FINAL C: ts_offset. Got {}, expected {}",
         comp_ctx_final_check.ts_offset.value(),
         final_ir_ts_val
@@ -212,7 +212,7 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
 
     assert_eq!(
         decomp_ctx_final_check.ts_offset,
-        Timestamp::new(final_ir_ts_val),
+        final_ir_ts_val,
         "FINAL D: ts_offset. Got {}, expected {}",
         decomp_ctx_final_check.ts_offset.value(),
         final_ir_ts_val
@@ -252,11 +252,11 @@ pub fn create_rtp_headers(sn: u16, ts_val: u32, marker: bool, ssrc: u32) -> RtpU
         ip_dst: "192.168.0.2".parse().unwrap(),
         udp_src_port: 1000,
         udp_dst_port: 2000,
-        rtp_ssrc: ssrc,
-        rtp_sequence_number: sn,
-        rtp_timestamp: Timestamp::new(ts_val),
+        rtp_ssrc: ssrc.into(),
+        rtp_sequence_number: sn.into(),
+        rtp_timestamp: ts_val.into(),
         rtp_marker: marker,
-        ip_identification: sn.wrapping_add(ssrc as u16),
+        ip_identification: sn.wrapping_add(ssrc as u16).into(),
         ..Default::default()
     }
 }
@@ -284,11 +284,11 @@ pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts_val: u32, marker: bool) -> RtpU
         ip_dst: "192.168.0.2".parse().unwrap(),
         udp_src_port: 10000,
         udp_dst_port: 20000,
-        rtp_ssrc: 0x12345678,
-        rtp_sequence_number: sn,
-        rtp_timestamp: Timestamp::new(ts_val),
+        rtp_ssrc: 0x12345678.into(),
+        rtp_sequence_number: sn.into(),
+        rtp_timestamp: ts_val.into(),
         rtp_marker: marker,
-        ip_identification: 0x1234,
+        ip_identification: 0x1234.into(),
         ..Default::default()
     }
 }
@@ -308,15 +308,15 @@ pub fn create_rtp_headers_fixed_ssrc(sn: u16, ts_val: u32, marker: bool) -> RtpU
 /// An `IrPacket` struct ready for use in IR packet building tests.
 pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPacket {
     IrPacket {
-        cid,
+        cid: cid.into(),
         profile_id: RohcProfile::RtpUdpIp,
         static_ip_src: "1.1.1.1".parse().unwrap(),
         static_ip_dst: "2.2.2.2".parse().unwrap(),
         static_udp_src_port: 100,
         static_udp_dst_port: 200,
-        static_rtp_ssrc: ssrc,
-        dyn_rtp_sn: sn,
-        dyn_rtp_timestamp: Timestamp::new(ts_val),
+        static_rtp_ssrc: ssrc.into(),
+        dyn_rtp_sn: sn.into(),
+        dyn_rtp_timestamp: ts_val.into(),
         dyn_rtp_marker: false, // Default marker for this helper
         ts_stride: None,       // Defaults to None for basic IR data helper
         crc8: 0,               // Placeholder, calculated by builder
@@ -344,11 +344,14 @@ pub fn establish_ir_context(
     engine: &mut RohcEngine,
     cid: u16,
     initial_sn: u16,
-    initial_ts_val: u32,
+    initial_ts: u32,
     initial_marker: bool,
     ssrc: u32,
 ) {
-    if let Ok(comp_ctx_dyn) = engine.context_manager_mut().get_compressor_context_mut(cid) {
+    if let Ok(comp_ctx_dyn) = engine
+        .context_manager_mut()
+        .get_compressor_context_mut(cid.into())
+    {
         if let Some(p1_comp_ctx) = comp_ctx_dyn
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
@@ -359,15 +362,15 @@ pub fn establish_ir_context(
         }
     }
 
-    let mut headers_ir = create_rtp_headers(initial_sn, initial_ts_val, initial_marker, ssrc);
-    if headers_ir.ip_identification == 0 && initial_sn != 0 {
-        headers_ir.ip_identification = initial_sn;
+    let mut headers_ir = create_rtp_headers(initial_sn, initial_ts, initial_marker, ssrc);
+    if *headers_ir.ip_identification == 0u16 && initial_sn != 0 {
+        headers_ir.ip_identification = initial_sn.into();
     }
 
     let generic_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir);
 
     let compressed_ir = engine
-        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic_ir)
+        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_ir)
         .unwrap_or_else(|e| {
             panic!(
                 "IR Compression failed during setup for SN={}, SSRC={}: {:?}",
@@ -399,7 +402,6 @@ pub fn establish_ir_context(
     });
 }
 
-/// Calculates the IP Identification value that `establish_ir_context` will
 /// Calculates the IP identification value established by an IR context.
 ///
 /// Returns the IP identification value that would be set in the compressor's
@@ -513,7 +515,7 @@ pub fn is_uo1_sn_packet(packet: &[u8], cid: u16) -> bool {
 pub fn get_decompressor_context(engine: &RohcEngine, cid: u16) -> &Profile1DecompressorContext {
     engine
         .context_manager()
-        .get_decompressor_context(cid)
+        .get_decompressor_context(cid.into())
         .unwrap_or_else(|_| panic!("No decompressor context for CID {}", cid))
         .as_any()
         .downcast_ref::<Profile1DecompressorContext>()
@@ -537,7 +539,7 @@ pub fn get_decompressor_context(engine: &RohcEngine, cid: u16) -> &Profile1Decom
 pub fn get_compressor_context(engine: &RohcEngine, cid: u16) -> &Profile1CompressorContext {
     engine
         .context_manager()
-        .get_compressor_context(cid)
+        .get_compressor_context(cid.into())
         .unwrap_or_else(|_| panic!("No compressor context for CID {}", cid))
         .as_any()
         .downcast_ref::<Profile1CompressorContext>()
@@ -588,7 +590,11 @@ pub fn create_profile1_compressor_context(
     handler: &Profile1Handler,
     cid: u16,
 ) -> Box<dyn RohcCompressorContext> {
-    handler.create_compressor_context(cid, DEFAULT_ENGINE_IR_REFRESH_INTERVAL, Instant::now())
+    handler.create_compressor_context(
+        cid.into(),
+        DEFAULT_ENGINE_IR_REFRESH_INTERVAL,
+        Instant::now(),
+    )
 }
 
 /// Creates a Profile 1 compressor context with custom IR refresh interval.
@@ -605,7 +611,7 @@ pub fn create_profile1_compressor_context_with_interval(
     cid: u16,
     ir_refresh_interval: u32,
 ) -> Box<dyn RohcCompressorContext> {
-    handler.create_compressor_context(cid, ir_refresh_interval, Instant::now())
+    handler.create_compressor_context(cid.into(), ir_refresh_interval, Instant::now())
 }
 
 /// Creates a Profile 1 decompressor context for testing.
@@ -620,7 +626,7 @@ pub fn create_profile1_decompressor_context(
     handler: &dyn ProfileHandler,
     cid: u16,
 ) -> Box<dyn RohcDecompressorContext> {
-    handler.create_decompressor_context(cid, Instant::now())
+    handler.create_decompressor_context(cid.into(), Instant::now())
 }
 
 #[cfg(test)]
@@ -631,7 +637,7 @@ mod tests {
     fn rtp_headers_creation() {
         let headers = create_rtp_headers(100, 1000, true, 0x12345678);
         assert_eq!(headers.rtp_sequence_number, 100);
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(1000));
+        assert_eq!(headers.rtp_timestamp, 1000);
         assert!(headers.rtp_marker);
         assert_eq!(headers.rtp_ssrc, 0x12345678);
         assert_eq!(headers.udp_src_port, 1000);
@@ -641,7 +647,7 @@ mod tests {
     fn rtp_headers_fixed_ssrc_creation() {
         let headers = create_rtp_headers_fixed_ssrc(200, 2000, false);
         assert_eq!(headers.rtp_sequence_number, 200);
-        assert_eq!(headers.rtp_timestamp, Timestamp::new(2000));
+        assert_eq!(headers.rtp_timestamp, 2000);
         assert!(!headers.rtp_marker);
         assert_eq!(headers.rtp_ssrc, 0x12345678);
         assert_eq!(headers.udp_src_port, 10000);
@@ -653,7 +659,7 @@ mod tests {
         assert_eq!(ir_data.cid, 1);
         assert_eq!(ir_data.static_rtp_ssrc, 0xABCD);
         assert_eq!(ir_data.dyn_rtp_sn, 10);
-        assert_eq!(ir_data.dyn_rtp_timestamp, Timestamp::new(100));
+        assert_eq!(ir_data.dyn_rtp_timestamp, 100);
         assert_eq!(ir_data.ts_stride, None);
     }
 
