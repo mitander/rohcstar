@@ -88,8 +88,8 @@ jobs:
 
     - name: Performance regression check
       run: |
-        chmod +x scripts/bench-regression-check.sh
-        ./scripts/bench-regression-check.sh
+        chmod +x scripts/bench_regression_check.sh
+        ./scripts/bench_regression_check.sh
 
   simulation:
     name: Deterministic Simulation

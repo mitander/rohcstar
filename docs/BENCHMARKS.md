@@ -42,13 +42,13 @@ The repository includes performance regression detection scripts designed for CI
 
 ```bash
 # Manual comprehensive check (~9 seconds)
-./scripts/bench-regression-check.sh
+./scripts/bench_regression_check.sh
 
 # Quick development check (~4.5 seconds, compression only)
 ./scripts/quick-perf-check.sh
 
 # Check with relaxed thresholds (2x normal)
-./scripts/bench-regression-check.sh --threshold-factor 2
+./scripts/bench_regression_check.sh --threshold-factor 2
 ```
 
 ### CI/CD Integration
@@ -60,7 +60,7 @@ Performance checks are designed to run in CI/CD pipelines rather than git hooks 
 - **Coverage**: Can run comprehensive benchmarks without time pressure
 
 ### Performance Thresholds
-**Full regression check** (scripts/bench-regression-check.sh):
+**Full regression check** (scripts/bench_regression_check.sh):
 - Compress first packet: 500ns
 - Compress subsequent packet: 200ns
 - Decompress IR packet: 500ns
@@ -79,7 +79,7 @@ For iterative development, use the quick check for fast feedback:
 ./scripts/quick-perf-check.sh
 
 # Full check when needed
-./scripts/bench-regression-check.sh
+./scripts/bench_regression_check.sh
 ```
 
 ## 4. Benchmark Groups

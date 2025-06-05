@@ -8,7 +8,7 @@ use rohcstar::{
         Profile1Handler, RtpUdpIpv4Headers, packet_processor::deserialize_rtp_udp_ipv4_headers,
     },
     time::SystemClock,
-    types::{IpId, SequenceNumber},
+    types::{IpId, SequenceNumber, Timestamp},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -84,7 +84,7 @@ fn create_test_headers() -> RtpUdpIpv4Headers {
         ip_dst: "192.168.1.2".parse().unwrap(),
         udp_src_port: 10000,
         udp_dst_port: 20000,
-        rtp_ssrc: 0x12345678,
+        rtp_ssrc: 0x12345678.into(),
         rtp_sequence_number: SequenceNumber::new(100),
         rtp_timestamp: Timestamp::new(1000),
         rtp_marker: false,
@@ -206,7 +206,7 @@ fn bench_compression_pipeline(c: &mut Criterion) {
             },
             |mut engine| {
                 engine.compress(
-                    black_box(0),
+                    black_box(0.into()),
                     Some(RohcProfile::RtpUdpIp),
                     black_box(&generic_headers),
                 )
@@ -221,7 +221,7 @@ fn bench_compression_pipeline(c: &mut Criterion) {
         .register_profile_handler(Box::new(Profile1Handler::new()))
         .unwrap();
     let _initial = setup_engine
-        .compress(0, Some(RohcProfile::RtpUdpIp), &generic_headers)
+        .compress(0.into(), Some(RohcProfile::RtpUdpIp), &generic_headers)
         .unwrap();
 
     let mut varied_headers = headers.clone();
@@ -231,7 +231,7 @@ fn bench_compression_pipeline(c: &mut Criterion) {
             varied_headers.rtp_timestamp =
                 Timestamp::new(varied_headers.rtp_timestamp.value().wrapping_add(160));
             let generic = GenericUncompressedHeaders::RtpUdpIpv4(varied_headers.clone());
-            setup_engine.compress(black_box(0), None, black_box(&generic))
+            setup_engine.compress(black_box(0.into()), None, black_box(&generic))
         })
     });
 
@@ -252,7 +252,7 @@ fn bench_decompression_pipeline(c: &mut Criterion) {
 
     // Create different packet types
     let ir_packet = compress_engine
-        .compress(0, Some(RohcProfile::RtpUdpIp), &generic_headers)
+        .compress(0.into(), Some(RohcProfile::RtpUdpIp), &generic_headers)
         .unwrap();
 
     let mut subsequent_headers = headers.clone();
@@ -261,7 +261,7 @@ fn bench_decompression_pipeline(c: &mut Criterion) {
         Timestamp::new(subsequent_headers.rtp_timestamp.value() + 160);
     let generic_subsequent = GenericUncompressedHeaders::RtpUdpIpv4(subsequent_headers);
     let uo_packet = compress_engine
-        .compress(0, None, &generic_subsequent)
+        .compress(0.into(), None, &generic_subsequent)
         .unwrap();
 
     group.bench_function("decompress_ir_packet", |b| {
@@ -318,7 +318,7 @@ fn bench_full_roundtrip(c: &mut Criterion) {
                 // Establish context with initial packet
                 let initial_headers = GenericUncompressedHeaders::RtpUdpIpv4(base_headers.clone());
                 let initial_compressed = compress_engine
-                    .compress(0, Some(RohcProfile::RtpUdpIp), &initial_headers)
+                    .compress(0.into(), Some(RohcProfile::RtpUdpIp), &initial_headers)
                     .unwrap();
                 let _initial_decompressed =
                     decompress_engine.decompress(&initial_compressed).unwrap();
@@ -338,7 +338,7 @@ fn bench_full_roundtrip(c: &mut Criterion) {
             |(mut compress_engine, mut decompress_engine, generic_headers)| {
                 let compressed = compress_engine
                     .compress(
-                        black_box(0),
+                        black_box(0.into()),
                         None, // No profile hint needed since context exists
                         black_box(&generic_headers),
                     )
@@ -380,7 +380,7 @@ fn bench_context_management(c: &mut Criterion) {
             |mut engine| {
                 for cid in 0..100u16 {
                     let _ = engine.compress(
-                        black_box(cid),
+                        black_box(cid.into()),
                         Some(RohcProfile::RtpUdpIp),
                         black_box(&generic_headers),
                     );
@@ -392,7 +392,7 @@ fn bench_context_management(c: &mut Criterion) {
 
     // Setup contexts for lookup benchmark
     for cid in 0..100u16 {
-        let _ = engine.compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers);
+        let _ = engine.compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_headers);
     }
 
     group.bench_function("context_lookup_existing", |b| {
@@ -401,7 +401,7 @@ fn bench_context_management(c: &mut Criterion) {
             let mut varied_headers = headers.clone();
             varied_headers.rtp_sequence_number = varied_headers.rtp_sequence_number.wrapping_add(1);
             let generic = GenericUncompressedHeaders::RtpUdpIpv4(varied_headers);
-            engine.compress(cid, None, black_box(&generic))
+            engine.compress(cid.into(), None, black_box(&generic))
         })
     });
 
@@ -435,7 +435,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
                     let _compressed = engine
                         .compress(
-                            black_box(0),
+                            black_box(0.into()),
                             if i == 0 {
                                 Some(RohcProfile::RtpUdpIp)
                             } else {
@@ -475,7 +475,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
                     let compressed = engine
                         .compress(
-                            black_box(0),
+                            black_box(0.into()),
                             if i == 0 {
                                 Some(RohcProfile::RtpUdpIp)
                             } else {
@@ -539,7 +539,7 @@ fn bench_burst_processing(c: &mut Criterion) {
                         None
                     };
                     let compressed = engine
-                        .compress(black_box(0), profile_hint, black_box(&generic))
+                        .compress(black_box(0.into()), profile_hint, black_box(&generic))
                         .unwrap();
                     compressed_packets.push(compressed);
                 }
@@ -570,7 +570,7 @@ fn bench_burst_processing(c: &mut Criterion) {
                     } else {
                         None
                     };
-                    engine.compress(0, profile_hint, &generic).unwrap()
+                    engine.compress(0.into(), profile_hint, &generic).unwrap()
                 })
                 .collect()
         };
@@ -627,7 +627,7 @@ fn bench_burst_processing(c: &mut Criterion) {
                         None
                     };
                     let compressed = comp_engine
-                        .compress(black_box(0), profile_hint, black_box(&generic))
+                        .compress(black_box(0.into()), profile_hint, black_box(&generic))
                         .unwrap();
 
                     let decompressed = decomp_engine.decompress(black_box(&compressed)).unwrap();
@@ -679,7 +679,7 @@ fn bench_concurrent_contexts(c: &mut Criterion) {
                             // First packet for each context - measures context creation overhead
                             let _compressed = engine
                                 .compress(
-                                    black_box(cid as u16),
+                                    black_box((cid as u16).into()),
                                     Some(RohcProfile::RtpUdpIp),
                                     black_box(&generic),
                                 )
@@ -707,7 +707,7 @@ fn bench_concurrent_contexts(c: &mut Criterion) {
                     let mut headers = base_headers.clone();
                     headers.rtp_sequence_number = headers.rtp_sequence_number.wrapping_add(cid);
                     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
-                    let _ = engine.compress(cid, Some(RohcProfile::RtpUdpIp), &generic);
+                    let _ = engine.compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic);
                 }
                 engine
             },
@@ -728,7 +728,7 @@ fn bench_concurrent_contexts(c: &mut Criterion) {
 
                     // This should use existing context (lookup performance)
                     let _compressed = engine.compress(
-                        black_box(cid),
+                        black_box(cid.into()),
                         None, // No profile hint - should use existing context
                         black_box(&generic),
                     );

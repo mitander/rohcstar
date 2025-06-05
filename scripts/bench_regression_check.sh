@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Performance regression check for rohcstar
-# Usage: bench-regression-check.sh [--threshold-factor N]
+# Usage: bench_regression_check.sh [--threshold-factor N]
 
 set -e
 
@@ -135,7 +135,7 @@ check_threshold() {
     local name="$1"
     local current="$2"
     local threshold="$3"
-    
+
     if [[ "$current" -gt "$threshold" ]]; then
         echo "REGRESSION: $name performance is ${current}ns (threshold: ${threshold}ns)"
         REGRESSION_FOUND=true

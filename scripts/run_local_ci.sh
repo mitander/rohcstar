@@ -29,9 +29,9 @@ echo "Tests passed"
 
 echo ""
 echo "Checking performance regression..."
-if [[ -f "scripts/bench-regression-check.sh" ]]; then
-    chmod +x scripts/bench-regression-check.sh
-    ./scripts/bench-regression-check.sh
+if [[ -f "scripts/bench_regression_check.sh" ]]; then
+    chmod +x scripts/bench_regression_check.sh
+    ./scripts/bench_regression_check.sh
     echo "Performance check passed"
 else
     echo "Performance script not found, skipping"
