@@ -44,7 +44,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: IPV4_MIN_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: "IPv4 header (minimum)".to_string(),
+            context: crate::error::ParseContext::Ipv4HeaderMin,
         });
     }
 
@@ -60,12 +60,10 @@ pub fn deserialize_rtp_udp_ipv4_headers(
     let ip_ihl_words = ip_version_ihl & 0x0F;
     if ip_ihl_words < IPV4_STANDARD_IHL {
         return Err(RohcParsingError::InvalidFieldValue {
-            field_name: "IPv4 IHL".to_string(),
-            structure_name: "IPv4 Header".to_string(),
-            description: format!(
-                "Must be at least {} words, got {}.",
-                IPV4_STANDARD_IHL, ip_ihl_words
-            ),
+            field: crate::error::Field::IpIhl,
+            structure: crate::error::StructureType::Ipv4Header,
+            expected: IPV4_STANDARD_IHL as u32,
+            got: ip_ihl_words as u32,
         });
     }
     let ip_header_length_bytes = (ip_ihl_words * 4) as usize;
@@ -73,7 +71,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: ip_header_length_bytes,
             got: data.len(),
-            context: "IPv4 header (calculated IHL)".to_string(),
+            context: crate::error::ParseContext::Ipv4HeaderCalculated,
         });
     }
 
@@ -90,7 +88,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
     if ip_protocol_id != IP_PROTOCOL_UDP {
         return Err(RohcParsingError::UnsupportedProtocol {
             protocol_id: ip_protocol_id,
-            layer: "IP".to_string(),
+            layer: crate::error::NetworkLayer::Ip,
         });
     }
     let ip_checksum = u16::from_be_bytes([data[10], data[11]]);
@@ -102,7 +100,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: udp_start_offset + UDP_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: "UDP header".to_string(),
+            context: crate::error::ParseContext::UdpHeader,
         });
     }
     let udp_src_port = u16::from_be_bytes([data[udp_start_offset], data[udp_start_offset + 1]]);
@@ -116,16 +114,17 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: rtp_start_offset + RTP_MIN_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: "RTP header (minimum)".to_string(),
+            context: crate::error::ParseContext::RtpHeaderMin,
         });
     }
     let rtp_first_byte = data[rtp_start_offset];
     let rtp_version_val = rtp_first_byte >> 6;
     if rtp_version_val != RTP_VERSION {
         return Err(RohcParsingError::InvalidFieldValue {
-            field_name: "RTP Version".to_string(),
-            structure_name: "RTP Header".to_string(),
-            description: format!("Expected {}, got {}.", RTP_VERSION, rtp_version_val),
+            field: crate::error::Field::RtpVersion,
+            structure: crate::error::StructureType::RtpHeader,
+            expected: RTP_VERSION as u32,
+            got: rtp_version_val as u32,
         });
     }
     let rtp_padding_flag = (rtp_first_byte >> 5) & 0x01 == 1;
@@ -151,12 +150,12 @@ pub fn deserialize_rtp_udp_ipv4_headers(
 
     let mut rtp_csrc_list_val = Vec::with_capacity(rtp_csrc_count_val as usize);
     let mut current_csrc_offset = rtp_start_offset + RTP_MIN_HEADER_LENGTH_BYTES;
-    for i in 0..rtp_csrc_count_val {
+    for _i in 0..rtp_csrc_count_val {
         if data.len() < current_csrc_offset + 4 {
             return Err(RohcParsingError::NotEnoughData {
                 needed: current_csrc_offset + 4,
                 got: data.len(),
-                context: format!("RTP CSRC list item {}", i + 1),
+                context: crate::error::ParseContext::RtpHeaderMin, // CSRC parsing is part of RTP header
             });
         }
         rtp_csrc_list_val.push(u32::from_be_bytes([
@@ -170,10 +169,10 @@ pub fn deserialize_rtp_udp_ipv4_headers(
 
     if rtp_csrc_count_val as usize != rtp_csrc_list_val.len() {
         return Err(RohcParsingError::InvalidFieldValue {
-            field_name: "RTP CSRC Count".to_string(),
-            structure_name: "RTP Header".to_string(),
-            description: "Mismatch between CSRC count field and actual CSRC data present."
-                .to_string(),
+            field: crate::error::Field::RtpCsrcCount,
+            structure: crate::error::StructureType::RtpHeader,
+            expected: rtp_csrc_count_val as u32,
+            got: rtp_csrc_list_val.len() as u32,
         });
     }
 
@@ -243,11 +242,9 @@ pub fn serialize_ir(
             .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid.0 as u8 & ROHC_SMALL_CID_MASK));
     } else if ir_data.cid > 15 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "CID".to_string(),
-            description: format!(
-                "Large CID {} for IR packet Add-CID not supported by this builder.",
-                ir_data.cid
-            ),
+            field: crate::error::Field::Cid,
+            value: ir_data.cid.0 as u32,
+            max_bits: 4, // Small CID range is 0-15
         });
     }
 
@@ -258,12 +255,9 @@ pub fn serialize_ir(
     let profile_u8: u8 = ir_data.profile_id.into();
     if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "Profile ID".to_string(),
-            description: format!(
-                "IR packet is for ROHC Profile 1 (0x{:02X}), but got 0x{:02X}.",
-                u8::from(RohcProfile::RtpUdpIp),
-                profile_u8
-            ),
+            field: crate::error::Field::ProfileId,
+            value: profile_u8 as u32,
+            max_bits: 8, // Expected value is u8::from(RohcProfile::RtpUdpIp)
         });
     }
     packet.push(profile_u8);
@@ -360,7 +354,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::NotEnoughData {
             needed: 1,
             got: 0,
-            context: "IR Packet Type Octet".to_string(),
+            context: crate::error::ParseContext::IrPacketTypeOctet,
         });
     }
     let packet_type_octet = core_packet_bytes[current_offset_for_fields];
@@ -392,7 +386,7 @@ pub fn deserialize_ir(
             return Err(RohcParsingError::NotEnoughData {
                 needed: RTP_FLAGS_ABSOLUTE_IDX + 1,
                 got: core_packet_bytes.len(),
-                context: "IR Packet (RTP_Flags for CRC check)".to_string(),
+                context: crate::error::ParseContext::IrPacketRtpFlags,
             });
         }
     }
@@ -406,7 +400,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::NotEnoughData {
             needed: crc_octet_index_in_core + 1,
             got: core_packet_bytes.len(),
-            context: "IR Packet (CRC field and defined payload)".to_string(),
+            context: crate::error::ParseContext::IrPacketCrcAndPayload,
         });
     }
 
@@ -419,7 +413,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::CrcMismatch {
             expected: received_crc8,
             calculated: calculated_crc8,
-            crc_type: "ROHC-CRC8".to_string(),
+            crc_type: crate::error::CrcType::Rohc8,
         });
     }
 
@@ -486,7 +480,7 @@ pub fn deserialize_ir(
                 return Err(RohcParsingError::NotEnoughData {
                     needed: current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
                     got: core_packet_bytes.len(),
-                    context: "IR Packet TS_STRIDE Extension".to_string(),
+                    context: crate::error::ParseContext::IrPacketTsStrideExtension,
                 });
             }
             temp_ts_stride = Some(u32::from_be_bytes([
@@ -542,17 +536,16 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
 
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "sn_lsb".to_string(),
-            description: format!(
-                "Value {} exceeds {}-bit representation for UO-0 SN.",
-                packet_data.sn_lsb, P1_UO0_SN_LSB_WIDTH_DEFAULT
-            ),
+            field: crate::error::Field::SnLsb,
+            value: packet_data.sn_lsb as u32,
+            max_bits: P1_UO0_SN_LSB_WIDTH_DEFAULT,
         });
     }
     if packet_data.crc3 > 0x07 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "crc3".to_string(),
-            description: "Value exceeds 3-bit representation for CRC3.".to_string(),
+            field: crate::error::Field::Crc3,
+            value: packet_data.crc3 as u32,
+            max_bits: 3,
         });
     }
 
@@ -564,8 +557,9 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
                 .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
         } else {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "cid".to_string(),
-                description: format!("Invalid CID {} for UO-0 Add-CID encoding.", cid_val),
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
             });
         }
     }
@@ -605,12 +599,10 @@ pub fn deserialize_uo0(
 
     if core_packet_data.len() != 1 {
         return Err(RohcParsingError::InvalidFieldValue {
-            field_name: "UO-0 Core Packet Length".to_string(),
-            structure_name: "UO-0 Packet".to_string(),
-            description: format!(
-                "Expected 1 byte for core UO-0 packet, got {}.",
-                core_packet_data.len()
-            ),
+            field: crate::error::Field::Uo0CorePacketLength,
+            structure: crate::error::StructureType::Uo0Packet,
+            expected: 1,
+            got: core_packet_data.len() as u32,
         });
     }
 
@@ -659,17 +651,16 @@ pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
 
     if packet_data.num_sn_lsb_bits != P1_UO1_SN_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "num_sn_lsb_bits".to_string(),
-            description: format!(
-                "Profile 1 UO-1-SN builder expects {} LSBs for SN, got {}.",
-                P1_UO1_SN_LSB_WIDTH_DEFAULT, packet_data.num_sn_lsb_bits
-            ),
+            field: crate::error::Field::NumSnLsbBits,
+            value: packet_data.num_sn_lsb_bits as u32,
+            max_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
         });
     }
     if packet_data.sn_lsb > 0xFF {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "sn_lsb".to_string(),
-            description: "Value for UO-1-SN LSB exceeds 8-bit representation.".to_string(),
+            field: crate::error::Field::SnLsb,
+            value: packet_data.sn_lsb as u32,
+            max_bits: 8,
         });
     }
 
@@ -693,11 +684,9 @@ pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
             Ok(core_packet_bytes)
         } else {
             Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "cid".to_string(),
-                description: format!(
-                    "Invalid CID {} for UO-1-SN Add-CID; expected 0 or 1-15.",
-                    cid_val
-                ),
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
             })
         }
     } else {
@@ -723,7 +712,7 @@ pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: "UO-1-SN Packet Core".to_string(),
+            context: crate::error::ParseContext::Uo1SnPacketCore,
         });
     }
 
@@ -764,19 +753,17 @@ pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-TS packet
 pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
-    let ts_lsb =
+    let ts_lsb = packet_data
+        .ts_lsb
+        .ok_or(RohcBuildingError::ContextInsufficient {
+            field: crate::error::Field::TsLsb,
+        })?;
+    let num_ts_bits =
         packet_data
-            .ts_lsb
-            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "ts_lsb".to_string(),
-                description: "UO-1-TS requires timestamp LSBs".to_string(),
+            .num_ts_lsb_bits
+            .ok_or(RohcBuildingError::ContextInsufficient {
+                field: crate::error::Field::NumTsLsbBits,
             })?;
-    let num_ts_bits = packet_data.num_ts_lsb_bits.ok_or_else(|| {
-        RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "num_ts_lsb_bits".to_string(),
-            description: "UO-1-TS requires timestamp LSB bit count".to_string(),
-        }
-    })?;
 
     debug_assert_eq!(
         num_ts_bits, P1_UO1_TS_LSB_WIDTH_DEFAULT,
@@ -786,11 +773,9 @@ pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
 
     if num_ts_bits != P1_UO1_TS_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "num_ts_lsb_bits".to_string(),
-            description: format!(
-                "Profile 1 UO-1-TS builder expects {} LSBs for TS, got {}.",
-                P1_UO1_TS_LSB_WIDTH_DEFAULT, num_ts_bits
-            ),
+            field: crate::error::Field::NumTsLsbBits,
+            value: num_ts_bits as u32,
+            max_bits: P1_UO1_TS_LSB_WIDTH_DEFAULT,
         });
     }
 
@@ -813,11 +798,9 @@ pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
             Ok(core_packet_bytes)
         } else {
             Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "cid".to_string(),
-                description: format!(
-                    "Invalid CID {} for UO-1-TS Add-CID; expected 0 or 1-15.",
-                    cid_val
-                ),
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
             })
         }
     } else {
@@ -843,7 +826,7 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: "UO-1-TS Packet Core".to_string(),
+            context: crate::error::ParseContext::Uo1TsPacketCore,
         });
     }
 
@@ -883,19 +866,17 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-ID packet
 pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
-    let ip_id_lsb =
+    let ip_id_lsb = packet_data
+        .ip_id_lsb
+        .ok_or(RohcBuildingError::ContextInsufficient {
+            field: crate::error::Field::IpIdLsb,
+        })?;
+    let num_ip_id_bits =
         packet_data
-            .ip_id_lsb
-            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "ip_id_lsb".to_string(),
-                description: "UO-1-ID requires IP-ID LSBs".to_string(),
+            .num_ip_id_lsb_bits
+            .ok_or(RohcBuildingError::ContextInsufficient {
+                field: crate::error::Field::NumIpIdLsbBits,
             })?;
-    let num_ip_id_bits = packet_data.num_ip_id_lsb_bits.ok_or_else(|| {
-        RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "num_ip_id_lsb_bits".to_string(),
-            description: "UO-1-ID requires IP-ID LSB bit count".to_string(),
-        }
-    })?;
 
     debug_assert_eq!(
         num_ip_id_bits, P1_UO1_IPID_LSB_WIDTH_DEFAULT,
@@ -910,17 +891,16 @@ pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
 
     if num_ip_id_bits != P1_UO1_IPID_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "num_ip_id_lsb_bits".to_string(),
-            description: format!(
-                "Profile 1 UO-1-ID builder expects {} LSBs for IP-ID, got {}.",
-                P1_UO1_IPID_LSB_WIDTH_DEFAULT, num_ip_id_bits
-            ),
+            field: crate::error::Field::NumIpIdLsbBits,
+            value: num_ip_id_bits as u32,
+            max_bits: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
         });
     }
     if ip_id_lsb > 0xFF {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name: "ip_id_lsb".to_string(),
-            description: "Value for UO-1-ID LSB exceeds 8-bit representation.".to_string(),
+            field: crate::error::Field::IpIdLsb,
+            value: ip_id_lsb as u32,
+            max_bits: 8,
         });
     }
 
@@ -938,11 +918,9 @@ pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
             Ok(core_packet_bytes)
         } else {
             Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "cid".to_string(),
-                description: format!(
-                    "Invalid CID {} for UO-1-ID Add-CID; expected 0 or 1-15.",
-                    cid_val
-                ),
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
             })
         }
     } else {
@@ -968,7 +946,7 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: "UO-1-ID Packet Core".to_string(),
+            context: crate::error::ParseContext::Uo1IdPacketCore,
         });
     }
 
@@ -1008,13 +986,11 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-RTP packet
 pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
-    let ts_scaled_val =
-        packet_data
-            .ts_scaled
-            .ok_or_else(|| RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "ts_scaled".to_string(),
-                description: "UO-1-RTP requires a TS_SCALED value.".to_string(),
-            })?;
+    let ts_scaled_val = packet_data
+        .ts_scaled
+        .ok_or(RohcBuildingError::ContextInsufficient {
+            field: crate::error::Field::TsScaled,
+        })?;
 
     debug_assert!(
         ts_scaled_val <= P1_TS_SCALED_MAX_VALUE as u8,
@@ -1042,11 +1018,9 @@ pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildin
             Ok(core_packet_bytes)
         } else {
             Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field_name: "cid".to_string(),
-                description: format!(
-                    "Invalid CID {} for UO-1-RTP Add-CID encoding; expected 0 or 1-15.",
-                    cid_val
-                ),
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
             })
         }
     } else {
@@ -1072,7 +1046,7 @@ pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPa
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: "UO-1-RTP Packet Core".to_string(),
+            context: crate::error::ParseContext::Uo1RtpPacketCore,
         });
     }
 
@@ -1431,7 +1405,7 @@ mod tests {
         };
         let result = serialize_uo1_rtp(&uo1_rtp_data);
         assert!(
-            matches!(result, Err(RohcBuildingError::InvalidFieldValueForBuild { field_name, .. }) if field_name == "ts_scaled")
+            matches!(result, Err(RohcBuildingError::ContextInsufficient { field, .. }) if field == crate::error::Field::TsScaled)
         );
     }
 

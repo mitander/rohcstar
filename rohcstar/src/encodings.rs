@@ -65,13 +65,13 @@ pub fn is_value_in_lsb_interval(
 pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field_name: "num_lsb_bits".to_string(),
+            field: crate::error::Field::NumLsbBits,
             description: "Number of LSBs (k) cannot be 0 for encoding.".to_string(),
         });
     }
     if num_lsb_bits > 64 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field_name: "num_lsb_bits".to_string(),
+            field: crate::error::Field::NumLsbBits,
             description: format!(
                 "Number of LSBs (k) cannot exceed 64 for u64 LSB encoding, got {}.",
                 num_lsb_bits
@@ -114,7 +114,7 @@ pub fn decode_lsb(
 ) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 || num_lsb_bits >= 64 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field_name: "num_lsb_bits".to_string(),
+            field: crate::error::Field::NumLsbBits,
             description: format!(
                 "Number of LSBs (k) must be between 1 and 63 for W-LSB decoding, got {}.",
                 num_lsb_bits
@@ -129,7 +129,7 @@ pub fn decode_lsb(
     // Validate received_lsbs fit in k bits
     if received_lsbs > lsb_mask {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field_name: "received_lsbs".to_string(),
+            field: crate::error::Field::ReceivedLsbs,
             description: format!(
                 "Received LSB value {:#x} is too large for {} LSBs (max value {:#x}).",
                 received_lsbs, num_lsb_bits, lsb_mask
@@ -163,7 +163,7 @@ pub fn decode_lsb(
         } else {
             // LSB value cannot be resolved - context drift or synchronization issue
             Err(RohcParsingError::InvalidLsbOperation {
-                field_name: "received_lsbs".to_string(),
+                field: crate::error::Field::ReceivedLsbs,
                 description: format!(
                     "Cannot be uniquely resolved to a value in the interpretation window. LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
                     received_lsbs,
@@ -197,11 +197,8 @@ mod tests {
     fn encode_lsb_invalid_num_bits() {
         let err_k0 = encode_lsb(0x1234, 0).unwrap_err();
         match err_k0 {
-            RohcParsingError::InvalidLsbOperation {
-                field_name,
-                description,
-            } => {
-                assert_eq!(field_name, "num_lsb_bits");
+            RohcParsingError::InvalidLsbOperation { field, description } => {
+                assert_eq!(field, crate::error::Field::NumLsbBits);
                 assert!(description.contains("cannot be 0"));
             }
             _ => panic!("Unexpected error type for k=0: {:?}", err_k0),
@@ -209,11 +206,8 @@ mod tests {
 
         let err_k65 = encode_lsb(0x1234, 65).unwrap_err();
         match err_k65 {
-            RohcParsingError::InvalidLsbOperation {
-                field_name,
-                description,
-            } => {
-                assert_eq!(field_name, "num_lsb_bits");
+            RohcParsingError::InvalidLsbOperation { field, description } => {
+                assert_eq!(field, crate::error::Field::NumLsbBits);
                 assert!(description.contains("cannot exceed 64"));
             }
             _ => panic!("Unexpected error type for k=65: {:?}", err_k65),
@@ -372,11 +366,8 @@ mod tests {
     fn decode_lsb_error_invalid_num_bits_combined() {
         let err_k0 = decode_lsb(0x01, 10, 0, 0).unwrap_err();
         match err_k0 {
-            RohcParsingError::InvalidLsbOperation {
-                field_name,
-                description,
-            } => {
-                assert_eq!(field_name, "num_lsb_bits");
+            RohcParsingError::InvalidLsbOperation { field, description } => {
+                assert_eq!(field, crate::error::Field::NumLsbBits);
                 assert!(description.contains("between 1 and 63"));
             }
             _ => panic!("Unexpected error type for k=0: {:?}", err_k0),
@@ -384,11 +375,8 @@ mod tests {
 
         let err_k64 = decode_lsb(0x01, 10, 64, 0).unwrap_err();
         match err_k64 {
-            RohcParsingError::InvalidLsbOperation {
-                field_name,
-                description,
-            } => {
-                assert_eq!(field_name, "num_lsb_bits");
+            RohcParsingError::InvalidLsbOperation { field, description } => {
+                assert_eq!(field, crate::error::Field::NumLsbBits);
                 assert!(description.contains("between 1 and 63"));
             }
             _ => panic!("Unexpected error type for k=64: {:?}", err_k64),
@@ -399,11 +387,8 @@ mod tests {
     fn decode_lsb_error_received_lsbs_too_large_for_k_combined() {
         let err = decode_lsb(0x10, 10, 3, 0).unwrap_err(); // 0x10 (16) is too large for k=3 (max 7)
         match err {
-            RohcParsingError::InvalidLsbOperation {
-                field_name,
-                description,
-            } => {
-                assert_eq!(field_name, "received_lsbs");
+            RohcParsingError::InvalidLsbOperation { field, description } => {
+                assert_eq!(field, crate::error::Field::ReceivedLsbs);
                 assert!(description.contains("too large for 3 LSBs"));
                 assert!(description.contains("max value 0x7"));
             }

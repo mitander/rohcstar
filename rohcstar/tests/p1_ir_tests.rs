@@ -17,7 +17,7 @@ use common::{
 use rohcstar::ProfileHandler;
 use rohcstar::crc::CrcCalculators;
 use rohcstar::engine::RohcEngine;
-use rohcstar::error::{RohcBuildingError, RohcError, RohcParsingError};
+use rohcstar::error::{DecompressionError, RohcBuildingError, RohcError, RohcParsingError};
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
@@ -174,11 +174,15 @@ fn p1_decompressor_stays_in_no_context_without_ir() {
     let result = handler.decompress(decomp_ctx_dyn.as_mut(), &uo0_packet_bytes);
 
     match result {
-        Err(RohcError::InvalidState(msg)) => {
-            assert!(msg.contains("Non-IR packet received but decompressor is in NoContext mode."));
+        Err(RohcError::Decompression(DecompressionError::InvalidPacketType {
+            cid,
+            packet_type,
+        })) => {
+            assert_eq!(cid, 0);
+            assert_eq!(packet_type, 0x09);
         }
         _ => panic!(
-            "Expected InvalidState error for UO packet in NoContext, got: {:?}",
+            "Expected InvalidPacketType error for UO packet in NoContext, got: {:?}",
             result
         ),
     }
@@ -205,14 +209,13 @@ fn p1_ir_packet_large_cid_not_supported_by_builder() {
     let result = serialize_ir(&ir_data, &test_crc_calculators);
     match result {
         Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field_name,
-            description,
+            field,
+            value,
+            max_bits,
         }) => {
-            assert_eq!(field_name, "CID");
-            assert!(description.contains(&format!(
-                "Large CID CID{} for IR packet Add-CID not supported",
-                large_cid
-            )));
+            assert_eq!(field, rohcstar::error::Field::Cid);
+            assert_eq!(value, large_cid as u32);
+            assert_eq!(max_bits, 4);
         }
         _ => panic!(
             "Expected InvalidFieldValueForBuild for large CID, got {:?}.",

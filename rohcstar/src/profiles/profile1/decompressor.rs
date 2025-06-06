@@ -17,7 +17,7 @@ use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc::CrcCalculators;
 use crate::encodings::decode_lsb;
-use crate::error::{RohcError, RohcParsingError};
+use crate::error::{DecompressionError, RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::traits::RohcDecompressorContext;
 use crate::types::{IpId, SequenceNumber, Timestamp};
@@ -34,7 +34,7 @@ fn attempt_sn_recovery_for_uo1<F>(
     context: &Profile1DecompressorContext,
     received_crc: u8,
     crc_calculators: &CrcCalculators,
-    crc_error_type: &str,
+    crc_error_type: crate::error::CrcType,
     mut crc_input_builder: F,
 ) -> Result<SequenceNumber, RohcError>
 where
@@ -57,7 +57,7 @@ where
     Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
         expected: received_crc,
         calculated: 0,
-        crc_type: crc_error_type.to_string(),
+        crc_type: crc_error_type,
     }))
 }
 
@@ -131,7 +131,7 @@ pub(super) fn decompress_as_uo(
         return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
             needed: 1,
             got: 0,
-            context: "UO packet type discriminator".to_string(),
+            context: crate::error::ParseContext::UoPacketTypeDiscriminator,
         }));
     }
 
@@ -200,7 +200,7 @@ fn decompress_as_uo0(
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
             expected: parsed_uo0.crc3,
             calculated: calculated_crc3,
-            crc_type: "CRC3-UO0".to_string(),
+            crc_type: crate::error::CrcType::Crc3Uo0,
         }));
     }
 
@@ -251,7 +251,7 @@ fn decompress_as_uo1_sn(
         return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
             expected: parsed_uo1.crc8,
             calculated: calculated_crc8,
-            crc_type: "CRC8-UO1SN".to_string(),
+            crc_type: crate::error::CrcType::Crc8Uo1Sn,
         }));
     }
 
@@ -283,16 +283,16 @@ fn decompress_as_uo1_ts(
 
     let parsed_uo1_ts = deserialize_uo1_ts(packet)?;
 
-    let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or_else(|| {
+    let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field_name: "ts_lsb".to_string(),
-            structure_name: "UO1TS".to_string(),
+            field: crate::error::Field::TsLsb,
+            structure: crate::error::StructureType::Uo1TsPacket,
         })
     })?;
-    let num_ts_lsb_bits = parsed_uo1_ts.num_ts_lsb_bits.ok_or_else(|| {
+    let num_ts_lsb_bits = parsed_uo1_ts.num_ts_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field_name: "num_ts_lsb_bits".to_string(),
-            structure_name: "UO1TS".to_string(),
+            field: crate::error::Field::NumTsLsbBits,
+            structure: crate::error::StructureType::Uo1TsPacket,
         })
     })?;
 
@@ -321,7 +321,7 @@ fn decompress_as_uo1_ts(
             context,
             parsed_uo1_ts.crc8,
             crc_calculators,
-            "CRC8-UO1TS",
+            crate::error::CrcType::Crc8Uo1Sn,
             |candidate_sn, _candidate_ts| {
                 prepare_generic_uo_crc_input_payload(
                     context.rtp_ssrc,
@@ -362,16 +362,16 @@ fn decompress_as_uo1_id(
 
     let parsed_uo1_id = deserialize_uo1_id(packet)?;
 
-    let ip_id_lsb_from_packet = parsed_uo1_id.ip_id_lsb.ok_or_else(|| {
+    let ip_id_lsb_from_packet = parsed_uo1_id.ip_id_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field_name: "ip_id_lsb".to_string(),
-            structure_name: "UO1ID".to_string(),
+            field: crate::error::Field::IpIdLsb,
+            structure: crate::error::StructureType::Uo1IdPacket,
         })
     })?;
-    let num_ip_id_lsb_bits = parsed_uo1_id.num_ip_id_lsb_bits.ok_or_else(|| {
+    let num_ip_id_lsb_bits = parsed_uo1_id.num_ip_id_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field_name: "num_ip_id_lsb_bits".to_string(),
-            structure_name: "UO1ID".to_string(),
+            field: crate::error::Field::NumIpIdLsbBits,
+            structure: crate::error::StructureType::Uo1IdPacket,
         })
     })?;
 
@@ -401,7 +401,7 @@ fn decompress_as_uo1_id(
             context,
             parsed_uo1_id.crc8,
             crc_calculators,
-            "CRC8-UO1ID",
+            crate::error::CrcType::Crc8Uo1Sn,
             |candidate_sn, candidate_ts| {
                 prepare_uo1_id_specific_crc_input_payload(
                     context.rtp_ssrc,
@@ -448,17 +448,20 @@ fn decompress_as_uo1_rtp(
 
     let parsed_uo1_rtp = deserialize_uo1_rtp(packet)?;
 
-    let ts_scaled_received = parsed_uo1_rtp.ts_scaled.ok_or_else(|| {
+    let ts_scaled_received = parsed_uo1_rtp.ts_scaled.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field_name: "ts_scaled".to_string(),
-            structure_name: "UO1RTP".to_string(),
+            field: crate::error::Field::TsScaled,
+            structure: crate::error::StructureType::Uo1RtpPacket,
         })
     })?;
 
     let expected_ts_from_scaled = context
         .reconstruct_ts_from_scaled(ts_scaled_received)
         .ok_or_else(|| {
-            RohcError::InvalidState("Cannot reconstruct TS: stride not established".to_string())
+            RohcError::Decompression(DecompressionError::LsbDecodingFailed {
+                cid: context.cid(),
+                field: crate::error::Field::TsScaled,
+            })
         })?;
 
     // Try the expected SN first, then attempt recovery if CRC fails
@@ -478,7 +481,7 @@ fn decompress_as_uo1_rtp(
             context,
             parsed_uo1_rtp.crc8,
             crc_calculators,
-            "CRC8-UO1RTP",
+            crate::error::CrcType::Crc8Uo1Sn,
             |candidate_sn, candidate_ts| {
                 prepare_generic_uo_crc_input_payload(
                     context.rtp_ssrc,
@@ -611,6 +614,7 @@ mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
     use crate::encodings::encode_lsb;
+    use crate::error::DecompressionError;
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
@@ -955,7 +959,7 @@ mod tests {
                 calculated, correct_crc3,
                 "Decompressor calculated CRC mismatch"
             );
-            assert_eq!(crc_type, "CRC3-UO0");
+            assert_eq!(crc_type, crate::error::CrcType::Crc3Uo0);
         } else {
             panic!("Expected CrcMismatch error, got {:?}", result);
         }
@@ -1045,12 +1049,11 @@ mod tests {
         let result = decompress_as_uo1_rtp(&mut context, &packet, &crc_calculators);
         assert!(result.is_err());
 
-        if let Err(RohcError::InvalidState(msg)) = result {
-            assert!(
-                msg.contains("stride not established"),
-                "Error message was: {}",
-                msg
-            );
+        if let Err(RohcError::Decompression(DecompressionError::LsbDecodingFailed { cid, field })) =
+            result
+        {
+            assert_eq!(cid, context.cid);
+            assert_eq!(field, crate::error::Field::TsScaled);
         } else {
             panic!(
                 "Expected InvalidState error for UO-1-RTP without stride, got {:?}",

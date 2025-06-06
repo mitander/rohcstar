@@ -242,7 +242,7 @@ mod tests {
                     crate::error::RohcParsingError::NotEnoughData {
                         needed: 1,
                         got: 0,
-                        context: "mock".to_string(),
+                        context: crate::error::ParseContext::RohcPacketInput,
                     },
                 ));
             }

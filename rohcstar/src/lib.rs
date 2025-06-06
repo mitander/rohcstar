@@ -68,7 +68,10 @@ pub mod traits;
 pub mod types;
 
 pub use engine::RohcEngine;
-pub use error::{RohcBuildingError, RohcError, RohcParsingError};
+pub use error::{
+    CompressionError, CrcType, DecompressionError, EngineError, Field, NetworkLayer, ParseContext,
+    RohcBuildingError, RohcError, RohcParsingError, StructureType,
+};
 pub use packet_defs::{GenericUncompressedHeaders, RohcProfile};
 pub use traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 pub mod fuzz_harnesses;

@@ -23,8 +23,9 @@ use super::protocol_types::RtpUdpIpv4Headers;
 
 use crate::crc::CrcCalculators;
 use crate::encodings::encode_lsb;
-use crate::error::RohcError;
+use crate::error::{CompressionError, RohcError};
 use crate::packet_defs::RohcProfile;
+use crate::traits::RohcCompressorContext;
 use crate::types::{IpId, SequenceNumber, Timestamp};
 
 /// Determines if an IR packet must be sent by the compressor.
@@ -361,8 +362,11 @@ fn select_and_build_uo_packet(
             let packet = build_uo1_sn_packet(context, current_sn, current_marker, crc_calculators)?;
             return Ok((packet, implicit_ts_for_fallback));
         } else {
-            return Err(RohcError::InvalidState(
-                "TS_SCALED failed and no stride for fallback".to_string(),
+            return Err(RohcError::Compression(
+                CompressionError::ContextInsufficient {
+                    cid: context.cid(),
+                    field: crate::error::Field::TsScaled,
+                },
             ));
         }
     }
@@ -432,8 +436,11 @@ fn select_and_build_uo_packet(
     }
 
     // If no suitable UO packet type is found and no stride is established for UO-1-SN fallback.
-    Err(RohcError::InvalidState(
-        "No suitable UO packet type and no stride for UO-1-SN".to_string(),
+    Err(RohcError::Compression(
+        CompressionError::ContextInsufficient {
+            cid: context.cid(),
+            field: crate::error::Field::TsScaled,
+        },
     ))
 }
 
@@ -596,7 +603,10 @@ fn build_uo1_rtp_packet(
     crc_calculators: &CrcCalculators,
 ) -> Result<Vec<u8>, RohcError> {
     let stride = context.ts_stride.ok_or_else(|| {
-        RohcError::Internal("TS stride missing in scaled mode during UO-1-RTP build.".to_string())
+        RohcError::Compression(CompressionError::ContextInsufficient {
+            cid: context.cid(),
+            field: crate::error::Field::TsScaled,
+        })
     })?;
     debug_assert!(stride > 0, "TS Stride must be positive to build UO-1-RTP.");
 
@@ -628,8 +638,10 @@ fn build_uo1_rtp_packet(
 mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
+    use crate::error::CompressionError;
     use crate::profiles::profile1::context::Profile1CompressorContext;
     use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
+    use crate::traits::RohcCompressorContext;
     use std::time::Instant;
 
     fn create_test_context(
@@ -861,12 +873,11 @@ mod tests {
             "Should return error when no stride for UO-1-SN fallback"
         );
 
-        if let Err(RohcError::InvalidState(msg)) = result {
-            assert!(
-                msg.contains("No suitable UO packet type and no stride for UO-1-SN"),
-                "Error message mismatch. Got: {}",
-                msg
-            );
+        if let Err(RohcError::Compression(CompressionError::ContextInsufficient { cid, field })) =
+            result
+        {
+            assert_eq!(cid, *context.cid());
+            assert_eq!(field, crate::error::Field::TsScaled);
         } else {
             panic!("Expected InvalidState error, got {:?}", result);
         }

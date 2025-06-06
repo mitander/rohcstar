@@ -12,7 +12,7 @@ use super::discriminator::Profile1PacketType;
 use super::protocol_types::RtpUdpIpv4Headers;
 
 use crate::crc::CrcCalculators;
-use crate::error::{RohcError, RohcParsingError};
+use crate::error::{DecompressionError, RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 
 /// Processes a received IR packet.
@@ -127,9 +127,11 @@ pub(super) fn process_packet_in_sc_mode(
 
     let decompress_result = match discriminated_type {
         Profile1PacketType::Uo0 => {
-            return Err(RohcError::InvalidState(
-                "UO-0 packet received in StaticContext mode; cannot establish dynamic context."
-                    .to_string(),
+            return Err(RohcError::Decompression(
+                DecompressionError::InvalidPacketType {
+                    cid: context.cid,
+                    packet_type: packet_bytes[0],
+                },
             ));
         }
         Profile1PacketType::Unknown(val) => {
@@ -380,7 +382,7 @@ mod tests {
         let crc_error = Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
             expected: 0,
             calculated: 1,
-            crc_type: "test".to_string(),
+            crc_type: crate::error::CrcType::TestCrc,
         }));
 
         for i in 0..P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
@@ -397,7 +399,12 @@ mod tests {
     #[test]
     fn fc_uo_outcome_non_crc_failure_no_sc_transition() {
         let mut context = setup_context_in_mode(Profile1DecompressorMode::FullContext);
-        let non_crc_error = Err(RohcError::Internal("some other error".to_string()));
+        let non_crc_error = Err(RohcError::Parsing(RohcParsingError::InvalidFieldValue {
+            field: crate::error::Field::RtpVersion,
+            structure: crate::error::StructureType::RtpHeader,
+            expected: 2,
+            got: 1,
+        }));
 
         for _i in 0..P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
             let _ = handle_fc_uo_packet_outcome(&mut context, non_crc_error.clone());

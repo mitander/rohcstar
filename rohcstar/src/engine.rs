@@ -14,7 +14,7 @@ use crate::constants::{
     ROHC_SMALL_CID_MASK,
 };
 use crate::context_manager::ContextManager;
-use crate::error::{RohcError, RohcParsingError};
+use crate::error::{EngineError, RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::time::{Clock, SystemClock};
 use crate::traits::ProfileHandler;
@@ -102,10 +102,11 @@ impl RohcEngine {
     ) -> Result<(), RohcError> {
         let profile_id = handler.profile_id();
         if self.profile_handlers.contains_key(&profile_id) {
-            return Err(RohcError::Internal(format!(
-                "Profile handler for {:?} already registered.",
-                profile_id
-            )));
+            return Err(RohcError::Engine(
+                EngineError::ProfileHandlerAlreadyRegistered {
+                    profile: profile_id,
+                },
+            ));
         }
         self.profile_handlers.insert(profile_id, handler);
         Ok(())
@@ -135,11 +136,10 @@ impl RohcEngine {
         match self.context_manager.get_compressor_context_mut(cid) {
             Ok(context_box) => {
                 let profile_id = context_box.profile_id();
-                let handler = self.profile_handlers.get(&profile_id).ok_or_else(|| {
-                    RohcError::Internal(format!(
-                        "Compressor context for CID {} (profile {:?}) exists, but no handler registered.",
-                        cid, profile_id
-                    ))
+                let handler = self.profile_handlers.get(&profile_id).ok_or({
+                    RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
+                        profile: profile_id,
+                    })
                 })?;
                 let result = handler.compress(context_box.as_mut(), headers);
 
@@ -149,11 +149,10 @@ impl RohcEngine {
                 result
             }
             Err(RohcError::ContextNotFound(_)) => {
-                let profile_to_use = profile_id_hint.ok_or_else(|| {
-                    RohcError::Internal(format!(
-                        "Cannot create new compressor context for CID {} without profile hint.",
-                        cid
-                    ))
+                let profile_to_use = profile_id_hint.ok_or({
+                    RohcError::Engine(EngineError::Internal {
+                        reason: "Cannot create new compressor context without profile hint",
+                    })
                 })?;
                 let handler = self
                     .profile_handlers
@@ -199,7 +198,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: "ROHC packet input".to_string(),
+                context: crate::error::ParseContext::RohcPacketInput,
             }));
         }
 
@@ -208,18 +207,17 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: "Core ROHC packet after CID processing".to_string(),
+                context: crate::error::ParseContext::CorePacketAfterCid,
             }));
         }
 
         match self.context_manager.get_decompressor_context_mut(cid) {
             Ok(context_box) => {
                 let profile_id = context_box.profile_id();
-                let handler = self.profile_handlers.get(&profile_id).ok_or_else(|| {
-                    RohcError::Internal(format!(
-                        "Decompressor context for CID {} (profile {:?}) exists, but no handler registered.",
-                        cid, profile_id
-                    ))
+                let handler = self.profile_handlers.get(&profile_id).ok_or({
+                    RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
+                        profile: profile_id,
+                    })
                 })?;
                 let result = handler.decompress(context_box.as_mut(), core_packet_slice);
 
@@ -268,7 +266,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: "CID parsing".to_string(),
+                context: crate::error::ParseContext::CidParsing,
             }));
         }
         let first_byte = packet[0];
@@ -303,7 +301,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 2,
                 got: core_packet_slice.len(),
-                context: "Peeking profile ID from core packet".to_string(),
+                context: crate::error::ParseContext::ProfileIdPeek,
             }));
         }
         let packet_type_octet = core_packet_slice[0];
@@ -312,9 +310,9 @@ impl RohcEngine {
             let profile_id_byte = core_packet_slice[1];
             Ok(RohcProfile::from(profile_id_byte))
         } else {
-            Err(RohcError::InvalidState(
-                "Cannot determine ROHC profile from non-IR packet for new CID.".to_string(),
-            ))
+            Err(RohcError::Engine(EngineError::Internal {
+                reason: "Cannot determine ROHC profile from non-IR packet for new CID",
+            }))
         }
     }
 
@@ -385,6 +383,7 @@ impl Default for RohcEngine {
 mod tests {
     use super::*;
     use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
+    use crate::error::EngineError;
     use crate::profiles::profile1::{
         P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
         P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler, RtpUdpIpv4Headers,
@@ -424,7 +423,12 @@ mod tests {
 
         let p1_handler_again: Box<dyn ProfileHandler> = Box::new(Profile1Handler::new());
         let result = engine.register_profile_handler(p1_handler_again);
-        assert!(matches!(result, Err(RohcError::Internal(_))));
+        assert!(matches!(
+            result,
+            Err(RohcError::Engine(
+                EngineError::ProfileHandlerAlreadyRegistered { .. }
+            ))
+        ));
     }
 
     #[test]
@@ -549,7 +553,7 @@ mod tests {
             matches!(
                 result,
                 Err(RohcError::Parsing(RohcParsingError::NotEnoughData { needed: 2, got: 1, context}))
-                if context == "Peeking profile ID from core packet"
+                if context == crate::error::ParseContext::ProfileIdPeek
             ),
             "Expected NotEnoughData from peek_profile_from_core_packet for 1-byte UO-0, got {:?}",
             result_clone_for_assert_msg

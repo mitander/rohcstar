@@ -6,6 +6,184 @@
 
 use thiserror::Error;
 
+use crate::types::ContextId;
+
+/// Context types for parsing operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseContext {
+    RohcPacketInput,
+    CorePacketAfterCid,
+    CidParsing,
+    ProfileIdPeek,
+    Ipv4HeaderMin,
+    Ipv4HeaderCalculated,
+    UdpHeader,
+    RtpHeaderMin,
+    IrPacketTypeOctet,
+    IrPacketRtpFlags,
+    IrPacketCrcAndPayload,
+    IrPacketTsStrideExtension,
+    Uo0PacketCore,
+    Uo1SnPacketCore,
+    Uo1TsPacketCore,
+    Uo1IdPacketCore,
+    Uo1RtpPacketCore,
+    UoPacketTypeDiscriminator,
+}
+
+impl std::fmt::Display for ParseContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::RohcPacketInput => "ROHC packet input",
+            Self::CorePacketAfterCid => "Core ROHC packet after CID processing",
+            Self::CidParsing => "CID parsing",
+            Self::ProfileIdPeek => "Peeking profile ID from core packet",
+            Self::Ipv4HeaderMin => "IPv4 header (minimum)",
+            Self::Ipv4HeaderCalculated => "IPv4 header (calculated IHL)",
+            Self::UdpHeader => "UDP header",
+            Self::RtpHeaderMin => "RTP header (minimum)",
+            Self::IrPacketTypeOctet => "IR Packet Type Octet",
+            Self::IrPacketRtpFlags => "IR Packet (RTP_Flags for CRC check)",
+            Self::IrPacketCrcAndPayload => "IR Packet (CRC field and defined payload)",
+            Self::IrPacketTsStrideExtension => "IR Packet TS_STRIDE Extension",
+            Self::Uo0PacketCore => "UO-0 Packet Core",
+            Self::Uo1SnPacketCore => "UO-1-SN Packet Core",
+            Self::Uo1TsPacketCore => "UO-1-TS Packet Core",
+            Self::Uo1IdPacketCore => "UO-1-ID Packet Core",
+            Self::Uo1RtpPacketCore => "UO-1-RTP Packet Core",
+            Self::UoPacketTypeDiscriminator => "UO packet type discriminator",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// Field types for structured error reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    // Generic fields
+    Cid,
+    ProfileId,
+    NumLsbBits,
+    ReceivedLsbs,
+
+    // IP fields
+    IpVersion,
+    IpIhl,
+    IpProtocol,
+
+    // RTP fields
+    RtpVersion,
+    RtpCsrcCount,
+
+    // UO packet fields
+    SnLsb,
+    TsLsb,
+    IpIdLsb,
+    TsScaled,
+    Crc3,
+    NumSnLsbBits,
+    NumTsLsbBits,
+    NumIpIdLsbBits,
+
+    // Packet structure fields
+    Uo0CorePacketLength,
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Cid => "CID",
+            Self::ProfileId => "Profile ID",
+            Self::NumLsbBits => "num_lsb_bits",
+            Self::ReceivedLsbs => "received_lsbs",
+            Self::IpVersion => "IPv4 Version",
+            Self::IpIhl => "IPv4 IHL",
+            Self::IpProtocol => "IP Protocol",
+            Self::RtpVersion => "RTP Version",
+            Self::RtpCsrcCount => "RTP CSRC Count",
+            Self::SnLsb => "sn_lsb",
+            Self::TsLsb => "ts_lsb",
+            Self::IpIdLsb => "ip_id_lsb",
+            Self::TsScaled => "ts_scaled",
+            Self::Crc3 => "crc3",
+            Self::NumSnLsbBits => "num_sn_lsb_bits",
+            Self::NumTsLsbBits => "num_ts_lsb_bits",
+            Self::NumIpIdLsbBits => "num_ip_id_lsb_bits",
+            Self::Uo0CorePacketLength => "UO-0 Core Packet Length",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// Header structure types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructureType {
+    Ipv4Header,
+    RtpHeader,
+    Uo0Packet,
+    Uo1SnPacket,
+    Uo1TsPacket,
+    Uo1IdPacket,
+    Uo1RtpPacket,
+}
+
+impl std::fmt::Display for StructureType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Ipv4Header => "IPv4 Header",
+            Self::RtpHeader => "RTP Header",
+            Self::Uo0Packet => "UO-0 Packet",
+            Self::Uo1SnPacket => "UO-1-SN Packet",
+            Self::Uo1TsPacket => "UO-1-TS Packet",
+            Self::Uo1IdPacket => "UO-1-ID Packet",
+            Self::Uo1RtpPacket => "UO-1-RTP Packet",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// Network layer types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkLayer {
+    Ip,
+    Udp,
+    Rtp,
+}
+
+impl std::fmt::Display for NetworkLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Ip => "IP",
+            Self::Udp => "UDP",
+            Self::Rtp => "RTP",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// CRC types used in ROHC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrcType {
+    Rohc3,
+    Rohc8,
+    Crc3Uo0,
+    Crc8Uo1Sn,
+    TestCrc,
+}
+
+impl std::fmt::Display for CrcType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Rohc3 => "ROHC-CRC3",
+            Self::Rohc8 => "ROHC-CRC8",
+            Self::Crc3Uo0 => "CRC3-UO0",
+            Self::Crc8Uo1Sn => "CRC8-UO1SN",
+            Self::TestCrc => "TestCRC",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Errors that can occur during ROHC packet parsing.
 ///
 /// These errors typically indicate issues with the format or content of an
@@ -17,7 +195,7 @@ pub enum RohcParsingError {
     NotEnoughData {
         needed: usize,
         got: usize,
-        context: String,
+        context: ParseContext,
     },
 
     /// Invalid or unsupported ROHC profile identifier encountered.
@@ -39,41 +217,48 @@ pub enum RohcParsingError {
 
     /// Unsupported protocol specified in a header (e.g., non-UDP in IP for Profile 1).
     #[error("Unsupported protocol: {protocol_id} in {layer} header")]
-    UnsupportedProtocol { protocol_id: u8, layer: String },
+    UnsupportedProtocol {
+        protocol_id: u8,
+        layer: NetworkLayer,
+    },
 
     /// CRC validation failed, indicating data corruption or context mismatch.
     #[error("CRC mismatch: expected 0x{expected:X}, got 0x{calculated:X} for {crc_type} CRC")]
     CrcMismatch {
         expected: u8,
         calculated: u8,
-        crc_type: String,
+        crc_type: CrcType,
     },
 
-    /// LSB encoding or decoding operation failed.
-    #[error("Invalid LSB operation for field '{field_name}': {description}")]
+    /// LSB encoding or decoding operation failed with specific values.
+    #[error("Invalid LSB operation for field '{field}': {description}")]
     InvalidLsbOperation {
-        field_name: String,
-        description: String,
+        field: Field,
+        description: String, // Keep String for complex dynamic descriptions
     },
 
     /// A mandatory field was missing from a packet or header.
-    #[error("Missing required field: {field_name} in {structure_name}")]
+    #[error("Missing required field: {field} in {structure}")]
     MandatoryFieldMissing {
-        field_name: String,
-        structure_name: String,
+        field: Field,
+        structure: StructureType,
     },
 
     /// A field contained an invalid or unexpected value.
-    #[error("Invalid value for field '{field_name}' in {structure_name}: {description}")]
+    #[error("Invalid value for field '{field}' in {structure}: expected {expected}, got {got}")]
     InvalidFieldValue {
-        field_name: String,
-        structure_name: String,
-        description: String,
+        field: Field,
+        structure: StructureType,
+        expected: u32, // Keep numeric values for debugging
+        got: u32,
     },
 
     /// General, profile-specific parsing error.
     #[error("Profile-specific parsing error for profile 0x{profile_id:02X}: {description}")]
-    ProfileSpecificParsingError { profile_id: u8, description: String },
+    ProfileSpecificParsingError {
+        profile_id: u8,
+        description: &'static str,
+    },
 }
 
 /// Errors that can occur during ROHC packet building (construction).
@@ -88,31 +273,117 @@ pub enum RohcBuildingError {
     BufferTooSmall {
         needed: usize,
         available: usize,
-        context: String,
+        context: ParseContext,
     },
 
     /// Context information insufficient to build the packet.
-    #[error("Context insufficient for building packet: {reason}")]
-    ContextInsufficient { reason: String },
+    #[error("Context insufficient for building packet: missing {field}")]
+    ContextInsufficient { field: Field },
 
     /// Invalid value provided for a field during packet construction.
-    #[error("Invalid value for field '{field_name}' during packet building: {description}")]
+    #[error(
+        "Invalid value for field '{field}' during packet building: {value} exceeds {max_bits}-bit limit"
+    )]
     InvalidFieldValueForBuild {
-        field_name: String,
-        description: String,
+        field: Field,
+        value: u32,   // Keep actual problematic value
+        max_bits: u8, // Keep bit limit for debugging
     },
 
     /// General, profile-specific building error.
     #[error("Profile-specific building error for profile 0x{profile_id:02X}: {description}")]
-    ProfileSpecificBuildingError { profile_id: u8, description: String },
+    ProfileSpecificBuildingError {
+        profile_id: u8,
+        description: &'static str,
+    },
+}
+
+/// Errors that can occur during ROHC compression operations.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum CompressionError {
+    /// Context not found for the given CID.
+    #[error("Context {cid} not found")]
+    ContextNotFound { cid: ContextId },
+
+    /// Context state insufficient for operation.
+    #[error("Context {cid} insufficient: missing {field}")]
+    ContextInsufficient { cid: ContextId, field: Field },
+
+    /// Packet building failed during compression.
+    #[error("Packet building failed: {0}")]
+    BuildingFailed(#[from] RohcBuildingError),
+}
+
+/// Errors that can occur during ROHC decompression operations.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum DecompressionError {
+    /// Context not found for the given CID.
+    #[error("Context {cid} not found")]
+    ContextNotFound { cid: ContextId },
+
+    /// CRC mismatch during decompression.
+    #[error("CRC mismatch in context {cid}: expected {expected:#04x}, got {actual:#04x}")]
+    CrcMismatch {
+        cid: ContextId,
+        expected: u8,
+        actual: u8,
+    },
+
+    /// LSB decoding error during decompression.
+    #[error("LSB decoding failed for {field} in context {cid}")]
+    LsbDecodingFailed { cid: ContextId, field: Field },
+
+    /// Packet type invalid for current state.
+    #[error("Packet type {packet_type:#04x} invalid for context {cid}")]
+    InvalidPacketType { cid: ContextId, packet_type: u8 },
+
+    /// Packet parsing failed during decompression.
+    #[error("Packet parsing failed: {0}")]
+    ParsingFailed(#[from] RohcParsingError),
+}
+
+/// Errors that can occur during engine operations.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum EngineError {
+    /// Profile handler not registered.
+    #[error("Profile handler for {profile:?} not registered")]
+    ProfileHandlerNotRegistered {
+        profile: crate::packet_defs::RohcProfile,
+    },
+
+    /// Profile handler already registered.
+    #[error("Profile handler for {profile:?} already registered")]
+    ProfileHandlerAlreadyRegistered {
+        profile: crate::packet_defs::RohcProfile,
+    },
+
+    /// Compression operation failed.
+    #[error("Compression failed: {0}")]
+    CompressionFailed(#[from] CompressionError),
+
+    /// Decompression operation failed.
+    #[error("Decompression failed: {0}")]
+    DecompressionFailed(#[from] DecompressionError),
+
+    /// Internal engine error.
+    #[error("Internal engine error: {reason}")]
+    Internal { reason: &'static str },
 }
 
 /// Main error type for ROHC operations in Rohcstar.
 ///
-/// Consolidates various error kinds from compression, decompression,
-/// context management, and other ROHC operations.
+/// Top-level error type that consolidates all specific error categories.
+/// Provides pattern matching capabilities and rich context information.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum RohcError {
+    /// Error during compression operations.
+    #[error("Compression error: {0}")]
+    Compression(#[from] CompressionError),
+
+    /// Error during decompression operations.
+    #[error("Decompression error: {0}")]
+    Decompression(#[from] DecompressionError),
+
     /// Error during packet parsing.
     #[error("Parsing error: {0}")]
     Parsing(#[from] RohcParsingError),
@@ -121,37 +392,25 @@ pub enum RohcError {
     #[error("Building error: {0}")]
     Building(#[from] RohcBuildingError),
 
-    /// No ROHC context found for the given Context Identifier (CID).
+    /// Error during engine operations.
+    #[error("Engine error: {0}")]
+    Engine(#[from] EngineError),
+
+    /// Legacy support for existing code (temporary).
     #[error("Context not found for CID: {0}")]
     ContextNotFound(u16),
 
-    /// Error related to ROHC context state or management.
-    #[error("Context error: {0}")]
-    ContextError(String),
-
-    /// Operation invalid for the current ROHC state (e.g., compressor/decompressor mode).
-    #[error("Invalid state for operation: {0}")]
-    InvalidState(String),
-
-    /// Specified ROHC profile is not supported or configured.
+    /// Legacy support for existing code (temporary).
     #[error("Unsupported ROHC profile: 0x{0:02X}")]
     UnsupportedProfile(u8),
 
-    /// Operation not supported in the current ROHC operational mode (U/O/R-mode).
-    #[error("Operation not supported in current ROHC mode: {0}")]
-    ModeNotSupported(String),
+    /// Legacy support for existing code (temporary).
+    #[error("Invalid state for operation: {0}")]
+    InvalidState(String),
 
-    /// Unexpected internal logic error, likely a bug in Rohcstar.
+    /// Legacy support for existing code (temporary).
     #[error("Internal logic error: {0}")]
     Internal(String),
-
-    /// I/O error (placeholder, Rohcstar primarily uses byte slices).
-    #[error("I/O error: {0}")]
-    Io(String),
-
-    /// Profile-specific error not fitting parsing or building categories.
-    #[error("Profile-specific error for profile 0x{profile_id:02X}: {description}")]
-    ProfileSpecific { profile_id: u8, description: String },
 }
 
 #[cfg(test)]
@@ -163,11 +422,11 @@ mod tests {
         let err = RohcParsingError::NotEnoughData {
             needed: 10,
             got: 5,
-            context: "ROHC IR Header".to_string(),
+            context: ParseContext::IrPacketCrcAndPayload,
         };
         assert_eq!(
             format!("{}", err),
-            "Incomplete packet data: needed 10 bytes, got 5 for ROHC IR Header"
+            "Incomplete packet data: needed 10 bytes, got 5 for IR Packet (CRC field and defined payload)"
         );
     }
 
@@ -197,7 +456,7 @@ mod tests {
         let err = RohcParsingError::CrcMismatch {
             expected: 0x12,
             calculated: 0x34,
-            crc_type: "TestCRC".to_string(),
+            crc_type: CrcType::TestCrc,
         };
         assert_eq!(
             format!("{}", err),
@@ -210,7 +469,7 @@ mod tests {
         let parsing_err = RohcParsingError::NotEnoughData {
             needed: 8,
             got: 4,
-            context: "Field X".to_string(),
+            context: ParseContext::RtpHeaderMin,
         };
         let rohc_err = RohcError::from(parsing_err.clone());
         match rohc_err {
@@ -222,7 +481,7 @@ mod tests {
     #[test]
     fn rohc_error_from_building_error() {
         let building_err = RohcBuildingError::ContextInsufficient {
-            reason: "SSRC not set".to_string(),
+            field: Field::TsScaled,
         };
         let rohc_err = RohcError::from(building_err.clone());
         match rohc_err {
@@ -241,11 +500,37 @@ mod tests {
     fn profile_specific_parsing_error_display() {
         let err = RohcParsingError::ProfileSpecificParsingError {
             profile_id: 0x01,
-            description: "Invalid SN encoding for UO-0".to_string(),
+            description: "Invalid SN encoding for UO-0",
         };
         assert_eq!(
             format!("{}", err),
             "Profile-specific parsing error for profile 0x01: Invalid SN encoding for UO-0"
         );
+    }
+
+    #[test]
+    fn field_value_error_with_numbers() {
+        let err = RohcParsingError::InvalidFieldValue {
+            field: Field::RtpVersion,
+            structure: StructureType::RtpHeader,
+            expected: 2,
+            got: 1,
+        };
+        assert_eq!(
+            format!("{}", err),
+            "Invalid value for field 'RTP Version' in RTP Header: expected 2, got 1"
+        );
+    }
+
+    #[test]
+    fn enum_display_implementations() {
+        assert_eq!(
+            format!("{}", ParseContext::RohcPacketInput),
+            "ROHC packet input"
+        );
+        assert_eq!(format!("{}", Field::RtpVersion), "RTP Version");
+        assert_eq!(format!("{}", StructureType::RtpHeader), "RTP Header");
+        assert_eq!(format!("{}", NetworkLayer::Ip), "IP");
+        assert_eq!(format!("{}", CrcType::Rohc8), "ROHC-CRC8");
     }
 }

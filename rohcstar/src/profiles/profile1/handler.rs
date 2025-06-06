@@ -16,7 +16,7 @@ use super::discriminator::Profile1PacketType;
 use super::state_machine;
 
 use crate::crc::CrcCalculators;
-use crate::error::{RohcError, RohcParsingError};
+use crate::error::{DecompressionError, EngineError, RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 use crate::types::ContextId;
@@ -133,8 +133,10 @@ impl ProfileHandler for Profile1Handler {
         let context = context_dyn
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
-            .ok_or_else(|| {
-                RohcError::Internal("P1Handler::compress: Incorrect context type.".to_string())
+            .ok_or({
+                RohcError::Engine(EngineError::Internal {
+                    reason: "P1Handler::compress: Incorrect context type",
+                })
             })?;
 
         let uncompressed_headers = match headers_generic {
@@ -187,15 +189,17 @@ impl ProfileHandler for Profile1Handler {
         let context = context_dyn
             .as_any_mut()
             .downcast_mut::<Profile1DecompressorContext>()
-            .ok_or_else(|| {
-                RohcError::Internal("P1Handler::decompress: Incorrect context type.".to_string())
+            .ok_or({
+                RohcError::Engine(EngineError::Internal {
+                    reason: "P1Handler::decompress: Incorrect context type",
+                })
             })?;
 
         if packet.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: "ROHC packet".to_string(),
+                context: crate::error::ParseContext::RohcPacketInput,
             }));
         }
 
@@ -212,8 +216,11 @@ impl ProfileHandler for Profile1Handler {
                         self.profile_id(),
                     )
                 } else {
-                    Err(RohcError::InvalidState(
-                        "Non-IR packet received but decompressor is in NoContext mode.".to_string(),
+                    Err(RohcError::Decompression(
+                        DecompressionError::InvalidPacketType {
+                            cid: context.cid(),
+                            packet_type: packet[0],
+                        },
                     ))
                 }
             }
