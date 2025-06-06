@@ -299,9 +299,9 @@ impl RohcSimulator {
     /// `()` on successful completion of all configured packets.
     ///
     /// # Errors
-    /// - [`SimError::CompressionFailed`] - Packet compression failed
-    /// - [`SimError::DecompressionFailed`] - Packet decompression failed
-    /// - [`SimError::ValidationFailed`] - Decompressed headers don't match originals
+    /// - [`SimError::CompressionError`] - Packet compression failed
+    /// - [`SimError::DecompressionError`] - Packet decompression failed
+    /// - [`SimError::VerificationError`] - Decompressed headers don't match originals
     pub fn run(&mut self) -> Result<(), SimError> {
         for _ in 0..self.config.num_packets {
             let original_headers = self
@@ -313,12 +313,14 @@ impl RohcSimulator {
             let generic_original_headers =
                 GenericUncompressedHeaders::RtpUdpIpv4(original_headers.clone());
 
-            let compressed_bytes = self
+            let mut compress_buf = [0u8; 128];
+            let compressed_len = self
                 .compressor_engine
                 .compress(
                     self.config.cid.into(),
                     Some(RohcProfile::RtpUdpIp),
                     &generic_original_headers,
+                    &mut compress_buf,
                 )
                 .map_err(|e| SimError::CompressionError {
                     sn: *current_sn_being_processed,
@@ -326,10 +328,11 @@ impl RohcSimulator {
                 })?;
 
             debug_assert!(
-                !compressed_bytes.is_empty(),
+                compressed_len > 0,
                 "SN {}: Compressor produced empty packet.",
                 current_sn_being_processed
             );
+            let compressed_bytes = compress_buf[..compressed_len].to_vec();
             self.mock_clock.advance(Duration::from_millis(1));
 
             if let Some(received_bytes) = self.channel.transmit(compressed_bytes) {

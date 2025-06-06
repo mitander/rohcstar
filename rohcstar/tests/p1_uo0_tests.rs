@@ -47,12 +47,19 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     let mut headers_65535 = create_rtp_headers(65535, initial_ts_val, initial_marker, ssrc);
     headers_65535.ip_identification = current_packet_headers.ip_identification;
     let generic_65535 = GenericUncompressedHeaders::RtpUdpIpv4(headers_65535.clone());
-    let compressed_65535 = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_65535)
+    let mut compress_buf_65535 = [0u8; 128];
+    let compressed_65535_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_65535,
+            &mut compress_buf_65535,
+        )
         .unwrap();
+    let compressed_65535 = &compress_buf_65535[..compressed_65535_len];
     assert_eq!(compressed_65535.len(), 1);
     let decomp_65535 = engine
-        .decompress(&compressed_65535)
+        .decompress(compressed_65535)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()
@@ -64,12 +71,19 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     let mut headers_0 = create_rtp_headers(0, initial_ts_val, initial_marker, ssrc);
     headers_0.ip_identification = current_packet_headers.ip_identification;
     let generic_0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_0.clone());
-    let compressed_0 = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_0)
+    let mut compress_buf_0 = [0u8; 128];
+    let compressed_0_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_0,
+            &mut compress_buf_0,
+        )
         .unwrap();
+    let compressed_0 = &compress_buf_0[..compressed_0_len];
     assert_eq!(compressed_0.len(), 1);
     let decomp_0 = engine
-        .decompress(&compressed_0)
+        .decompress(compressed_0)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()
@@ -81,12 +95,19 @@ fn p1_uo0_sn_wraparound_65535_to_0() {
     let mut headers_1 = create_rtp_headers(1, initial_ts_val, initial_marker, ssrc);
     headers_1.ip_identification = current_packet_headers.ip_identification;
     let generic_1 = GenericUncompressedHeaders::RtpUdpIpv4(headers_1.clone());
-    let compressed_1 = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_1)
+    let mut compress_buf_1 = [0u8; 128];
+    let compressed_1_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_1,
+            &mut compress_buf_1,
+        )
         .unwrap();
+    let compressed_1 = &compress_buf_1[..compressed_1_len];
     assert_eq!(compressed_1.len(), 1);
     let decomp_1 = engine
-        .decompress(&compressed_1)
+        .decompress(compressed_1)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()
@@ -128,12 +149,19 @@ fn p1_uo0_sn_at_lsb_window_edge() {
             .with_ip_id(ip_id_from_ir_context);
     let generic_at_edge =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_at_edge_uncompressed.clone());
-    let compressed_at_edge = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_at_edge)
+    let mut compress_buf_at_edge = [0u8; 128];
+    let compressed_at_edge_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_at_edge,
+            &mut compress_buf_at_edge,
+        )
         .unwrap();
+    let compressed_at_edge = &compress_buf_at_edge[..compressed_at_edge_len];
     assert_eq!(compressed_at_edge.len(), 1); // Expect UO-0
     let decomp_at_edge = engine
-        .decompress(&compressed_at_edge)
+        .decompress(compressed_at_edge)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()
@@ -149,16 +177,19 @@ fn p1_uo0_sn_at_lsb_window_edge() {
             .with_ip_id(ip_id_from_ir_context);
     let generic_next_to_edge =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_next_to_edge_uncompressed.clone());
-    let compressed_next_to_edge = engine
+    let mut compress_buf_next_to_edge = [0u8; 128];
+    let compressed_next_to_edge_len = engine
         .compress(
             cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &generic_next_to_edge,
+            &mut compress_buf_next_to_edge,
         )
         .unwrap();
+    let compressed_next_to_edge = &compress_buf_next_to_edge[..compressed_next_to_edge_len];
     assert_eq!(compressed_next_to_edge.len(), 1);
     let decomp_next_to_edge = engine
-        .decompress(&compressed_next_to_edge)
+        .decompress(compressed_next_to_edge)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()
@@ -193,17 +224,23 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     )
     .with_ip_id(ip_id_from_new_ir_context);
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
-    let compressed_stride_packet = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+    let mut compressed_stride_packet = [0u8; 1500];
+    let compressed_stride_packet_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_for_stride,
+            &mut compressed_stride_packet,
+        )
         .unwrap();
     assert_eq!(
-        compressed_stride_packet.len(),
-        4,
+        compressed_stride_packet_len, 4,
         "Stride establishment packet should be UO-1-TS"
     );
+    let compressed_stride_packet = &compressed_stride_packet[..compressed_stride_packet_len];
     assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
 
-    let _ = engine.decompress(&compressed_stride_packet).unwrap();
+    let _ = engine.decompress(compressed_stride_packet).unwrap();
 
     let comp_ctx_check = get_compressor_context(&engine, cid);
     assert!(
@@ -236,26 +273,42 @@ fn p1_uo0_sn_at_lsb_window_edge() {
 
     let generic_outside_window =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_outside_window_uncompressed.clone());
-    let compressed_outside_window = engine
+
+    // Compress the packet with proper buffer handling
+    let mut compress_buf = [0u8; 1500];
+    let compressed_len = engine
         .compress(
             cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &generic_outside_window,
+            &mut compress_buf,
         )
-        .unwrap();
-    assert_eq!(compressed_outside_window.len(), 3);
+        .unwrap_or_else(|e| panic!("Compression failed: {:?}", e));
+    let compressed_packet = &compress_buf[..compressed_len];
+
+    // Verify the compressed packet
     assert_eq!(
-        compressed_outside_window[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
-        P1_UO_1_SN_PACKET_TYPE_PREFIX
+        compressed_packet.len(),
+        3,
+        "Expected UO-1-SN packet of length 3"
+    );
+    assert_eq!(
+        compressed_packet[0] & P1_UO_1_SN_PACKET_TYPE_PREFIX,
+        P1_UO_1_SN_PACKET_TYPE_PREFIX,
+        "Expected UO-1-SN packet type"
     );
 
+    // Decompress and verify
     let decomp_outside_window = engine
-        .decompress(&compressed_outside_window)
-        .unwrap()
+        .decompress(compressed_packet)
+        .unwrap_or_else(|e| panic!("Decompression failed: {:?}", e))
         .as_rtp_udp_ipv4()
-        .unwrap()
+        .unwrap_or_else(|| panic!("Failed to get RTP/UDP/IPv4 headers"))
         .clone();
-    assert_eq!(decomp_outside_window.rtp_sequence_number, sn_outside_window);
+    assert_eq!(
+        decomp_outside_window.rtp_sequence_number, sn_outside_window,
+        "Decompressed SN doesn't match expected"
+    );
 
     // UO-1-SN uses implicit TS based on stride
     let expected_ts_for_decomp_uo1_sn =
@@ -297,19 +350,36 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
         headers_good_uo0.ip_identification = ir_headers_for_context.ip_identification;
         let generic_good_uo0 = GenericUncompressedHeaders::RtpUdpIpv4(headers_good_uo0.clone());
 
-        let mut compressed_uo0 = engine
-            .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_good_uo0)
-            .unwrap();
-        assert_eq!(compressed_uo0.len(), 1);
+        // Compress the packet with proper buffer handling
+        let mut compress_buf = [0u8; 1500];
+        let compressed_uo0_len = engine
+            .compress(
+                cid.into(),
+                Some(RohcProfile::RtpUdpIp),
+                &generic_good_uo0,
+                &mut compress_buf,
+            )
+            .unwrap_or_else(|e| panic!("Compression failed on iteration {}: {:?}", i, e));
+
+        // Get a mutable view of the compressed packet
+        let compressed_uo0_slice = &mut compress_buf[..compressed_uo0_len];
+        assert_eq!(
+            compressed_uo0_slice.len(),
+            1,
+            "Expected UO-0 packet to be 1 byte long"
+        );
+
+        // Create a copy to modify for the test
+        let mut corrupted_packet = compressed_uo0_slice.to_vec();
 
         // Corrupt CRC (last 3 bits of the UO-0 byte)
-        compressed_uo0[0] = compressed_uo0[0].wrapping_add(1);
+        corrupted_packet[0] = corrupted_packet[0].wrapping_add(1);
         // Ensure it's still a UO-0 type (MSB is 0) if corruption made it non-UO-0
-        if (compressed_uo0[0] & 0x80) != 0 {
-            compressed_uo0[0] &= 0x7F;
+        if (corrupted_packet[0] & 0x80) != 0 {
+            corrupted_packet[0] &= 0x7F;
         }
 
-        let result = engine.decompress(&compressed_uo0);
+        let result = engine.decompress(&corrupted_packet);
         assert!(matches!(
             result,
             Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. }))
@@ -356,13 +426,20 @@ fn p1_uo0_not_used_when_marker_changes() {
     let headers_for_stride = create_rtp_headers(sn_for_stride, ts_for_stride, ir_marker, ssrc) // marker still false
         .with_ip_id(ir_headers.ip_identification);
     let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
-    let compressed_stride_packet = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_for_stride)
+    let mut compress_buf_stride = [0u8; 1500];
+    let compressed_stride_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_for_stride,
+            &mut compress_buf_stride,
+        )
         .unwrap(); // Should be UO-1-TS
+    let compressed_stride_packet = &compress_buf_stride[..compressed_stride_len];
     assert_eq!(compressed_stride_packet.len(), 4);
     assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
 
-    let _ = engine.decompress(&compressed_stride_packet).unwrap();
+    let _ = engine.decompress(compressed_stride_packet).unwrap();
 
     // Compressor context now has:
     // last_sent_rtp_sn_full = 301
@@ -386,13 +463,16 @@ fn p1_uo0_not_used_when_marker_changes() {
     let generic_marker_change =
         GenericUncompressedHeaders::RtpUdpIpv4(headers_marker_change.clone());
 
-    let compressed_packet = engine
+    let mut compress_buf = [0u8; 1500];
+    let compressed_len = engine
         .compress(
             cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &generic_marker_change,
+            &mut compress_buf,
         )
         .unwrap();
+    let compressed_packet = &compress_buf[..compressed_len];
 
     // Expect UO-1-SN (3 bytes for CID 0) because marker changed
     assert_eq!(compressed_packet.len(), 3);
@@ -403,7 +483,7 @@ fn p1_uo0_not_used_when_marker_changes() {
     assert_ne!(compressed_packet[0] & P1_UO_1_SN_MARKER_BIT_MASK, 0); // Marker bit is set
 
     let decomp_headers = engine
-        .decompress(&compressed_packet)
+        .decompress(compressed_packet)
         .unwrap()
         .as_rtp_udp_ipv4()
         .unwrap()

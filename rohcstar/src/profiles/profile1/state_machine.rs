@@ -426,12 +426,14 @@ mod tests {
             crc8: 0xFF,
             ..Default::default()
         };
-        let uo1_sn_bytes_bad = serialize_uo1_sn(&uo1_sn_data_bad_crc).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_sn_data_bad_crc, &mut uo1_buf).unwrap();
+        let uo1_sn_bytes_bad = &uo1_buf[..uo1_len];
 
         for _ in 0..P1_DECOMPRESSOR_SC_TO_NC_K2 {
             let _ = process_packet_in_sc_mode(
                 &mut context,
-                &uo1_sn_bytes_bad,
+                uo1_sn_bytes_bad,
                 Profile1PacketType::Uo1Sn { marker: false },
                 &crc_calculators,
             );
@@ -452,13 +454,15 @@ mod tests {
             cid: None,
             ..Default::default()
         };
-        let uo1_sn_bytes_bad = serialize_uo1_sn(&uo1_sn_data_bad_crc).unwrap();
+        let mut uo1_buf_bad = [0u8; 8];
+        let uo1_len_bad = serialize_uo1_sn(&uo1_sn_data_bad_crc, &mut uo1_buf_bad).unwrap();
+        let uo1_sn_bytes_bad = &uo1_buf_bad[..uo1_len_bad];
 
         for _ in 0..(P1_DECOMPRESSOR_SC_TO_NC_K2 - 1) {
             let current_marker_for_type = context.last_reconstructed_rtp_marker;
             let _ = process_packet_in_sc_mode(
                 &mut context,
-                &uo1_sn_bytes_bad,
+                uo1_sn_bytes_bad,
                 Profile1PacketType::Uo1Sn {
                     marker: current_marker_for_type,
                 },
@@ -523,11 +527,14 @@ mod tests {
             crc8: crc_calculators.crc8(&crc_input_good),
             ..uo1_sn_data_good
         };
-        let uo1_sn_bytes_good = serialize_uo1_sn(&uo1_sn_data_good_crc).unwrap();
+        let mut uo1_sn_buf_good = [0u8; 8];
+        let uo1_sn_len_good =
+            serialize_uo1_sn(&uo1_sn_data_good_crc, &mut uo1_sn_buf_good).unwrap();
+        let uo1_sn_bytes_good = &uo1_sn_buf_good[..uo1_sn_len_good];
 
         let result = process_packet_in_sc_mode(
             &mut context,
-            &uo1_sn_bytes_good,
+            uo1_sn_bytes_good,
             Profile1PacketType::Uo1Sn { marker: false },
             &crc_calculators,
         );
@@ -553,7 +560,9 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         };
-        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
+        let mut uo0_buf_bad = [0u8; 8];
+        let uo0_len_bad = serialize_uo0(&uo0_data_bad_crc, &mut uo0_buf_bad).unwrap();
+        let uo0_bytes_bad = &uo0_buf_bad[..uo0_len_bad];
 
         for i in 0..P1_SO_MAX_CONSECUTIVE_FAILURES {
             if i == P1_SO_MAX_CONSECUTIVE_FAILURES - 1 {
@@ -565,7 +574,7 @@ mod tests {
             }
             let result = process_packet_in_so_mode(
                 &mut context,
-                &uo0_bytes_bad,
+                uo0_bytes_bad,
                 Profile1PacketType::Uo0,
                 &crc_calculators,
             );
@@ -590,11 +599,13 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         };
-        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
+        let mut uo0_buf_bad = [0u8; 8];
+        let uo0_len_bad = serialize_uo0(&uo0_data_bad_crc, &mut uo0_buf_bad).unwrap();
+        let uo0_bytes_bad = &uo0_buf_bad[..uo0_len_bad];
 
         let _ = process_packet_in_so_mode(
             &mut context,
-            &uo0_bytes_bad,
+            uo0_bytes_bad,
             Profile1PacketType::Uo0,
             &crc_calculators,
         );
@@ -622,11 +633,13 @@ mod tests {
             sn_lsb: sn_lsb_good,
             ..Default::default()
         };
-        let uo0_bytes_good = serialize_uo0(&uo0_data_good_crc).unwrap();
+        let mut uo0_buf_good = [0u8; 8];
+        let uo0_len_good = serialize_uo0(&uo0_data_good_crc, &mut uo0_buf_good).unwrap();
+        let uo0_bytes_good = &uo0_buf_good[..uo0_len_good];
 
         let _ = process_packet_in_so_mode(
             &mut context,
-            &uo0_bytes_good,
+            uo0_bytes_good,
             Profile1PacketType::Uo0,
             &crc_calculators,
         );
@@ -641,10 +654,12 @@ mod tests {
             sn_lsb: 0x0F,
             cid: None,
         };
-        let uo0_bytes_bad = serialize_uo0(&uo0_data_bad_crc).unwrap();
+        let mut uo0_buf_bad = [0u8; 8];
+        let uo0_len_bad = serialize_uo0(&uo0_data_bad_crc, &mut uo0_buf_bad).unwrap();
+        let uo0_bytes_bad = &uo0_buf_bad[..uo0_len_bad];
         let _ = process_packet_in_so_mode(
             &mut context,
-            &uo0_bytes_bad,
+            uo0_bytes_bad,
             Profile1PacketType::Uo0,
             &crc_calculators,
         );
@@ -672,11 +687,13 @@ mod tests {
             dyn_rtp_timestamp: Timestamp::new(15000),
             ..Default::default()
         };
-        let ir_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
+        let mut ir_buf = [0u8; 64];
+        let ir_len = serialize_ir(&ir_content, &crc_calculators, &mut ir_buf).unwrap();
+        let ir_bytes = &ir_buf[..ir_len];
 
         let result = process_ir_packet(
             &mut context,
-            &ir_bytes,
+            ir_bytes,
             &crc_calculators,
             RohcProfile::RtpUdpIp,
         );

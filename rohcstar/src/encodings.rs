@@ -87,6 +87,39 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
     }
 }
 
+/// Fast path LSB decode for UO-0 sequence numbers (4 bits, p=0).
+///
+/// Optimized version of decode_lsb for the most common case in ROHC Profile 1.
+/// This eliminates bounds checking and error handling for the hot path.
+///
+/// # Parameters
+/// - `received_lsbs`: 4-bit LSB value (0-15)
+/// - `reference_value`: Reference sequence number from context
+///
+/// # Returns
+/// The reconstructed sequence number (always succeeds for valid inputs)
+#[inline]
+pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
+    debug_assert!(received_lsbs < 16, "UO-0 SN LSB must be 4 bits");
+
+    // UO-0 uses 4 bits with p=0, interpretation window is [v_ref, v_ref + 15]
+    // Highly optimized for the specific case where k=4, p=0
+    let ref_val = reference_value;
+    let lsbs = received_lsbs as u16;
+
+    // Align reference to 16-boundary and add LSBs
+    let base = ref_val & 0xFFF0; // Clear lower 4 bits (same as (ref_val >> 4) << 4)
+    let candidate = base + lsbs;
+
+    // UO-0 window is [v_ref, v_ref + 15]. Choose the candidate in this range.
+    // If candidate >= ref_val, it's already in range. Otherwise, add 16.
+    if candidate >= ref_val {
+        candidate
+    } else {
+        candidate.wrapping_add(16)
+    }
+}
+
 /// Reconstructs an original value from its W-LSB encoded representation.
 ///
 /// This function implements the W-LSB decoding algorithm. It finds a candidate value (`v_cand`)
@@ -183,6 +216,72 @@ pub fn decode_lsb(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_lsb_uo0_sn_basic_cases() {
+        // Basic case: LSB matches reference exactly
+        assert_eq!(decode_lsb_uo0_sn(4, 100), 100);
+
+        // Window wrapping: reference 100, LSB 0 -> should be 112 (100 + 12)
+        assert_eq!(decode_lsb_uo0_sn(0, 100), 112);
+
+        // Window boundary: reference 100, LSB 15 -> should be 111 (100 + 11)
+        assert_eq!(decode_lsb_uo0_sn(15, 100), 111);
+
+        // Reference at boundary: reference 15, LSB 0 -> should be 16
+        assert_eq!(decode_lsb_uo0_sn(0, 15), 16);
+    }
+
+    #[test]
+    fn decode_lsb_uo0_sn_wraparound_u16() {
+        // Test u16 wraparound scenarios
+        assert_eq!(decode_lsb_uo0_sn(2, 65535), 2);
+        assert_eq!(decode_lsb_uo0_sn(0, 65530), 0); // Wraps to 0
+        assert_eq!(decode_lsb_uo0_sn(5, 65530), 5); // Wraps to 5
+    }
+
+    #[test]
+    fn decode_lsb_uo0_sn_consistency_with_generic() {
+        // Verify optimized version matches generic decode_lsb for UO-0 parameters
+        for ref_val in [0u16, 100, 1000, 32767, 65535] {
+            for lsb in 0u8..16 {
+                let optimized = decode_lsb_uo0_sn(lsb, ref_val);
+                let generic = decode_lsb(lsb as u64, ref_val as u64, 4, 0).unwrap() as u16;
+                assert_eq!(
+                    optimized, generic,
+                    "Mismatch for ref={}, lsb={}: optimized={}, generic={}",
+                    ref_val, lsb, optimized, generic
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decode_lsb_uo0_sn_window_properties() {
+        // Test interpretation window [v_ref, v_ref + 15] properties
+        let ref_val = 1000u16;
+
+        // All LSBs should decode to values in window [1000, 1015]
+        for lsb in 0u8..16 {
+            let decoded = decode_lsb_uo0_sn(lsb, ref_val);
+            assert!(
+                decoded >= ref_val && decoded <= ref_val + 15,
+                "Decoded value {} outside window [{}, {}] for LSB {}",
+                decoded,
+                ref_val,
+                ref_val + 15,
+                lsb
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    fn decode_lsb_uo0_sn_debug_assert_invalid_lsb() {
+        // This should panic in debug builds due to debug_assert
+        decode_lsb_uo0_sn(16, 100); // LSB > 15 is invalid for 4-bit encoding
+    }
 
     #[test]
     fn encode_lsb_valid_inputs() {

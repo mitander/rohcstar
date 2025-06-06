@@ -25,29 +25,62 @@ use crate::types::{IpId, SequenceNumber, Timestamp};
 /// Maximum number of lost packets to attempt recovery for in UO-1 packet types
 const MAX_SN_RECOVERY_ATTEMPTS: u16 = 8;
 
-/// Attempts to recover the correct sequence number for UO-1 packet types when CRC validation fails.
-///
-/// This function tries different possible sequence numbers to account for packet loss scenarios
-/// where the decompressor context's `last_reconstructed_sn` is behind the actual stream.
-/// It validates each candidate SN by computing the CRC and checking against the received CRC.
-fn attempt_sn_recovery_for_uo1<F>(
+/// Attempts to recover the correct sequence number for UO-1-TS and UO-1-RTP packets.
+fn attempt_sn_recovery_for_uo1_generic(
     context: &Profile1DecompressorContext,
     received_crc: u8,
     crc_calculators: &CrcCalculators,
     crc_error_type: crate::error::CrcType,
-    mut crc_input_builder: F,
-) -> Result<SequenceNumber, RohcError>
-where
-    F: FnMut(u16, Timestamp) -> Vec<u8>,
-{
+    decoded_ts: Timestamp,
+    marker: bool,
+) -> Result<SequenceNumber, RohcError> {
+    for recovery_attempt in 0..=MAX_SN_RECOVERY_ATTEMPTS {
+        let candidate_sn = context
+            .last_reconstructed_rtp_sn_full
+            .wrapping_add(1 + recovery_attempt);
+
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            context.rtp_ssrc,
+            candidate_sn,
+            decoded_ts,
+            marker,
+        );
+        let calculated_crc = crc_calculators.crc8(&crc_input);
+
+        if calculated_crc == received_crc {
+            return Ok(candidate_sn);
+        }
+    }
+
+    Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
+        expected: received_crc,
+        calculated: 0,
+        crc_type: crc_error_type,
+    }))
+}
+
+/// Attempts to recover the correct sequence number for UO-1-ID packets.
+fn attempt_sn_recovery_for_uo1_id(
+    context: &Profile1DecompressorContext,
+    received_crc: u8,
+    crc_calculators: &CrcCalculators,
+    crc_error_type: crate::error::CrcType,
+    ip_id_lsb: u8,
+) -> Result<SequenceNumber, RohcError> {
     for recovery_attempt in 0..=MAX_SN_RECOVERY_ATTEMPTS {
         let candidate_sn = context
             .last_reconstructed_rtp_sn_full
             .wrapping_add(1 + recovery_attempt);
         let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
 
-        let crc_input_bytes = crc_input_builder(*candidate_sn, candidate_ts);
-        let calculated_crc = crc_calculators.crc8(&crc_input_bytes);
+        let crc_input = prepare_uo1_id_specific_crc_input_payload(
+            context.rtp_ssrc,
+            candidate_sn,
+            candidate_ts,
+            context.last_reconstructed_rtp_marker,
+            ip_id_lsb,
+        );
+        let calculated_crc = crc_calculators.crc8(&crc_input);
 
         if calculated_crc == received_crc {
             return Ok(candidate_sn);
@@ -179,12 +212,11 @@ fn decompress_as_uo0(
     };
     let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
 
-    let decoded_sn = decode_lsb(
-        parsed_uo0.sn_lsb as u64,
-        context.last_reconstructed_rtp_sn_full.as_u64(),
-        context.expected_lsb_sn_width,
-        context.p_sn,
-    )? as u16;
+    // Hot path optimization: Use specialized UO-0 LSB decode
+    let decoded_sn = crate::encodings::decode_lsb_uo0_sn(
+        parsed_uo0.sn_lsb,
+        *context.last_reconstructed_rtp_sn_full,
+    );
 
     let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
@@ -317,20 +349,13 @@ fn decompress_as_uo1_ts(
     let decoded_sn = if calculated_crc8 == parsed_uo1_ts.crc8 {
         expected_sn
     } else {
-        attempt_sn_recovery_for_uo1(
+        attempt_sn_recovery_for_uo1_generic(
             context,
             parsed_uo1_ts.crc8,
             crc_calculators,
             crate::error::CrcType::Crc8Uo1Sn,
-            |candidate_sn, _candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
-                    context.rtp_ssrc,
-                    SequenceNumber::new(candidate_sn),
-                    decoded_ts,
-                    context.last_reconstructed_rtp_marker,
-                )
-                .to_vec()
-            },
+            decoded_ts,
+            context.last_reconstructed_rtp_marker,
         )?
     };
 
@@ -397,21 +422,12 @@ fn decompress_as_uo1_id(
     let decoded_sn = if calculated_crc8 == parsed_uo1_id.crc8 {
         expected_sn
     } else {
-        attempt_sn_recovery_for_uo1(
+        attempt_sn_recovery_for_uo1_id(
             context,
             parsed_uo1_id.crc8,
             crc_calculators,
             crate::error::CrcType::Crc8Uo1Sn,
-            |candidate_sn, candidate_ts| {
-                prepare_uo1_id_specific_crc_input_payload(
-                    context.rtp_ssrc,
-                    SequenceNumber::new(candidate_sn),
-                    candidate_ts,
-                    context.last_reconstructed_rtp_marker,
-                    ip_id_lsb_from_packet as u8,
-                )
-                .to_vec()
-            },
+            ip_id_lsb_from_packet as u8,
         )?
     };
     let decoded_ts = expected_ts;
@@ -477,20 +493,13 @@ fn decompress_as_uo1_rtp(
     let decoded_sn = if calculated_crc8 == parsed_uo1_rtp.crc8 {
         expected_sn
     } else {
-        attempt_sn_recovery_for_uo1(
+        attempt_sn_recovery_for_uo1_generic(
             context,
             parsed_uo1_rtp.crc8,
             crc_calculators,
             crate::error::CrcType::Crc8Uo1Sn,
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
-                    context.rtp_ssrc,
-                    SequenceNumber::new(candidate_sn),
-                    candidate_ts,
-                    parsed_uo1_rtp.marker,
-                )
-                .to_vec()
-            },
+            expected_ts_from_scaled,
+            parsed_uo1_rtp.marker,
         )?
     };
     let decoded_ts = expected_ts_from_scaled;
@@ -682,7 +691,9 @@ mod tests {
             sn_lsb,
             crc3,
         };
-        serialize_uo0(&uo0_packet).unwrap()
+        let mut buf = [0u8; 8];
+        let len = serialize_uo0(&uo0_packet, &mut buf).unwrap();
+        buf[..len].to_vec()
     }
 
     #[test]
@@ -794,9 +805,11 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
 
-        let result = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_sn(&mut context, uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -834,9 +847,11 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_id(&uo1_packet).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_id(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
 
-        let result = decompress_as_uo1_id(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_id(&mut context, uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -868,8 +883,10 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
-        let uo1_headers = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
+        let uo1_headers = decompress_as_uo1_sn(&mut context, uo1_bytes, &crc_calculators).unwrap();
         assert_eq!(uo1_headers.rtp_timestamp, 5320);
     }
 
@@ -936,9 +953,11 @@ mod tests {
             sn_lsb,
             crc3: wrong_crc3_in_packet,
         };
-        let uo0_bytes_bad_crc = serialize_uo0(&uo0_packet_with_bad_crc).unwrap();
+        let mut uo0_buf_bad = [0u8; 8];
+        let uo0_len_bad = serialize_uo0(&uo0_packet_with_bad_crc, &mut uo0_buf_bad).unwrap();
+        let uo0_bytes_bad_crc = &uo0_buf_bad[..uo0_len_bad];
 
-        let result = decompress_as_uo0(&mut context, &uo0_bytes_bad_crc, &crc_calculators);
+        let result = decompress_as_uo0(&mut context, uo0_bytes_bad_crc, &crc_calculators);
         assert!(
             result.is_err(),
             "Decompression should fail due to CRC mismatch, got: {:?}",
@@ -1211,9 +1230,11 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
 
-        let result = decompress_as_uo1_sn(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo1_sn(&mut context, uo1_bytes, &crc_calculators);
         assert!(
             result.is_ok(),
             "Parsing UO-1-SN for marker transition failed: {:?}",
@@ -1280,9 +1301,11 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_sn(&uo1_packet).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
 
-        let result = decompress_as_uo(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo(&mut context, uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -1352,9 +1375,11 @@ mod tests {
             crc8,
             ..Default::default()
         };
-        let uo1_bytes = serialize_uo1_id(&uo1_packet).unwrap();
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_id(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
 
-        let result = decompress_as_uo(&mut context, &uo1_bytes, &crc_calculators);
+        let result = decompress_as_uo(&mut context, uo1_bytes, &crc_calculators);
         assert!(result.is_ok());
 
         let headers = result.unwrap();

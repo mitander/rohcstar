@@ -108,7 +108,7 @@ impl ProfileHandler for Profile1Handler {
         Box::new(ctx)
     }
 
-    /// Compresses uncompressed RTP/UDP/IP headers into a ROHC packet.
+    /// Compresses uncompressed RTP/UDP/IP headers into provided buffer.
     ///
     /// Analyzes the uncompressed headers and context state to determine the optimal
     /// packet type (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
@@ -117,9 +117,10 @@ impl ProfileHandler for Profile1Handler {
     /// # Parameters
     /// - `context_dyn`: Mutable reference to the Profile 1 compressor context
     /// - `headers_generic`: Uncompressed headers to compress (must be RTP/UDP/IPv4)
+    /// - `out`: Output buffer to write the compressed packet into
     ///
     /// # Returns
-    /// The compressed ROHC packet as a byte vector.
+    /// The number of bytes written to the output buffer.
     ///
     /// # Errors
     /// - [`RohcError::Internal`] - Context downcast failed
@@ -129,7 +130,8 @@ impl ProfileHandler for Profile1Handler {
         &self,
         context_dyn: &mut dyn RohcCompressorContext,
         headers_generic: &GenericUncompressedHeaders,
-    ) -> Result<Vec<u8>, RohcError> {
+        out: &mut [u8],
+    ) -> Result<usize, RohcError> {
         let context = context_dyn
             .as_any_mut()
             .downcast_mut::<Profile1CompressorContext>()
@@ -152,16 +154,16 @@ impl ProfileHandler for Profile1Handler {
             "Context SSRC should be initialized at this point."
         );
 
-        let result = if compressor::should_force_ir(context, uncompressed_headers) {
-            compressor::compress_as_ir(context, uncompressed_headers, &self.crc_calculators)
+        let len = if compressor::should_force_ir(context, uncompressed_headers) {
+            compressor::compress_as_ir(context, uncompressed_headers, &self.crc_calculators, out)?
         } else {
-            compressor::compress_as_uo(context, uncompressed_headers, &self.crc_calculators)
+            compressor::compress_as_uo(context, uncompressed_headers, &self.crc_calculators, out)?
         };
 
-        if result.is_ok() {
+        if len > 0 {
             context.set_last_accessed(Instant::now());
         }
-        result
+        Ok(len)
     }
 
     /// Decompresses a ROHC packet into uncompressed RTP/UDP/IP headers.
@@ -180,7 +182,7 @@ impl ProfileHandler for Profile1Handler {
     /// # Errors
     /// - [`RohcError::Internal`] - Context downcast failed
     /// - [`RohcError::Parsing`] - Invalid packet format or CRC mismatch
-    /// - [`RohcError::ContextError`] - Context state inconsistent with packet type
+    /// - [`RohcError::Decompression`] - Context state inconsistent with packet type
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,
@@ -303,11 +305,12 @@ mod tests {
 
         let generic_headers1 = GenericUncompressedHeaders::RtpUdpIpv4(headers1.clone());
 
-        let compressed_ir = handler
-            .compress(comp_ctx_dyn.as_mut(), &generic_headers1)
+        let mut compress_buf = [0u8; 64];
+        let compressed_ir_len = handler
+            .compress(comp_ctx_dyn.as_mut(), &generic_headers1, &mut compress_buf)
             .unwrap();
-        assert!(!compressed_ir.is_empty());
-        assert_eq!(compressed_ir[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+        assert!(compressed_ir_len > 0);
+        assert_eq!(compress_buf[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
     }
 
     #[test]
@@ -329,13 +332,16 @@ mod tests {
             ts_stride: None,
             crc8: 0,
         };
-        let ir_packet_bytes = super::super::packet_processor::serialize_ir(
+        let mut ir_buf = [0u8; 64];
+        let ir_len = super::super::packet_processor::serialize_ir(
             &ir_data_content,
             &handler.crc_calculators,
+            &mut ir_buf,
         )
         .expect("Test IR packet build failed");
+        let ir_packet_bytes = &ir_buf[..ir_len];
 
-        let result = handler.decompress(decomp_ctx_dyn.as_mut(), &ir_packet_bytes);
+        let result = handler.decompress(decomp_ctx_dyn.as_mut(), ir_packet_bytes);
         assert!(
             result.is_ok(),
             "Decompressing IR failed: {:?}",

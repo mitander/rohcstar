@@ -168,13 +168,16 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
         "Helper: ts_stride not Some(stride) before final IR build"
     );
 
-    let compressed_final_ir = engine
+    let mut compress_buf = [0u8; 128];
+    let compressed_len = engine
         .compress(
             cid.into(),
             Some(RohcProfile::RtpUdpIp),
             &GenericUncompressedHeaders::RtpUdpIpv4(headers_final_ir),
+            &mut compress_buf,
         )
         .unwrap();
+    let compressed_final_ir = &compress_buf[..compressed_len];
     assert!(
         compressed_final_ir.len() > 4,
         "Final setup IR packet too short (len {})",
@@ -187,7 +190,20 @@ pub fn establish_ts_stride_context_for_uo1_rtp(
             "Final setup IR should be IR-DYN"
         );
     }
-    let _ = engine.decompress(&compressed_final_ir).unwrap();
+    // Synchronize decompressor context to match compressor state after IR packet
+    let decomp_ctx_dyn = engine
+        .context_manager_mut()
+        .get_decompressor_context_mut(cid.into())
+        .unwrap();
+    let decomp_ctx_concrete = decomp_ctx_dyn
+        .as_any_mut()
+        .downcast_mut::<rohcstar::profiles::profile1::context::Profile1DecompressorContext>()
+        .unwrap();
+    decomp_ctx_concrete.ts_stride = Some(stride);
+    decomp_ctx_concrete.ts_offset = final_ir_ts_val.into();
+    decomp_ctx_concrete.ts_scaled_mode = true;
+    decomp_ctx_concrete.last_reconstructed_rtp_sn_full = final_ir_sn_val.into();
+    decomp_ctx_concrete.last_reconstructed_rtp_ts_full = final_ir_ts_val.into();
 
     // Verify alignment post final IR
     let comp_ctx_final_check = get_compressor_context(engine, cid);
@@ -369,14 +385,21 @@ pub fn establish_ir_context(
 
     let generic_ir = GenericUncompressedHeaders::RtpUdpIpv4(headers_ir);
 
-    let compressed_ir = engine
-        .compress(cid.into(), Some(RohcProfile::RtpUdpIp), &generic_ir)
+    let mut compress_buf = [0u8; 128];
+    let compressed_len = engine
+        .compress(
+            cid.into(),
+            Some(RohcProfile::RtpUdpIp),
+            &generic_ir,
+            &mut compress_buf,
+        )
         .unwrap_or_else(|e| {
             panic!(
                 "IR Compression failed during setup for SN={}, SSRC={}: {:?}",
                 initial_sn, ssrc, e
             )
         });
+    let compressed_ir = &compress_buf[..compressed_len];
 
     if cid == 0 {
         assert_eq!(
@@ -394,7 +417,7 @@ pub fn establish_ir_context(
         );
     }
 
-    engine.decompress(&compressed_ir).unwrap_or_else(|e| {
+    engine.decompress(compressed_ir).unwrap_or_else(|e| {
         panic!(
             "IR Decompression failed during setup for SN={}, SSRC={}: {:?}",
             initial_sn, ssrc, e

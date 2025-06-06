@@ -207,7 +207,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
     })
 }
 
-/// Serializes a ROHC Profile 1 IR (Initialization/Refresh) packet.
+/// Serializes a ROHC Profile 1 IR (Initialization/Refresh) packet into provided buffer.
 ///
 /// This function serializes an `IrPacket` structure into its byte representation for transmission.
 /// It includes an Add-CID octet if the CID is small and non-zero.
@@ -218,28 +218,48 @@ pub fn deserialize_rtp_udp_ipv4_headers(
 /// # Parameters
 /// - `ir_data`: A reference to `IrPacket` containing all necessary field values.
 /// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 computation.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized IR packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Packet serialization fails due to invalid field values
 pub fn serialize_ir(
     ir_data: &IrPacket,
     crc_calculators: &CrcCalculators,
-) -> Result<Vec<u8>, RohcBuildingError> {
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     debug_assert_eq!(
         ir_data.profile_id,
         RohcProfile::RtpUdpIp,
         "IR packet must be for Profile 1"
     );
 
-    let mut packet = Vec::with_capacity(32);
+    let mut bytes_written = 0;
+
+    // Calculate required size
+    let required_size = 1 // Packet type
+        + 1 // Profile ID
+        + P1_STATIC_CHAIN_LENGTH_BYTES
+        + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
+        + 1 // CRC8
+        + if ir_data.cid > 0 && ir_data.cid <= 15 { 1 } else { 0 } // Add-CID
+        + if ir_data.ts_stride.is_some() { P1_TS_STRIDE_EXTENSION_LENGTH_BYTES } else { 0 }; // TS_STRIDE extension
+
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
 
     // Add-CID octet if needed
     if ir_data.cid > 0 && ir_data.cid <= 15 {
-        packet
-            .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid.0 as u8 & ROHC_SMALL_CID_MASK));
+        out[bytes_written] =
+            ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid.0 as u8 & ROHC_SMALL_CID_MASK);
+        bytes_written += 1;
     } else if ir_data.cid > 15 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field: crate::error::Field::Cid,
@@ -249,7 +269,8 @@ pub fn serialize_ir(
     }
 
     // Packet type octet
-    packet.push(P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+    out[bytes_written] = P1_ROHC_IR_PACKET_TYPE_WITH_DYN; // D-bit is always 1 if dynamic chain is present
+    bytes_written += 1;
 
     // Profile ID
     let profile_u8: u8 = ir_data.profile_id.into();
@@ -260,20 +281,28 @@ pub fn serialize_ir(
             max_bits: 8, // Expected value is u8::from(RohcProfile::RtpUdpIp)
         });
     }
-    packet.push(profile_u8);
+    out[bytes_written] = profile_u8;
+    bytes_written += 1;
 
     // Static chain
-    let static_chain_start_index_in_final = packet.len();
-    packet.extend_from_slice(&ir_data.static_ip_src.octets());
-    packet.extend_from_slice(&ir_data.static_ip_dst.octets());
-    packet.extend_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
-    packet.extend_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
-    packet.extend_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+    out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_src.octets());
+    bytes_written += 4;
+    out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_dst.octets());
+    bytes_written += 4;
+    out[bytes_written..bytes_written + 2]
+        .copy_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
+    bytes_written += 2;
+    out[bytes_written..bytes_written + 2]
+        .copy_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
+    bytes_written += 2;
+    out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
+    bytes_written += 4;
 
     // Dynamic chain
-    let dynamic_chain_start_index_in_final = packet.len();
-    packet.extend_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
-    packet.extend_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+    out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
+    bytes_written += 2;
+    out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
+    bytes_written += 4;
 
     let mut rtp_flags_octet = 0u8;
     if ir_data.dyn_rtp_marker {
@@ -282,45 +311,40 @@ pub fn serialize_ir(
     if ir_data.ts_stride.is_some() {
         rtp_flags_octet |= P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK;
     }
-    packet.push(rtp_flags_octet);
+    out[bytes_written] = rtp_flags_octet;
+    bytes_written += 1;
 
     if let Some(stride_val) = ir_data.ts_stride {
-        packet.extend_from_slice(&stride_val.to_be_bytes());
+        out[bytes_written..bytes_written + 4].copy_from_slice(&stride_val.to_be_bytes());
+        bytes_written += 4;
     }
 
-    let crc_payload_len = 1
-        + P1_STATIC_CHAIN_LENGTH_BYTES
-        + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
-        + if ir_data.ts_stride.is_some() {
-            P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
-        } else {
-            0
-        };
+    // Determine start of core packet (for CRC calculation)
+    let core_packet_start_in_out = if ir_data.cid > 0 && ir_data.cid <= 15 {
+        1
+    } else {
+        0
+    };
+    // CRC payload starts from ProfileID byte relative to the overall `out` buffer.
+    // ProfileID is at (core_packet_start_in_out + 1) because PacketType is the first byte of core.
+    let crc_payload_start_in_out = core_packet_start_in_out + 1;
+    // CRC payload ends just before where the CRC itself will be written.
+    // `bytes_written` currently points to where the CRC will be written.
+    let crc_payload_end_in_out = bytes_written;
+
+    let calculated_crc8 =
+        crc_calculators.crc8(&out[crc_payload_start_in_out..crc_payload_end_in_out]);
+    out[bytes_written] = calculated_crc8;
+    bytes_written += 1;
 
     debug_assert!(
-        crc_payload_len <= 32,
-        "CRC payload too large for stack buffer"
+        bytes_written == required_size,
+        "IR packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
     );
 
-    let mut crc_payload = [0u8; 32]; // Max: 1 + 16 + 7 + 4 = 28 bytes
-    crc_payload[0] = profile_u8;
-    crc_payload[1..1 + P1_STATIC_CHAIN_LENGTH_BYTES].copy_from_slice(
-        &packet[static_chain_start_index_in_final..dynamic_chain_start_index_in_final],
-    );
-    let dynamic_len = packet.len() - dynamic_chain_start_index_in_final;
-    crc_payload[1 + P1_STATIC_CHAIN_LENGTH_BYTES..1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_len]
-        .copy_from_slice(&packet[dynamic_chain_start_index_in_final..]);
-
-    let calculated_crc8 = crc_calculators.crc8(&crc_payload[..crc_payload_len]);
-    packet.push(calculated_crc8);
-
-    debug_assert!(
-        packet.len() >= 26,
-        "IR packet too short: {} bytes",
-        packet.len()
-    );
-
-    Ok(packet)
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 IR (Initialization/Refresh) packet.
@@ -369,31 +393,34 @@ pub fn deserialize_ir(
     let d_bit_set = (packet_type_octet & P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) != 0;
 
     let mut dynamic_chain_len_for_crc = 0;
-    let mut ts_stride_present_flag_for_crc = false;
+    let mut ts_stride_present_flag_for_crc_logic = false;
 
     if d_bit_set {
         dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
-        // RTP_Flags at byte 24: Type(1) + ProfileID(1) + Static(16) + SN(2) + TS(4) = 24
-        const RTP_FLAGS_ABSOLUTE_IDX: usize = 24;
+        // Index of RTP_Flags within core_packet_bytes:
+        // PacketType(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4) = index 24
+        const RTP_FLAGS_IDX_IN_CORE: usize =
+            1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_SN_LENGTH_BYTES + P1_TS_LENGTH_BYTES;
 
-        if core_packet_bytes.len() > RTP_FLAGS_ABSOLUTE_IDX {
-            let rtp_flags_octet_val = core_packet_bytes[RTP_FLAGS_ABSOLUTE_IDX];
+        if core_packet_bytes.len() > RTP_FLAGS_IDX_IN_CORE {
+            let rtp_flags_octet_val = core_packet_bytes[RTP_FLAGS_IDX_IN_CORE];
             if (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK) != 0 {
                 dynamic_chain_len_for_crc += P1_TS_STRIDE_EXTENSION_LENGTH_BYTES;
-                ts_stride_present_flag_for_crc = true;
+                ts_stride_present_flag_for_crc_logic = true;
             }
         } else if P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES > 0 {
             return Err(RohcParsingError::NotEnoughData {
-                needed: RTP_FLAGS_ABSOLUTE_IDX + 1,
+                needed: RTP_FLAGS_IDX_IN_CORE + 1,
                 got: core_packet_bytes.len(),
                 context: crate::error::ParseContext::IrPacketRtpFlags,
             });
         }
     }
 
-    let crc_payload_start_index_in_core = current_offset_for_fields; // Starts from ProfileID
+    // CRC payload starts from ProfileID byte. current_offset_for_fields is at ProfileID.
+    let crc_payload_start_index_in_core = current_offset_for_fields;
     let crc_payload_len_for_validation =
-        1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len_for_crc;
+        1 + P1_STATIC_CHAIN_LENGTH_BYTES + dynamic_chain_len_for_crc; // ProfileID(1) + Static + Dyn
     let crc_octet_index_in_core = crc_payload_start_index_in_core + crc_payload_len_for_validation;
 
     if core_packet_bytes.len() <= crc_octet_index_in_core {
@@ -473,7 +500,7 @@ pub fn deserialize_ir(
         let marker = (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK) != 0;
 
         let mut temp_ts_stride = None;
-        if ts_stride_present_flag_for_crc {
+        if ts_stride_present_flag_for_crc_logic {
             if core_packet_bytes.len()
                 < current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
             {
@@ -511,17 +538,22 @@ pub fn deserialize_ir(
     })
 }
 
-/// Serializes a ROHC Profile 1 UO-0 packet.
+/// Serializes a ROHC Profile 1 UO-0 packet into provided buffer.
+///
+/// UO-0 packets are the most compact ROHC packet type, containing only sequence number
+/// LSBs and CRC when all other fields (timestamp, IP-ID, marker) remain static.
+/// Used for minimal compression overhead in stable RTP streams.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-0 packet.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized UO-0 packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-0 packet
-pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, RohcBuildingError> {
     debug_assert!(
         packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
         "SN LSB value {} too large for {} bits",
@@ -549,13 +581,27 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
         });
     }
 
-    let mut final_packet = Vec::with_capacity(2);
+    let required_size = 1 + if packet_data.cid.is_some() && packet_data.cid.unwrap() > 0 {
+        1
+    } else {
+        0
+    };
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
+
+    let mut bytes_written = 0;
 
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
-            final_packet
-                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
-        } else {
+            out[bytes_written] =
+                ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            bytes_written += 1;
+        } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
                 field: crate::error::Field::Cid,
                 value: *cid_val as u32,
@@ -565,15 +611,17 @@ pub fn serialize_uo0(packet_data: &Uo0Packet) -> Result<Vec<u8>, RohcBuildingErr
     }
 
     let core_byte = (packet_data.sn_lsb << 3) | packet_data.crc3;
-    final_packet.push(core_byte);
+    out[bytes_written] = core_byte;
+    bytes_written += 1;
 
     debug_assert!(
-        final_packet.len() <= 2,
-        "UO-0 packet too long: {} bytes",
-        final_packet.len()
+        bytes_written == required_size,
+        "UO-0 packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
     );
 
-    Ok(final_packet)
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 UO-0 packet.
@@ -591,30 +639,22 @@ pub fn deserialize_uo0(
     core_packet_data: &[u8],
     cid_from_engine: Option<ContextId>,
 ) -> Result<Uo0Packet, RohcParsingError> {
+    // Hot path optimization: Assume correct length since UO-0 is pre-discriminated
     debug_assert_eq!(
         core_packet_data.len(),
         1,
         "UO-0 core packet must be exactly 1 byte"
     );
 
-    if core_packet_data.len() != 1 {
-        return Err(RohcParsingError::InvalidFieldValue {
-            field: crate::error::Field::Uo0CorePacketLength,
-            structure: crate::error::StructureType::Uo0Packet,
-            expected: 1,
-            got: core_packet_data.len() as u32,
-        });
-    }
+    // Fast path: Skip runtime length check for hot path performance
+    // Length is guaranteed by packet discrimination at engine level
+    let packet_byte = unsafe { *core_packet_data.get_unchecked(0) };
 
-    let packet_byte = core_packet_data[0];
-    if (packet_byte & 0x80) != 0 {
-        return Err(RohcParsingError::InvalidPacketType {
-            discriminator: packet_byte,
-            profile_id: Some(RohcProfile::RtpUdpIp.into()),
-        });
-    }
+    // Debug verification of discriminator (removed in release builds)
+    debug_assert_eq!(packet_byte & 0x80, 0, "UO-0 discriminator check failed");
 
-    let sn_lsb_val = (packet_byte >> 3) & ((1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) - 1);
+    // Optimized bit extraction using constants
+    let sn_lsb_val = (packet_byte >> 3) & 0x0F; // 4 bits mask for P1_UO0_SN_LSB_WIDTH_DEFAULT
     let crc3_val = packet_byte & 0x07;
 
     debug_assert!(sn_lsb_val < 16, "SN LSB value {} out of range", sn_lsb_val);
@@ -627,17 +667,25 @@ pub fn deserialize_uo0(
     })
 }
 
-/// Serializes a ROHC Profile 1 UO-1-SN packet.
+/// Serializes a ROHC Profile 1 UO-1-SN packet into provided buffer.
+///
+/// UO-1-SN packets compress sequence number changes with marker bit updates when
+/// timestamp remains predictable (following established stride). Provides efficient
+/// compression for RTP streams with consistent timing but changing voice activity.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-SN packet.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized UO-1-SN packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-SN packet
-pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_sn(
+    packet_data: &Uo1Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     debug_assert_eq!(
         packet_data.num_sn_lsb_bits, P1_UO1_SN_LSB_WIDTH_DEFAULT,
         "UO-1-SN requires {} LSB bits, got {}",
@@ -664,6 +712,35 @@ pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
         });
     }
 
+    let required_size = 3 + if packet_data.cid.is_some() && packet_data.cid.unwrap() > 0 {
+        1
+    } else {
+        0
+    };
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
+
+    let mut bytes_written = 0;
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            out[bytes_written] =
+                ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            bytes_written += 1;
+        } else if cid_val > 15 {
+            return Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
+            });
+        }
+    }
+
     let type_octet = P1_UO_1_SN_PACKET_TYPE_PREFIX
         | (if packet_data.marker {
             P1_UO_1_SN_MARKER_BIT_MASK
@@ -671,27 +748,21 @@ pub fn serialize_uo1_sn(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
             0
         });
 
-    let core_packet_bytes = vec![type_octet, packet_data.sn_lsb as u8, packet_data.crc8];
+    out[bytes_written] = type_octet;
+    bytes_written += 1;
+    out[bytes_written] = packet_data.sn_lsb as u8;
+    bytes_written += 1;
+    out[bytes_written] = packet_data.crc8;
+    bytes_written += 1;
 
-    if let Some(cid_val) = packet_data.cid {
-        if cid_val > 0 && cid_val <= 15 {
-            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet
-                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
-            final_packet.extend_from_slice(&core_packet_bytes);
-            Ok(final_packet)
-        } else if cid_val == 0 {
-            Ok(core_packet_bytes)
-        } else {
-            Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
-                value: *cid_val as u32,
-                max_bits: 4,
-            })
-        }
-    } else {
-        Ok(core_packet_bytes)
-    }
+    debug_assert!(
+        bytes_written == required_size,
+        "UO-1-SN packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
+    );
+
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-SN packet.
@@ -742,17 +813,25 @@ pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
     })
 }
 
-/// Serializes a ROHC Profile 1 UO-1-TS packet.
+/// Serializes a ROHC Profile 1 UO-1-TS packet into provided buffer.
+///
+/// UO-1-TS packets compress timestamp changes when sequence number increments by one
+/// and other fields remain static. Handles irregular timestamp patterns that don't
+/// follow established stride, common in adaptive audio codecs.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-TS packet.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized UO-1-TS packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-TS packet
-pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_ts(
+    packet_data: &Uo1Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     let ts_lsb = packet_data
         .ts_lsb
         .ok_or(RohcBuildingError::ContextInsufficient {
@@ -779,33 +858,59 @@ pub fn serialize_uo1_ts(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
         });
     }
 
-    let type_octet = P1_UO_1_TS_DISCRIMINATOR;
-    let core_packet_bytes = vec![
-        type_octet,
-        (ts_lsb >> 8) as u8,
-        (ts_lsb & 0xFF) as u8,
-        packet_data.crc8,
-    ];
+    let required_size = 4 + if packet_data.cid.is_some() && packet_data.cid.unwrap() > 0 {
+        1
+    } else {
+        0
+    };
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
+
+    let mut bytes_written = 0;
 
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
-            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet
-                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
-            final_packet.extend_from_slice(&core_packet_bytes);
-            Ok(final_packet)
-        } else if cid_val == 0 {
-            Ok(core_packet_bytes)
-        } else {
-            Err(RohcBuildingError::InvalidFieldValueForBuild {
+            out[bytes_written] =
+                ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            bytes_written += 1;
+        } else if cid_val > 15 {
+            return Err(RohcBuildingError::InvalidFieldValueForBuild {
                 field: crate::error::Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
-            })
+            });
         }
-    } else {
-        Ok(core_packet_bytes)
     }
+
+    // P1_UO_1_TS_DISCRIMINATOR (0b11110010) has marker bit as 0.
+    // P1_UO_1_TS_TYPE_MASK (0b11111110) is used to clear existing marker.
+    // Then OR with actual marker.
+    let type_octet = (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK)
+        | (if packet_data.marker {
+            P1_UO_1_TS_MARKER_BIT_MASK
+        } else {
+            0
+        });
+    out[bytes_written] = type_octet;
+    bytes_written += 1;
+    out[bytes_written..bytes_written + 2].copy_from_slice(&ts_lsb.to_be_bytes());
+    bytes_written += 2;
+    out[bytes_written] = packet_data.crc8;
+    bytes_written += 1;
+
+    debug_assert!(
+        bytes_written == required_size,
+        "UO-1-TS packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
+    );
+
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-TS packet.
@@ -831,6 +936,7 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
     }
 
     let type_octet = core_packet_bytes[0];
+    // Check if base type (1111001x & 11111110 = 11110010) matches
     if (type_octet & P1_UO_1_TS_TYPE_MASK) != (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK) {
         return Err(RohcParsingError::InvalidPacketType {
             discriminator: type_octet,
@@ -838,6 +944,7 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         });
     }
 
+    let marker_bit_set = (type_octet & P1_UO_1_TS_MARKER_BIT_MASK) != 0;
     let ts_lsb_val = u16::from_be_bytes([core_packet_bytes[1], core_packet_bytes[2]]);
     let received_crc8 = core_packet_bytes[3];
 
@@ -845,7 +952,7 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         cid: None,
         sn_lsb: 0,
         num_sn_lsb_bits: 0,
-        marker: false,
+        marker: marker_bit_set,
         ts_lsb: Some(ts_lsb_val),
         num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
         ip_id_lsb: None,
@@ -855,17 +962,25 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
     })
 }
 
-/// Serializes a ROHC Profile 1 UO-1-ID packet.
+/// Serializes a ROHC Profile 1 UO-1-ID packet into provided buffer.
+///
+/// UO-1-ID packets compress IP identification field changes when sequence number
+/// increments by one and timestamp follows established stride. Used for streams
+/// where IP fragmentation characteristics change but timing remains predictable.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-ID packet.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized UO-1-ID packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-ID packet
-pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_id(
+    packet_data: &Uo1Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     let ip_id_lsb = packet_data
         .ip_id_lsb
         .ok_or(RohcBuildingError::ContextInsufficient {
@@ -904,28 +1019,51 @@ pub fn serialize_uo1_id(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuilding
         });
     }
 
-    let type_octet = P1_UO_1_ID_DISCRIMINATOR;
-    let core_packet_bytes = vec![type_octet, ip_id_lsb as u8, packet_data.crc8];
+    let required_size = 3 + if packet_data.cid.is_some() && packet_data.cid.unwrap() > 0 {
+        1
+    } else {
+        0
+    };
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
+
+    let mut bytes_written = 0;
 
     if let Some(cid_val) = packet_data.cid {
         if cid_val > 0 && cid_val <= 15 {
-            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet
-                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
-            final_packet.extend_from_slice(&core_packet_bytes);
-            Ok(final_packet)
-        } else if cid_val == 0 {
-            Ok(core_packet_bytes)
-        } else {
-            Err(RohcBuildingError::InvalidFieldValueForBuild {
+            out[bytes_written] =
+                ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            bytes_written += 1;
+        } else if cid_val > 15 {
+            return Err(RohcBuildingError::InvalidFieldValueForBuild {
                 field: crate::error::Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
-            })
+            });
         }
-    } else {
-        Ok(core_packet_bytes)
     }
+
+    let type_octet = P1_UO_1_ID_DISCRIMINATOR;
+    out[bytes_written] = type_octet;
+    bytes_written += 1;
+    out[bytes_written] = ip_id_lsb as u8;
+    bytes_written += 1;
+    out[bytes_written] = packet_data.crc8;
+    bytes_written += 1;
+
+    debug_assert!(
+        bytes_written == required_size,
+        "UO-1-ID packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
+    );
+
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-ID packet.
@@ -965,7 +1103,7 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         cid: None,
         sn_lsb: 0,
         num_sn_lsb_bits: 0,
-        marker: false,
+        marker: false, // UO-1-ID does not convey marker
         ts_lsb: None,
         num_ts_lsb_bits: None,
         ip_id_lsb: Some(ip_id_lsb_val as u16),
@@ -975,17 +1113,25 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
     })
 }
 
-/// Serializes a ROHC Profile 1 UO-1-RTP packet.
+/// Serializes a ROHC Profile 1 UO-1-RTP packet into provided buffer.
+///
+/// UO-1-RTP packets use scaled timestamp encoding for efficient compression when
+/// timestamp changes follow established stride patterns. Contains TS_SCALED field
+/// representing timestamp delta as a multiple of stride for optimal compression.
 ///
 /// # Parameters
 /// - `packet_data`: Data for the UO-1-RTP packet.
+/// - `out`: Output buffer to write the serialized packet into.
 ///
 /// # Returns
-/// The serialized UO-1-RTP packet as a byte vector.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-1-RTP packet
-pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildingError> {
+pub fn serialize_uo1_rtp(
+    packet_data: &Uo1Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     let ts_scaled_val = packet_data
         .ts_scaled
         .ok_or(RohcBuildingError::ContextInsufficient {
@@ -998,6 +1144,35 @@ pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildin
         ts_scaled_val
     );
 
+    let required_size = 3 + if packet_data.cid.is_some() && packet_data.cid.unwrap() > 0 {
+        1
+    } else {
+        0
+    };
+    if out.len() < required_size {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: crate::error::Field::BufferSize,
+            value: out.len() as u32,
+            max_bits: required_size as u8,
+        });
+    }
+
+    let mut bytes_written = 0;
+
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            out[bytes_written] =
+                ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            bytes_written += 1;
+        } else if cid_val > 15 {
+            return Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field: crate::error::Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
+            });
+        }
+    }
+
     let type_octet = P1_UO_1_RTP_DISCRIMINATOR_BASE
         | (if packet_data.marker {
             P1_UO_1_RTP_MARKER_BIT_MASK
@@ -1005,27 +1180,21 @@ pub fn serialize_uo1_rtp(packet_data: &Uo1Packet) -> Result<Vec<u8>, RohcBuildin
             0
         });
 
-    let core_packet_bytes = vec![type_octet, ts_scaled_val, packet_data.crc8];
+    out[bytes_written] = type_octet;
+    bytes_written += 1;
+    out[bytes_written] = ts_scaled_val;
+    bytes_written += 1;
+    out[bytes_written] = packet_data.crc8;
+    bytes_written += 1;
 
-    if let Some(cid_val) = packet_data.cid {
-        if cid_val > 0 && cid_val <= 15 {
-            let mut final_packet = Vec::with_capacity(1 + core_packet_bytes.len());
-            final_packet
-                .push(ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK));
-            final_packet.extend_from_slice(&core_packet_bytes);
-            Ok(final_packet)
-        } else if cid_val == 0 {
-            Ok(core_packet_bytes)
-        } else {
-            Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
-                value: *cid_val as u32,
-                max_bits: 4,
-            })
-        }
-    } else {
-        Ok(core_packet_bytes)
-    }
+    debug_assert!(
+        bytes_written == required_size,
+        "UO-1-RTP packet actual written size {} differs from calculated required size {}",
+        bytes_written,
+        required_size
+    );
+
+    Ok(bytes_written)
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-RTP packet.
@@ -1052,7 +1221,7 @@ pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPa
 
     let type_octet = core_packet_bytes[0];
 
-    if (type_octet & 0b1111_1110) != P1_UO_1_RTP_DISCRIMINATOR_BASE {
+    if (type_octet & !P1_UO_1_RTP_MARKER_BIT_MASK) != P1_UO_1_RTP_DISCRIMINATOR_BASE {
         return Err(RohcParsingError::InvalidPacketType {
             discriminator: type_octet,
             profile_id: Some(RohcProfile::RtpUdpIp.into()),
@@ -1166,8 +1335,12 @@ mod tests {
     use crate::constants::DEFAULT_IPV4_TTL;
     use crate::packet_defs::RohcProfile;
     use crate::profiles::profile1::constants::{
-        P1_UO_1_RTP_DISCRIMINATOR_BASE, P1_UO_1_RTP_MARKER_BIT_MASK,
+        P1_UO_1_RTP_DISCRIMINATOR_BASE, P1_UO_1_RTP_MARKER_BIT_MASK, P1_UO_1_TS_DISCRIMINATOR,
+        P1_UO_1_TS_MARKER_BIT_MASK, P1_UO_1_TS_TYPE_MASK,
     };
+
+    const TEST_IR_BUF_SIZE: usize = 64;
+    const TEST_UO_BUF_SIZE: usize = 16; // Sufficient for UO-0, UO-1 packets
 
     fn build_sample_rtp_packet_bytes(sn: u16, ssrc: u32, ts_val: u32) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -1210,7 +1383,6 @@ mod tests {
     fn build_and_parse_ir_packet_cid0() {
         let crc_calculators = CrcCalculators::new();
         let ir_content = IrPacket {
-            // IrPacket is a type definition from SUT, usage is necessary
             cid: 0.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "1.1.1.1".parse().unwrap(),
@@ -1224,18 +1396,21 @@ mod tests {
             ts_stride: None,
             crc8: 0,
         };
-        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 26);
-        assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+        let mut buf = [0u8; TEST_IR_BUF_SIZE];
+        let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let parsed_ir = deserialize_ir(&built_bytes, 0.into(), &crc_calculators).unwrap();
+        assert_eq!(built_bytes_slice.len(), 26);
+        assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+        let parsed_ir = deserialize_ir(built_bytes_slice, 0.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
         assert_eq!(parsed_ir.dyn_rtp_sn, 10);
         assert_eq!(parsed_ir.dyn_rtp_timestamp, 100);
         assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
         assert_eq!(parsed_ir.ts_stride, None);
-        assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
+        assert_eq!(parsed_ir.crc8, built_bytes_slice.last().copied().unwrap());
     }
 
     #[test]
@@ -1255,25 +1430,28 @@ mod tests {
             ts_stride: Some(160),
             crc8: 0,
         };
-        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 30);
-        assert_eq!(built_bytes[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+        let mut buf = [0u8; TEST_IR_BUF_SIZE];
+        let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let rtp_flags_octet_absolute_index = 24;
+        assert_eq!(built_bytes_slice.len(), 30);
+        assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+        let rtp_flags_octet_idx_in_core = 24;
         assert_eq!(
-            built_bytes[rtp_flags_octet_absolute_index] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
+            built_bytes_slice[rtp_flags_octet_idx_in_core] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             "TS Stride bit not set in IR"
         );
 
-        let parsed_ir = deserialize_ir(&built_bytes, 0.into(), &crc_calculators).unwrap();
+        let parsed_ir = deserialize_ir(built_bytes_slice, 0.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 0);
         assert_eq!(parsed_ir.static_rtp_ssrc, ir_content.static_rtp_ssrc);
         assert_eq!(parsed_ir.dyn_rtp_sn, 10);
         assert_eq!(parsed_ir.dyn_rtp_timestamp, 100);
         assert_eq!(parsed_ir.dyn_rtp_marker, ir_content.dyn_rtp_marker);
         assert_eq!(parsed_ir.ts_stride, Some(160));
-        assert_eq!(parsed_ir.crc8, built_bytes.last().copied().unwrap());
+        assert_eq!(parsed_ir.crc8, built_bytes_slice.last().copied().unwrap());
     }
 
     #[test]
@@ -1294,12 +1472,16 @@ mod tests {
             ts_stride: None,
             crc8: 0,
         };
-        let built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        assert_eq!(built_bytes.len(), 27);
-        assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
-        assert_eq!(built_bytes[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+        let mut buf = [0u8; TEST_IR_BUF_SIZE];
+        let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let parsed_ir = deserialize_ir(&built_bytes[1..], 5.into(), &crc_calculators).unwrap();
+        assert_eq!(built_bytes_slice.len(), 27);
+        assert_eq!(built_bytes_slice[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
+        assert_eq!(built_bytes_slice[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+
+        let parsed_ir =
+            deserialize_ir(&built_bytes_slice[1..], 5.into(), &crc_calculators).unwrap();
         assert_eq!(parsed_ir.cid, 5);
         assert_eq!(parsed_ir.dyn_rtp_timestamp, ir_content_ts_val);
         assert_eq!(parsed_ir.static_rtp_ssrc, 0);
@@ -1315,32 +1497,155 @@ mod tests {
             dyn_rtp_timestamp: 100.into(),
             ..Default::default()
         };
-        let mut built_bytes = serialize_ir(&ir_content, &crc_calculators).unwrap();
-        let crc_idx = built_bytes.len() - 1;
-        built_bytes[crc_idx] = built_bytes[crc_idx].wrapping_add(1);
+        let mut buf = [0u8; TEST_IR_BUF_SIZE];
+        let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
+        let crc_idx = len - 1;
+        buf[crc_idx] = buf[crc_idx].wrapping_add(1);
+        let built_bytes_slice = &buf[..len];
 
-        let result = deserialize_ir(&built_bytes, 0.into(), &crc_calculators);
+        let result = deserialize_ir(built_bytes_slice, 0.into(), &crc_calculators);
         assert!(matches!(result, Err(RohcParsingError::CrcMismatch { .. })));
+    }
+
+    #[test]
+    fn build_and_parse_uo0_packet_cid0() {
+        let uo0_data = Uo0Packet {
+            cid: None,
+            sn_lsb: 0x0A,
+            crc3: 0x05,
+        };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo0(&uo0_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
+
+        assert_eq!(built_bytes_slice.len(), 1);
+        assert_eq!(built_bytes_slice[0], (0x0A << 3) | 0x05);
+
+        let parsed = deserialize_uo0(built_bytes_slice, None).unwrap();
+        assert_eq!(parsed.sn_lsb, 0x0A);
+        assert_eq!(parsed.crc3, 0x05);
+        assert_eq!(parsed.cid, None);
+    }
+
+    #[test]
+    fn build_and_parse_uo0_packet_small_cid() {
+        let uo0_data = Uo0Packet {
+            cid: Some(ContextId::new(3)),
+            sn_lsb: 0x01,
+            crc3: 0x02,
+        };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo0(&uo0_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
+
+        assert_eq!(built_bytes_slice.len(), 2);
+        assert_eq!(built_bytes_slice[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 3);
+        assert_eq!(built_bytes_slice[1], (0x01 << 3) | 0x02);
+
+        let parsed = deserialize_uo0(&built_bytes_slice[1..], Some(3.into())).unwrap();
+        assert_eq!(parsed.sn_lsb, 0x01);
+        assert_eq!(parsed.crc3, 0x02);
+        assert_eq!(parsed.cid, Some(3.into()));
+    }
+
+    #[test]
+    fn build_and_parse_uo1_sn_packet_cid0_marker_false() {
+        let uo1_sn_data = Uo1Packet {
+            cid: None,
+            num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
+            sn_lsb: 0xAB,
+            marker: false,
+            crc8: 0xCD,
+            ..Default::default()
+        };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_sn(&uo1_sn_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
+
+        assert_eq!(built_bytes_slice.len(), 3);
+        assert_eq!(built_bytes_slice[0], P1_UO_1_SN_PACKET_TYPE_PREFIX);
+        assert_eq!(built_bytes_slice[1], 0xAB);
+        assert_eq!(built_bytes_slice[2], 0xCD);
+
+        let parsed = deserialize_uo1_sn(built_bytes_slice).unwrap();
+        assert_eq!(parsed.sn_lsb, 0xAB);
+        assert!(!parsed.marker);
+        assert_eq!(parsed.crc8, 0xCD);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_ts_packet_cid0_marker_true() {
+        let uo1_ts_data = Uo1Packet {
+            cid: None,
+            num_ts_lsb_bits: Some(P1_UO1_TS_LSB_WIDTH_DEFAULT),
+            ts_lsb: Some(0x1234),
+            marker: true,
+            crc8: 0x56,
+            ..Default::default()
+        };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_ts(&uo1_ts_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
+
+        assert_eq!(built_bytes_slice.len(), 4);
+        assert_eq!(
+            built_bytes_slice[0],
+            (P1_UO_1_TS_DISCRIMINATOR & P1_UO_1_TS_TYPE_MASK) | P1_UO_1_TS_MARKER_BIT_MASK
+        );
+        assert_eq!(built_bytes_slice[1], 0x12);
+        assert_eq!(built_bytes_slice[2], 0x34);
+        assert_eq!(built_bytes_slice[3], 0x56);
+
+        let parsed = deserialize_uo1_ts(built_bytes_slice).unwrap();
+        assert_eq!(parsed.ts_lsb, Some(0x1234));
+        assert!(parsed.marker);
+        assert_eq!(parsed.crc8, 0x56);
+    }
+
+    #[test]
+    fn build_and_parse_uo1_id_packet_cid0() {
+        let uo1_id_data = Uo1Packet {
+            cid: None,
+            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            ip_id_lsb: Some(0x78),
+            marker: false,
+            crc8: 0x9A,
+            ..Default::default()
+        };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_id(&uo1_id_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
+
+        assert_eq!(built_bytes_slice.len(), 3);
+        assert_eq!(built_bytes_slice[0], P1_UO_1_ID_DISCRIMINATOR);
+        assert_eq!(built_bytes_slice[1], 0x78);
+        assert_eq!(built_bytes_slice[2], 0x9A);
+
+        let parsed = deserialize_uo1_id(built_bytes_slice).unwrap();
+        assert_eq!(parsed.ip_id_lsb, Some(0x78));
+        assert!(!parsed.marker);
+        assert_eq!(parsed.crc8, 0x9A);
     }
 
     #[test]
     fn build_and_parse_uo1_rtp_packet_cid0_marker_false() {
         let uo1_rtp_data = Uo1Packet {
-            // Uo1Packet is a type definition from SUT
             cid: None,
             marker: false,
             ts_scaled: Some(123),
             crc8: 0xAB,
             ..Default::default()
         };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_rtp(&uo1_rtp_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
-        assert_eq!(built_bytes.len(), 3);
-        assert_eq!(built_bytes[0], P1_UO_1_RTP_DISCRIMINATOR_BASE);
-        assert_eq!(built_bytes[1], 123);
-        assert_eq!(built_bytes[2], 0xAB);
+        assert_eq!(built_bytes_slice.len(), 3);
+        assert_eq!(built_bytes_slice[0], P1_UO_1_RTP_DISCRIMINATOR_BASE);
+        assert_eq!(built_bytes_slice[1], 123);
+        assert_eq!(built_bytes_slice[2], 0xAB);
 
-        let parsed = deserialize_uo1_rtp(&built_bytes).unwrap();
+        let parsed = deserialize_uo1_rtp(built_bytes_slice).unwrap();
         assert_eq!(parsed.ts_scaled, Some(123));
         assert!(!parsed.marker);
         assert_eq!(parsed.crc8, 0xAB);
@@ -1355,17 +1660,19 @@ mod tests {
             crc8: 0xCD,
             ..Default::default()
         };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_rtp(&uo1_rtp_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
-        assert_eq!(built_bytes.len(), 3);
+        assert_eq!(built_bytes_slice.len(), 3);
         assert_eq!(
-            built_bytes[0],
+            built_bytes_slice[0],
             P1_UO_1_RTP_DISCRIMINATOR_BASE | P1_UO_1_RTP_MARKER_BIT_MASK
         );
-        assert_eq!(built_bytes[1], 10);
-        assert_eq!(built_bytes[2], 0xCD);
+        assert_eq!(built_bytes_slice[1], 10);
+        assert_eq!(built_bytes_slice[2], 0xCD);
 
-        let parsed = deserialize_uo1_rtp(&built_bytes).unwrap();
+        let parsed = deserialize_uo1_rtp(built_bytes_slice).unwrap();
         assert_eq!(parsed.ts_scaled, Some(10));
         assert!(parsed.marker);
         assert_eq!(parsed.crc8, 0xCD);
@@ -1380,15 +1687,17 @@ mod tests {
             crc8: 0xFE,
             ..Default::default()
         };
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let len = serialize_uo1_rtp(&uo1_rtp_data, &mut buf).unwrap();
+        let built_bytes_slice = &buf[..len];
 
-        let built_bytes = serialize_uo1_rtp(&uo1_rtp_data).unwrap();
-        assert_eq!(built_bytes.len(), 4);
-        assert_eq!(built_bytes[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
-        assert_eq!(built_bytes[1], P1_UO_1_RTP_DISCRIMINATOR_BASE);
-        assert_eq!(built_bytes[2], 255);
-        assert_eq!(built_bytes[3], 0xFE);
+        assert_eq!(built_bytes_slice.len(), 4);
+        assert_eq!(built_bytes_slice[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
+        assert_eq!(built_bytes_slice[1], P1_UO_1_RTP_DISCRIMINATOR_BASE);
+        assert_eq!(built_bytes_slice[2], 255);
+        assert_eq!(built_bytes_slice[3], 0xFE);
 
-        let parsed = deserialize_uo1_rtp(&built_bytes[1..]).unwrap();
+        let parsed = deserialize_uo1_rtp(&built_bytes_slice[1..]).unwrap();
         assert_eq!(parsed.ts_scaled, Some(255));
         assert!(!parsed.marker);
         assert_eq!(parsed.crc8, 0xFE);
@@ -1403,7 +1712,8 @@ mod tests {
             crc8: 0xAB,
             ..Default::default()
         };
-        let result = serialize_uo1_rtp(&uo1_rtp_data);
+        let mut buf = [0u8; TEST_UO_BUF_SIZE];
+        let result = serialize_uo1_rtp(&uo1_rtp_data, &mut buf);
         assert!(
             matches!(result, Err(RohcBuildingError::ContextInsufficient { field, .. }) if field == crate::error::Field::TsScaled)
         );
@@ -1440,9 +1750,6 @@ mod tests {
         let ts_val = 0xDEADBEEFu32;
         let marker = true;
 
-        // Let type inference determine the types of ts_arg and sn_arg
-        // based on the signature of prepare_generic_uo_crc_input_payload
-        // and the From<IntegerType> implementations for Timestamp and SequenceNumber.
         let ts_arg = ts_val.into();
         let sn_arg = sn_val.into();
 

@@ -82,14 +82,15 @@ pub trait ProfileHandler: Send + Sync + Debug {
         creation_time: Instant,
     ) -> Box<dyn RohcDecompressorContext>;
 
-    /// Compresses a set of uncompressed headers using this profile's logic.
+    /// Compresses uncompressed headers into provided buffer (zero-allocation hot path).
     ///
     /// # Parameters
     /// - `context`: A mutable reference to a `RohcCompressorContext`.
     /// - `headers`: The `GenericUncompressedHeaders` to be compressed.
+    /// - `out`: Output buffer to write the compressed packet into.
     ///
     /// # Returns
-    /// The ROHC-compressed packet as a byte vector.
+    /// The number of bytes written to the output buffer.
     ///
     /// # Errors
     /// - [`RohcError`] - Compression fails due to context or profile-specific issues
@@ -97,7 +98,8 @@ pub trait ProfileHandler: Send + Sync + Debug {
         &self,
         context: &mut dyn RohcCompressorContext,
         headers: &GenericUncompressedHeaders,
-    ) -> Result<Vec<u8>, RohcError>;
+        out: &mut [u8],
+    ) -> Result<usize, RohcError>;
 
     /// Decompresses a ROHC packet using this profile's logic.
     ///
@@ -219,19 +221,31 @@ mod tests {
             &self,
             _context: &mut dyn RohcCompressorContext,
             headers: &GenericUncompressedHeaders,
-        ) -> Result<Vec<u8>, RohcError> {
+            out: &mut [u8],
+        ) -> Result<usize, RohcError> {
             match headers {
                 GenericUncompressedHeaders::TestRaw(data) => {
-                    let mut cd = Vec::new();
-                    cd.push(self.profile.into());
-                    cd.extend_from_slice(&data[0..std::cmp::min(data.len(), 2)]);
-                    Ok(cd)
+                    let bytes_needed = 1 + std::cmp::min(data.len(), 2);
+                    if out.len() < bytes_needed {
+                        return Err(RohcError::Building(
+                            crate::error::RohcBuildingError::InvalidFieldValueForBuild {
+                                field: crate::error::Field::BufferSize,
+                                value: out.len() as u32,
+                                max_bits: bytes_needed as u8,
+                            },
+                        ));
+                    }
+                    out[0] = self.profile.into();
+                    let data_len = std::cmp::min(data.len(), 2);
+                    out[1..1 + data_len].copy_from_slice(&data[0..data_len]);
+                    Ok(1 + data_len)
                 }
                 _ => Err(RohcError::Internal(
                     "MockProfileHandler only supports TestRaw".to_string(),
                 )),
             }
         }
+
         fn decompress(
             &self,
             _context: &mut dyn RohcDecompressorContext,

@@ -27,6 +27,8 @@ pub const P1_UO_1_TS_PACKET_TYPE_PREFIX: u8 = 0b1010_0000; // 0xA0
 pub const P1_UO_1_TS_DISCRIMINATOR: u8 = 0b1010_0100; // 0xA4
 /// Mask for UO-1-TS type (checks TSI=`010`, M=`0`).
 pub const P1_UO_1_TS_TYPE_MASK: u8 = 0b1111_1110; // 0xFE
+/// Mask for Marker (M) bit in UO-1-TS type octet.
+pub const P1_UO_1_TS_MARKER_BIT_MASK: u8 = 0b0000_0001; // 0x01
 
 /// Discriminator for UO-1-ID (TSI=`110`, M=`0` => `10101100`).
 pub const P1_UO_1_ID_DISCRIMINATOR: u8 = 0b1010_1100; // 0xAC
@@ -91,6 +93,12 @@ pub const P1_STATIC_CHAIN_LENGTH_BYTES: usize = 16;
 pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 7;
 /// Length of TS_STRIDE extension in IR-DYN dynamic chain, in bytes. (4 bytes)
 pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;
+
+// --- Field Size Constants ---
+/// RTP Sequence Number field length in bytes.
+pub const P1_SN_LENGTH_BYTES: usize = 2;
+/// RTP Timestamp field length in bytes.
+pub const P1_TS_LENGTH_BYTES: usize = 4;
 
 // --- Profile 1 IR Dynamic Chain RTP Flags Bitmasks (RFC 3095, Sec 5.7.7.2) ---
 /// Mask for Marker (M) bit in IR-DYN RTP_Flags octet (MSB: Bit 7).

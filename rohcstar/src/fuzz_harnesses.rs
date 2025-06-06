@@ -12,6 +12,8 @@ use crate::packet_defs::RohcProfile;
 use crate::profiles::profile1::{IrPacket, Profile1Handler, packet_processor::serialize_ir};
 use crate::traits::ProfileHandler;
 
+const HARNESS_IR_BUF_SIZE: usize = 64;
+
 /// Fuzz tests the Profile 1 U-mode decompressor.
 ///
 /// Tests `Profile1Handler::decompress` with fuzzer-generated input.
@@ -45,17 +47,23 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         dyn_rtp_timestamp: 1000.into(),
         dyn_rtp_marker: false,
         ts_stride: None,
-        crc8: 0,
+        crc8: 0, // Will be calculated by serialize_ir
     };
 
-    match serialize_ir(&sample_ir_data_for_harness, &crc_calculators) {
-        Ok(sample_ir_bytes) => {
+    let mut sample_ir_buf = [0u8; HARNESS_IR_BUF_SIZE];
+    match serialize_ir(
+        &sample_ir_data_for_harness,
+        &crc_calculators,
+        &mut sample_ir_buf,
+    ) {
+        Ok(len) => {
+            let sample_ir_bytes_slice = &sample_ir_buf[..len];
             let mut decompressor_context_dyn =
                 p1_handler.create_decompressor_context(cid, Instant::now());
 
             // Core IR bytes for CID 0 are the full packet (no Add-CID stripping needed)
             if p1_handler
-                .decompress(decompressor_context_dyn.as_mut(), &sample_ir_bytes)
+                .decompress(decompressor_context_dyn.as_mut(), sample_ir_bytes_slice)
                 .is_ok()
             {
                 // Successfully pre-conditioned context. Now fuzz with this context.

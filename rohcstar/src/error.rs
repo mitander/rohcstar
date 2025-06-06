@@ -87,6 +87,7 @@ pub enum Field {
 
     // Packet structure fields
     Uo0CorePacketLength,
+    BufferSize,
 }
 
 impl std::fmt::Display for Field {
@@ -110,6 +111,7 @@ impl std::fmt::Display for Field {
             Self::NumTsLsbBits => "num_ts_lsb_bits",
             Self::NumIpIdLsbBits => "num_ip_id_lsb_bits",
             Self::Uo0CorePacketLength => "UO-0 Core Packet Length",
+            Self::BufferSize => "Buffer Size",
         };
         write!(f, "{}", s)
     }
