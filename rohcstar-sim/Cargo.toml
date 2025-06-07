@@ -10,6 +10,7 @@ clap = { version = "4.5", features = ["derive", "cargo"] }
 rayon = "1.10"
 ctrlc = { version = "3.4", features = ["termination"] }
 num_cpus = "1.17.0"
+chrono = "0.4.41"
 
 [[bin]]
 name = "rohcstar-sim"
