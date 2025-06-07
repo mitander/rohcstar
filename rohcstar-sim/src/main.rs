@@ -383,7 +383,9 @@ fn run_fuzz_mode(args: CliArgs) {
                             SimError::DecompressionError { error, .. } => {
                                 !((config.channel_packet_loss_probability > 0.0)
                                     && (matches!(error, RohcError::Parsing(_))
-                                        || matches!(error, RohcError::InvalidState(_))))
+                                        || matches!(error, RohcError::InvalidState(_))
+                                        || matches!(error, RohcError::Engine(_))
+                                        || matches!(error, RohcError::Decompression(_))))
                             }
                             _ => true,
                         };
