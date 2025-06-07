@@ -8,7 +8,6 @@
 use clap::Parser;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng, random};
-use rohcstar::RohcError;
 use rohcstar_sim::{RohcSimulator, SimConfig, SimError};
 use std::collections::HashSet;
 use std::fs::File;
@@ -380,13 +379,12 @@ fn run_fuzz_mode(args: CliArgs) {
                                     && (config.marker_probability > 0.0
                                         || config.channel_packet_loss_probability > 0.0))
                             }
-                            SimError::DecompressionError { error, .. } => {
-                                !((config.channel_packet_loss_probability > 0.0)
-                                    && (matches!(error, RohcError::Parsing(_))
-                                        || matches!(error, RohcError::InvalidState(_))
-                                        || matches!(error, RohcError::Engine(_))
-                                        || matches!(error, RohcError::Decompression(_))))
-                            }
+                            SimError::DecompressionError { error, .. } => !matches!(
+                                error,
+                                rohcstar::RohcError::Engine(
+                                    rohcstar::error::EngineError::PacketLoss { .. }
+                                )
+                            ),
                             _ => true,
                         };
 

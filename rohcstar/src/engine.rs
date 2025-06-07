@@ -184,6 +184,9 @@ impl RohcEngine {
     /// the appropriate decompressor context, and delegating to the registered profile handler.
     /// Updates the context's last accessed time on successful decompression.
     ///
+    /// Errors are automatically classified: packet loss related errors are wrapped in
+    /// `PacketLoss` error type, while critical implementation issues return raw error types.
+    ///
     /// # Parameters
     /// - `packet`: Complete ROHC packet data including CID and payload
     ///
@@ -191,11 +194,104 @@ impl RohcEngine {
     /// The reconstructed uncompressed headers on success.
     ///
     /// # Errors
-    /// - [`RohcError::Parsing`] - Invalid packet format or insufficient data
+    /// - [`RohcError::Engine(EngineError::PacketLoss)`] - Expected packet loss
+    /// - [`RohcError::Parsing`] - Invalid packet format (critical issues)
+    /// - [`RohcError::UnsupportedProfile`] - Profile handler not registered
+    /// - Other [`RohcError`] variants - Critical implementation issues
+    pub fn decompress(&mut self, packet: &[u8]) -> Result<GenericUncompressedHeaders, RohcError> {
+        if packet.is_empty() {
+            return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
+                needed: 1,
+                got: 0,
+                context: crate::error::ParseContext::RohcPacketInput,
+            }));
+        }
+
+        let (cid, _, core_packet_slice) = self.parse_cid_from_packet(packet)?;
+        if core_packet_slice.is_empty() {
+            return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
+                needed: 1,
+                got: 0,
+                context: crate::error::ParseContext::CorePacketAfterCid,
+            }));
+        }
+
+        let result = match self.context_manager.get_decompressor_context_mut(cid) {
+            Ok(context_box) => {
+                let profile_id = context_box.profile_id();
+                let handler = self.profile_handlers.get(&profile_id).ok_or({
+                    RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
+                        profile: profile_id,
+                    })
+                })?;
+
+                match handler.decompress(context_box.as_mut(), core_packet_slice) {
+                    Ok(headers) => {
+                        context_box.set_last_accessed(self.clock.now());
+                        Ok(headers)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(RohcError::ContextNotFound(_)) => {
+                match self.peek_profile_from_core_packet(core_packet_slice) {
+                    Ok(profile_id) => {
+                        let handler = self
+                            .profile_handlers
+                            .get(&profile_id)
+                            .ok_or_else(|| RohcError::UnsupportedProfile(profile_id.into()))?;
+
+                        let mut new_context =
+                            handler.create_decompressor_context(cid, self.clock.now());
+                        match handler.decompress(new_context.as_mut(), core_packet_slice) {
+                            Ok(headers) => {
+                                new_context.set_last_accessed(self.clock.now());
+                                self.context_manager
+                                    .add_decompressor_context(cid, new_context);
+                                Ok(headers)
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        };
+
+        // Classify errors: wrap packet loss errors, return others as-is
+        match result {
+            Ok(headers) => Ok(headers),
+            Err(e) if e.is_expected_with_packet_loss() => {
+                Err(RohcError::Engine(EngineError::PacketLoss {
+                    underlying_error: Box::new(e),
+                }))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Decompresses a ROHC packet returning raw, unclassified errors.
+    ///
+    /// This method provides direct access to the underlying decompression errors
+    /// without packet loss classification. It's primarily intended for testing
+    /// and debugging where the exact error type matters.
+    ///
+    /// # Parameters
+    /// - `packet`: Complete ROHC packet data including CID and payload
+    ///
+    /// # Returns
+    /// The reconstructed uncompressed headers on success.
+    ///
+    /// # Errors
+    /// - [`RohcError::Parsing`] - Invalid packet format or packet loss effects
     /// - [`RohcError::ContextNotFound`] - No context exists and packet is not IR type
     /// - [`RohcError::UnsupportedProfile`] - Profile handler not registered
-    /// - [`RohcError::Internal`] - Context exists but handler missing
-    pub fn decompress(&mut self, packet: &[u8]) -> Result<GenericUncompressedHeaders, RohcError> {
+    /// - [`RohcError::Decompression`] - Context damage from packet loss or real issues
+    pub fn decompress_raw(
+        &mut self,
+        packet: &[u8],
+    ) -> Result<GenericUncompressedHeaders, RohcError> {
         if packet.is_empty() {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
@@ -221,28 +317,37 @@ impl RohcEngine {
                         profile: profile_id,
                     })
                 })?;
-                let result = handler.decompress(context_box.as_mut(), core_packet_slice);
 
-                if result.is_ok() {
-                    context_box.set_last_accessed(self.clock.now());
+                match handler.decompress(context_box.as_mut(), core_packet_slice) {
+                    Ok(headers) => {
+                        context_box.set_last_accessed(self.clock.now());
+                        Ok(headers)
+                    }
+                    Err(e) => Err(e),
                 }
-                result
             }
             Err(RohcError::ContextNotFound(_)) => {
-                let profile_id = self.peek_profile_from_core_packet(core_packet_slice)?;
-                let handler = self
-                    .profile_handlers
-                    .get(&profile_id)
-                    .ok_or_else(|| RohcError::UnsupportedProfile(profile_id.into()))?;
+                match self.peek_profile_from_core_packet(core_packet_slice) {
+                    Ok(profile_id) => {
+                        let handler = self
+                            .profile_handlers
+                            .get(&profile_id)
+                            .ok_or_else(|| RohcError::UnsupportedProfile(profile_id.into()))?;
 
-                let mut new_context = handler.create_decompressor_context(cid, self.clock.now());
-                let result = handler.decompress(new_context.as_mut(), core_packet_slice);
-                if result.is_ok() {
-                    new_context.set_last_accessed(self.clock.now());
+                        let mut new_context =
+                            handler.create_decompressor_context(cid, self.clock.now());
+                        match handler.decompress(new_context.as_mut(), core_packet_slice) {
+                            Ok(headers) => {
+                                new_context.set_last_accessed(self.clock.now());
+                                self.context_manager
+                                    .add_decompressor_context(cid, new_context);
+                                Ok(headers)
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    Err(e) => Err(e),
                 }
-                self.context_manager
-                    .add_decompressor_context(cid, new_context);
-                result
             }
             Err(e) => Err(e),
         }

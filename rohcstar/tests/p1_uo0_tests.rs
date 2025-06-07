@@ -379,7 +379,7 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
             corrupted_packet[0] &= 0x7F;
         }
 
-        let result = engine.decompress(&corrupted_packet);
+        let result = engine.decompress_raw(&corrupted_packet);
         assert!(matches!(
             result,
             Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. }))

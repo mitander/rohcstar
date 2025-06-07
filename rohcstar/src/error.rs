@@ -367,6 +367,10 @@ pub enum EngineError {
     #[error("Decompression failed: {0}")]
     DecompressionFailed(#[from] DecompressionError),
 
+    /// Packet loss detected - decompression failed due to expected network conditions.
+    #[error("Packet lost - decompression failed due to expected network conditions")]
+    PacketLoss { underlying_error: Box<RohcError> },
+
     /// Internal engine error.
     #[error("Internal engine error: {reason}")]
     Internal { reason: &'static str },
@@ -413,6 +417,53 @@ pub enum RohcError {
     /// Legacy support for existing code (temporary).
     #[error("Internal logic error: {0}")]
     Internal(String),
+}
+
+impl RohcError {
+    /// Returns true if this error is expected under packet loss conditions.
+    ///
+    /// These errors represent normal ROHC protocol behavior when packets are lost
+    /// and should typically be handled gracefully by applications rather than
+    /// treated as critical failures.
+    pub fn is_expected_with_packet_loss(&self) -> bool {
+        match self {
+            // CRC mismatches are expected when packets are corrupted or lost
+            RohcError::Parsing(RohcParsingError::CrcMismatch { .. }) => true,
+
+            // LSB decoding failures occur when context is damaged by packet loss
+            RohcError::Decompression(DecompressionError::LsbDecodingFailed { .. }) => true,
+
+            // Engine internal errors for missing contexts with non-IR packets
+            RohcError::Engine(EngineError::Internal { reason })
+                if reason.contains("Cannot determine ROHC profile from non-IR packet") =>
+            {
+                true
+            }
+
+            // Context not found is expected when IR packets are lost
+            RohcError::Decompression(DecompressionError::ContextNotFound { .. }) => true,
+
+            // Invalid packet types are expected when packets are corrupted by packet loss
+            RohcError::Decompression(DecompressionError::InvalidPacketType { .. }) => true,
+
+            // Internal "packet discarded" messages from engine graceful degradation
+            RohcError::Internal(reason)
+                if reason.contains("Packet discarded due to expected packet loss") =>
+            {
+                true
+            }
+
+            // Internal "waiting for IR" messages when no fallback headers exist
+            RohcError::Internal(reason)
+                if reason.contains("No headers available yet - waiting for IR packet") =>
+            {
+                true
+            }
+
+            // All other errors are implementation issues or malformed packets
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
