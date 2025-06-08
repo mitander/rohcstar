@@ -16,36 +16,63 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use rohcstar::{RohcEngine, RohcProfile};
-//! use rohcstar::profiles::profile1::handler::Profile1Handler;
-//! use rohcstar::time::SystemClock;
 //! use rohcstar::packet_defs::GenericUncompressedHeaders;
+//! use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+//! use rohcstar::time::SystemClock;
+//! use rohcstar::{EngineError, RohcEngine, RohcProfile};
 //! use std::sync::Arc;
 //! use std::time::Duration;
 //!
-//! // Create a ROHC engine
-//! let mut engine = RohcEngine::new(
-//!     20,                              // IR refresh interval
-//!     Duration::from_secs(300),        // Context timeout
-//!     Arc::new(SystemClock),           // Clock implementation
-//! );
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a ROHC engine
+//!     let mut engine = RohcEngine::new(
+//!         20,                       // IR refresh interval
+//!         Duration::from_secs(300), // Context timeout
+//!         Arc::new(SystemClock),    // Clock implementation
+//!     );
 //!
-//! // Register Profile 1 handler for RTP/UDP/IP compression
-//! let profile1_handler = Box::new(Profile1Handler::new());
-//! engine.register_profile_handler(profile1_handler).unwrap();
+//!     // Register Profile 1 handler for RTP/UDP/IP compression
+//!     engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
 //!
-//! // Compress packets (example with actual headers)
-//! # /*
-//! let headers = GenericUncompressedHeaders::RtpUdpIpv4(rtp_udp_ip_headers);
-//! let compressed_packet = engine.compress(
-//!     0,                                    // Context ID
-//!     Some(RohcProfile::RtpUdpIp),         // Profile hint for new contexts
-//!     &headers,
-//! )?;
+//!     // Create headers to compress
+//!     let headers = RtpUdpIpv4Headers {
+//!         ip_src: "192.168.1.10".parse().unwrap(),
+//!         ip_dst: "192.168.1.20".parse().unwrap(),
+//!         udp_src_port: 10010,
+//!         udp_dst_port: 20020,
+//!         rtp_ssrc: 0x12345678.into(),
+//!         rtp_sequence_number: 100.into(),
+//!         rtp_timestamp: 1000.into(),
+//!         ..Default::default()
+//!     };
+//!     let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 //!
-//! // Decompress packets
-//! let decompressed_headers = engine.decompress(&compressed_packet)?;
-//! # */
+//!     // Compress packet
+//!     let mut compressed_buf = [0u8; 128];
+//!     let compressed_len = engine.compress(
+//!         0.into(),                    // Context ID
+//!         Some(RohcProfile::RtpUdpIp), // Profile hint
+//!         &generic_headers,
+//!         &mut compressed_buf,
+//!     )?;
+//!     let compressed_packet = &compressed_buf[..compressed_len];
+//!     println!("Compressed packet: {} bytes", compressed_len);
+//!
+//!     // Decompress packet - graceful packet loss handling
+//!     match engine.decompress(compressed_packet) {
+//!         Ok(decompressed_headers) => {
+//!             println!("Decompressed headers: {:#?}", decompressed_headers);
+//!         }
+//!         Err(rohcstar::RohcError::Engine(EngineError::PacketLoss { .. })) => {
+//!             todo!("handle packet loss")
+//!         }
+//!         Err(e) => {
+//!             panic!("failed to decompress: {e} ");
+//!         }
+//!     }
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Supported Profiles

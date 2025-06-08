@@ -79,47 +79,61 @@ See [BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance analysis, optim
 ## Basic Usage
 
 ```rust
-use rohcstar::{RohcEngine, GenericUncompressedHeaders, RohcProfile};
-use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers, Timestamp};
-use std::net::Ipv4Addr;
+use rohcstar::packet_defs::GenericUncompressedHeaders;
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+use rohcstar::time::SystemClock;
+use rohcstar::{EngineError, RohcEngine, RohcProfile};
+use std::sync::Arc;
+use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Create an engine
-    let mut engine = RohcEngine::new(20); // Default IR refresh interval
+    // Create a ROHC engine
+    let mut engine = RohcEngine::new(
+        20,                       // IR refresh interval
+        Duration::from_secs(300), // Context timeout
+        Arc::new(SystemClock),    // Clock implementation
+    );
 
-    // 2. Register a profile handler
+    // Register Profile 1 handler for RTP/UDP/IP compression
     engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
 
-    // 3. Prepare uncompressed headers (example for Profile 1)
-    let uncompressed_rtp_headers = RtpUdpIpv4Headers {
+    // Create headers to compress
+    let headers = RtpUdpIpv4Headers {
         ip_src: "192.168.1.10".parse().unwrap(),
         ip_dst: "192.168.1.20".parse().unwrap(),
         udp_src_port: 10010,
         udp_dst_port: 20020,
-        rtp_ssrc: 0x12345678,
-        rtp_sequence_number: 100,
-        rtp_timestamp: Timestamp::new(1000),
-        rtp_marker: false,
-        // ... other fields can be defaulted or set explicitly
+        rtp_ssrc: 0x12345678.into(),
+        rtp_sequence_number: 100.into(),
+        rtp_timestamp: 1000.into(),
         ..Default::default()
     };
-    let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(uncompressed_rtp_headers.clone());
+    let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
-    // 4. Compress
-    let cid = 0u16; // Context ID
-    let compressed_packet = engine.compress(cid, Some(RohcProfile::RtpUdpIp), &generic_headers)?;
-    println!("Compressed packet length: {}", compressed_packet.len());
+    // Compress packet
+    let mut compressed_buf = [0u8; 128];
+    let compressed_len = engine.compress(
+        0.into(),                    // Context ID
+        Some(RohcProfile::RtpUdpIp), // Profile hint
+        &generic_headers,
+        &mut compressed_buf,
+    )?;
+    let compressed_packet = &compressed_buf[..compressed_len];
+    println!("Compressed packet: {} bytes", compressed_len);
 
-    // 5. Decompress
-    let decompressed_headers_generic = engine.decompress(&compressed_packet)?;
-
-    if let Some(rtp_headers_out) = decompressed_headers_generic.as_rtp_udp_ipv4() {
-        assert_eq!(rtp_headers_out.rtp_ssrc, uncompressed_rtp_headers.rtp_ssrc);
-        assert_eq!(rtp_headers_out.rtp_sequence_number, uncompressed_rtp_headers.rtp_sequence_number);
-        println!("Decompression successful, SN matched: {}", rtp_headers_out.rtp_sequence_number);
-    } else {
-        eprintln!("Decompression failed or returned unexpected header type.");
+    // Decompress packet - graceful packet loss handling
+    match engine.decompress(compressed_packet) {
+        Ok(decompressed_headers) => {
+            println!("Decompressed headers: {:#?}", decompressed_headers);
+        }
+        Err(rohcstar::RohcError::Engine(EngineError::PacketLoss { .. })) => {
+            todo!("handle packet loss")
+        }
+        Err(e) => {
+            panic!("failed to decompress: {e} ");
+        }
     }
+
     Ok(())
 }
 ```
