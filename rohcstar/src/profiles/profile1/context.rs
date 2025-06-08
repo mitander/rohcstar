@@ -95,6 +95,46 @@ pub struct Profile1CompressorContext {
 }
 
 impl Profile1CompressorContext {
+    /// Validates critical invariants for compressor context state.
+    fn debug_validate_invariants(&self) {
+        debug_assert!(
+            self.ts_stride.is_none_or(|s| s > 0),
+            "TS stride cannot be zero"
+        );
+        debug_assert!(
+            !self.ts_scaled_mode || self.ts_stride.is_some(),
+            "Scaled mode requires stride"
+        );
+        debug_assert!(
+            self.fo_packets_sent_since_ir <= self.ir_refresh_interval
+                || self.ir_refresh_interval == 0,
+            "FO count {} exceeded IR refresh limit {}",
+            self.fo_packets_sent_since_ir,
+            self.ir_refresh_interval
+        );
+        debug_assert!(
+            self.consecutive_fo_packets_sent <= self.fo_packets_sent_since_ir,
+            "Consecutive FO count {} cannot exceed total FO count {}",
+            self.consecutive_fo_packets_sent,
+            self.fo_packets_sent_since_ir
+        );
+        debug_assert!(
+            self.current_lsb_sn_width > 0 && self.current_lsb_sn_width <= 16,
+            "SN LSB width {} must be in range 1-16",
+            self.current_lsb_sn_width
+        );
+        debug_assert!(
+            self.current_lsb_ts_width > 0 && self.current_lsb_ts_width <= 32,
+            "TS LSB width {} must be in range 1-32",
+            self.current_lsb_ts_width
+        );
+        debug_assert!(
+            self.current_lsb_ip_id_width > 0 && self.current_lsb_ip_id_width <= 16,
+            "IP-ID LSB width {} must be in range 1-16",
+            self.current_lsb_ip_id_width
+        );
+    }
+
     /// Creates a new compressor context for ROHC Profile 1.
     ///
     /// Initializes all fields to their default or specified startup values.
@@ -110,7 +150,7 @@ impl Profile1CompressorContext {
     /// # Returns
     /// A new `Profile1CompressorContext` instance ready for packet compression.
     pub fn new(cid: ContextId, ir_refresh_interval: u32, creation_time: Instant) -> Self {
-        Self {
+        let context = Self {
             profile_id: RohcProfile::RtpUdpIp,
             cid,
             ip_source: Ipv4Addr::UNSPECIFIED,
@@ -136,7 +176,11 @@ impl Profile1CompressorContext {
             ts_offset: Timestamp::default(),
             ts_stride_packets: 0,
             ts_scaled_mode: false,
-        }
+        };
+
+        context.debug_validate_invariants();
+
+        context
     }
 
     /// Initializes or re-initializes the context based on a new uncompressed packet.
@@ -170,6 +214,8 @@ impl Profile1CompressorContext {
         self.ts_offset = Timestamp::new(0); // Will be properly set by first call to detect_ts_stride
         self.ts_stride_packets = 0;
         self.ts_scaled_mode = false;
+
+        self.debug_validate_invariants();
     }
 
     /// Returns the small CID value for this context, if applicable.
@@ -426,6 +472,38 @@ pub struct Profile1DecompressorContext {
 }
 
 impl Profile1DecompressorContext {
+    /// Validates critical invariants for decompressor context state.
+    fn debug_validate_invariants(&self) {
+        debug_assert!(
+            self.ts_stride.is_none_or(|s| s > 0),
+            "TS stride cannot be zero"
+        );
+        debug_assert!(
+            !self.ts_scaled_mode || self.ts_stride.is_some(),
+            "Scaled mode requires stride"
+        );
+        debug_assert!(
+            self.expected_lsb_sn_width > 0 && self.expected_lsb_sn_width <= 16,
+            "SN LSB width {} must be in range 1-16",
+            self.expected_lsb_sn_width
+        );
+        debug_assert!(
+            self.expected_lsb_ts_width > 0 && self.expected_lsb_ts_width <= 32,
+            "TS LSB width {} must be in range 1-32",
+            self.expected_lsb_ts_width
+        );
+        debug_assert!(
+            self.expected_lsb_ip_id_width > 0 && self.expected_lsb_ip_id_width <= 16,
+            "IP-ID LSB width {} must be in range 1-16",
+            self.expected_lsb_ip_id_width
+        );
+        debug_assert!(
+            self.consecutive_crc_failures_in_fc <= 10,
+            "CRC failure count {} exceeds reasonable limit",
+            self.consecutive_crc_failures_in_fc
+        );
+    }
+
     /// Creates a new decompressor context for ROHC Profile 1.
     ///
     /// Initializes all fields to their default values. The context starts
@@ -437,7 +515,7 @@ impl Profile1DecompressorContext {
     /// # Returns
     /// A new `Profile1DecompressorContext` instance ready for packet decompression.
     pub fn new(cid: ContextId) -> Self {
-        Self {
+        let context = Self {
             profile_id: RohcProfile::RtpUdpIp,
             cid,
             ip_source: Ipv4Addr::UNSPECIFIED,
@@ -468,7 +546,11 @@ impl Profile1DecompressorContext {
             ts_stride: None,
             ts_offset: Timestamp::new(0),
             ts_scaled_mode: false,
-        }
+        };
+
+        context.debug_validate_invariants();
+
+        context
     }
 
     /// Initializes or updates the decompressor context from a parsed IR packet.
@@ -509,6 +591,8 @@ impl Profile1DecompressorContext {
         self.ts_stride = ir_packet.ts_stride;
         self.ts_offset = ir_packet.dyn_rtp_timestamp;
         self.ts_scaled_mode = ir_packet.ts_stride.is_some();
+
+        self.debug_validate_invariants();
     }
 
     /// Resets dynamic fields and state machine counters when transitioning to NoContext (NC) mode.

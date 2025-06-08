@@ -40,6 +40,17 @@ pub(super) fn process_ir_packet(
     let reconstructed_rtp_headers =
         decompressor::decompress_as_ir(context, packet_bytes, crc_calculators, handler_profile_id)?;
 
+    debug_assert!(
+        matches!(
+            context.mode,
+            Profile1DecompressorMode::NoContext
+                | Profile1DecompressorMode::StaticContext
+                | Profile1DecompressorMode::FullContext
+                | Profile1DecompressorMode::SecondOrder
+        ),
+        "Invalid mode before IR transition: {:?}",
+        context.mode
+    );
     context.mode = Profile1DecompressorMode::FullContext;
     context.consecutive_crc_failures_in_fc = 0;
     context.fc_packets_successful_streak = 0;
@@ -158,6 +169,12 @@ pub(super) fn process_packet_in_sc_mode(
             );
 
             // Dynamic packet success transitions to FC.
+            debug_assert_eq!(
+                context.mode,
+                Profile1DecompressorMode::StaticContext,
+                "SC->FC transition from invalid mode: {:?}",
+                context.mode
+            );
             context.sc_to_nc_k_failures = 0;
             context.sc_to_nc_n_window_count = 0;
             context.mode = Profile1DecompressorMode::FullContext;
@@ -177,6 +194,12 @@ pub(super) fn process_packet_in_sc_mode(
                     context.sc_to_nc_n_window_count >= P1_DECOMPRESSOR_SC_TO_NC_N2;
 
                 if should_transition_sc_to_nc(context) {
+                    debug_assert_eq!(
+                        context.mode,
+                        Profile1DecompressorMode::StaticContext,
+                        "SC->NC transition from invalid mode: {:?}",
+                        context.mode
+                    );
                     context.mode = Profile1DecompressorMode::NoContext;
                     context.reset_for_nc_transition();
                 } else if should_reset_counters {
@@ -240,6 +263,12 @@ pub(super) fn process_packet_in_so_mode(
             context.so_consecutive_failures = context.so_consecutive_failures.saturating_add(1);
 
             if should_transition_so_to_nc(context) {
+                debug_assert_eq!(
+                    context.mode,
+                    Profile1DecompressorMode::SecondOrder,
+                    "SO->NC transition from invalid mode: {:?}",
+                    context.mode
+                );
                 context.mode = Profile1DecompressorMode::NoContext;
                 context.reset_for_nc_transition();
             }
@@ -266,6 +295,12 @@ fn handle_fc_uo_packet_outcome(
                 context.fc_packets_successful_streak.saturating_add(1);
 
             if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
+                debug_assert_eq!(
+                    context.mode,
+                    Profile1DecompressorMode::FullContext,
+                    "FC->SO transition from invalid mode: {:?}",
+                    context.mode
+                );
                 context.mode = Profile1DecompressorMode::SecondOrder;
                 context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
                 context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
@@ -286,6 +321,12 @@ fn handle_fc_uo_packet_outcome(
             if context.consecutive_crc_failures_in_fc
                 >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
             {
+                debug_assert_eq!(
+                    context.mode,
+                    Profile1DecompressorMode::FullContext,
+                    "FC->SC transition from invalid mode: {:?}",
+                    context.mode
+                );
                 context.mode = Profile1DecompressorMode::StaticContext;
                 context.sc_to_nc_k_failures = 0;
                 context.sc_to_nc_n_window_count = 0;

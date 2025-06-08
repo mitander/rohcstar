@@ -66,6 +66,24 @@ enum CompressionPhase {
     PostUo0,
 }
 
+impl CompressionPhase {
+    /// Validates that phase transitions follow valid ROHC progression.
+    fn debug_validate_transition(from: Self, to: Self) -> bool {
+        match (from, to) {
+            // Valid progressions
+            (Self::InitializationRefresh, Self::Stable) => true,
+            (Self::Stable, Self::UnidirectionalOptimistic) => true,
+            (Self::UnidirectionalOptimistic, Self::PostUo0) => true,
+            // Special case: skip UO phase if configured to zero packets
+            (Self::Stable, Self::PostUo0) => true,
+            // Same phase (no transition)
+            (a, b) if a == b => true,
+            // Invalid transitions
+            _ => false,
+        }
+    }
+}
+
 /// Generates a stream of uncompressed RTP/UDP/IPv4 packets deterministically.
 pub struct PacketGenerator {
     rng: StdRng,
@@ -76,6 +94,26 @@ pub struct PacketGenerator {
 }
 
 impl PacketGenerator {
+    /// Validates critical invariants for packet generation configuration.
+    fn debug_validate_invariants(&self) {
+        debug_assert!(self.config.ts_stride > 0, "TS stride cannot be zero");
+        debug_assert!(
+            self.config.num_packets > 0,
+            "Must generate at least one packet"
+        );
+        debug_assert!(
+            self.packets_generated <= self.config.num_packets,
+            "Generated count exceeds configured packets"
+        );
+        debug_assert!(
+            self.config.stable_phase_count + self.config.uo0_phase_count <= self.config.num_packets,
+            "Phase counts exceed total packets: stable={}, uo0={}, total={}",
+            self.config.stable_phase_count,
+            self.config.uo0_phase_count,
+            self.config.num_packets
+        );
+    }
+
     /// Creates a new packet generator with the specified configuration.
     ///
     /// # Parameters
@@ -84,18 +122,29 @@ impl PacketGenerator {
     /// # Returns
     /// A new `PacketGenerator` instance ready to generate packets.
     pub fn new(config: &SimConfig) -> Self {
-        Self {
+        let generator = Self {
             rng: StdRng::seed_from_u64(config.seed),
             current_sn: config.start_sn,
             config: config.clone(),
             base_ip_id: config.start_sn.wrapping_add(config.ssrc as u16),
             packets_generated: 0,
-        }
+        };
+
+        generator.debug_validate_invariants();
+
+        generator
     }
 
     /// Determines compression phase based on packet index following ROHC progression.
     fn get_compression_phase(&self, packet_index: usize) -> CompressionPhase {
-        if packet_index == 0 {
+        debug_assert!(
+            packet_index < self.config.num_packets,
+            "Packet index {} exceeds configured packets {}",
+            packet_index,
+            self.config.num_packets
+        );
+
+        let phase = if packet_index == 0 {
             CompressionPhase::InitializationRefresh
         } else if packet_index <= self.config.stable_phase_count {
             CompressionPhase::Stable
@@ -103,12 +152,39 @@ impl PacketGenerator {
             CompressionPhase::UnidirectionalOptimistic
         } else {
             CompressionPhase::PostUo0
+        };
+
+        // Validate state machine transitions in debug builds
+        if packet_index > 0 {
+            #[cfg(debug_assertions)]
+            {
+                let prev_phase = self.get_compression_phase(packet_index - 1);
+                debug_assert!(
+                    CompressionPhase::debug_validate_transition(prev_phase, phase),
+                    "Invalid phase transition from {:?} to {:?} at packet {}",
+                    prev_phase,
+                    phase,
+                    packet_index
+                );
+            }
         }
+
+        phase
     }
 
     /// Calculates timestamp using stride: start_ts_val + (packet_index * ts_stride).
     fn calculate_timestamp(&self, packet_index: usize, _phase: CompressionPhase) -> u32 {
-        self.config.start_ts_val + (packet_index as u32 * self.config.ts_stride)
+        let timestamp = self
+            .config
+            .start_ts_val
+            .saturating_add(packet_index as u32 * self.config.ts_stride);
+        debug_assert!(
+            timestamp >= self.config.start_ts_val,
+            "Timestamp overflow: {} < {}",
+            timestamp,
+            self.config.start_ts_val
+        );
+        timestamp
     }
 
     /// Returns base_ip_id except for PostUo0 phase which tests IP-ID changes.
@@ -147,6 +223,8 @@ impl PacketGenerator {
             return None;
         }
 
+        self.debug_validate_invariants();
+
         let packet_index = self.packets_generated;
         let phase = self.get_compression_phase(packet_index);
 
@@ -167,8 +245,18 @@ impl PacketGenerator {
             ..Default::default()
         };
 
+        let prev_sn = self.current_sn;
         self.current_sn = self.current_sn.wrapping_add(1);
         self.packets_generated += 1;
+
+        debug_assert!(
+            self.packets_generated <= self.config.num_packets,
+            "Generated packet count exceeded configuration"
+        );
+        debug_assert!(
+            self.current_sn == prev_sn.wrapping_add(1),
+            "Sequence number progression violated"
+        );
 
         Some(packet_headers)
     }
@@ -314,6 +402,15 @@ impl RohcSimulator {
                 GenericUncompressedHeaders::RtpUdpIpv4(original_headers.clone());
 
             let mut compress_buf = [0u8; 128];
+            debug_assert!(
+                !compress_buf.is_empty(),
+                "Compression buffer cannot be empty"
+            );
+            debug_assert!(
+                compress_buf.len() >= 8,
+                "Compression buffer too small for minimum ROHC packet"
+            );
+
             let compressed_len = self
                 .compressor_engine
                 .compress(
@@ -332,11 +429,23 @@ impl RohcSimulator {
                 "SN {}: Compressor produced empty packet.",
                 current_sn_being_processed
             );
+            debug_assert!(
+                compressed_len <= compress_buf.len(),
+                "SN {}: Compressed length {} exceeds buffer size {}",
+                current_sn_being_processed,
+                compressed_len,
+                compress_buf.len()
+            );
             let compressed_bytes = compress_buf[..compressed_len].to_vec();
             self.mock_clock.advance(Duration::from_millis(1));
 
             if let Some(received_bytes) = self.channel.transmit(compressed_bytes) {
                 self.mock_clock.advance(Duration::from_millis(10));
+
+                debug_assert!(
+                    !received_bytes.is_empty(),
+                    "Received packet cannot be empty"
+                );
 
                 let decompressed_generic_headers = self
                     .decompressor_engine
@@ -350,6 +459,13 @@ impl RohcSimulator {
 
                 match decompressed_generic_headers {
                     GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers) => {
+                        debug_assert!(
+                            matches!(
+                                generic_original_headers,
+                                GenericUncompressedHeaders::RtpUdpIpv4(_)
+                            ),
+                            "Decompressed header type mismatch: expected RtpUdpIpv4, decompressed to RtpUdpIpv4 but original was different type"
+                        );
                         if decompressed_headers.rtp_ssrc != original_headers.rtp_ssrc {
                             return Err(SimError::VerificationError {
                                 sn: *current_sn_being_processed,
