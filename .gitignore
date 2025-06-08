@@ -11,3 +11,6 @@ target/
 
 # Simulation logs
 rohc_sim_failures.log
+
+# Private TODO
+TODO.md

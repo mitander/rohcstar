@@ -13,6 +13,7 @@ pub struct StateCounters {
     pub so_dynamic_confidence: u32,
     pub so_consecutive_failures: u32,
     pub so_packets_in_so: u32,
+    pub had_recent_crc_failure: bool,
 }
 
 impl StateCounters {

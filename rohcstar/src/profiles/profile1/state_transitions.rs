@@ -79,7 +79,10 @@ pub fn process_transition(
             Some(FullContext)
         }
         (FullContext, TransitionEvent::UoSuccess { .. }) => {
-            counters.fc_crc_failures = 0;
+            // RFC 3095: Only reset CRC failures for clean successes, not recovery successes
+            if !counters.had_recent_crc_failure {
+                counters.fc_crc_failures = 0;
+            }
             counters.fc_success_streak = counters.fc_success_streak.saturating_add(1);
 
             if counters.fc_success_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
@@ -92,6 +95,7 @@ pub fn process_transition(
         (FullContext, TransitionEvent::CrcFailure) => {
             counters.fc_crc_failures = counters.fc_crc_failures.saturating_add(1);
             counters.fc_success_streak = 0;
+            counters.had_recent_crc_failure = true;
 
             if counters.fc_crc_failures >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
                 counters.fc_crc_failures = 0;
@@ -104,6 +108,7 @@ pub fn process_transition(
         }
         (FullContext, TransitionEvent::ParseError) => {
             counters.fc_success_streak = 0;
+            counters.had_recent_crc_failure = false;
             None
         }
 
@@ -146,6 +151,12 @@ pub fn process_transition(
             new
         );
         *current_mode = new;
+    }
+
+    // Clear the recent CRC failure flag after processing the transition
+    // This ensures it only affects the immediate UoSuccess that follows
+    if !matches!(event, TransitionEvent::CrcFailure) {
+        counters.had_recent_crc_failure = false;
     }
 
     new_mode

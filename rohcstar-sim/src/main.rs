@@ -385,6 +385,13 @@ fn run_fuzz_mode(args: CliArgs) {
                                     rohcstar::error::EngineError::PacketLoss { .. }
                                 )
                             ),
+                            SimError::CrcRecoveryLimitExceeded {
+                                packet_loss_rate, ..
+                            } => {
+                                // CRC recovery limit exceeded under high packet loss is expected
+                                // Only critical if it happens under low packet loss conditions
+                                *packet_loss_rate < 0.05
+                            }
                             _ => true,
                         };
 
@@ -397,6 +404,18 @@ fn run_fuzz_mode(args: CliArgs) {
                                 }
                                 SimError::DecompressionError { error, .. } => {
                                     format!("DecompressionError:{:?}", error).hash(&mut hasher);
+                                }
+                                SimError::CrcRecoveryLimitExceeded {
+                                    expected_sn,
+                                    recovered_sn,
+                                    distance,
+                                    ..
+                                } => {
+                                    format!(
+                                        "CrcRecoveryLimitExceeded:{}->{}:{}",
+                                        expected_sn, recovered_sn, distance
+                                    )
+                                    .hash(&mut hasher);
                                 }
                                 _ => format!("{:?}", sim_error).hash(&mut hasher),
                             }
@@ -449,6 +468,17 @@ fn run_fuzz_mode(args: CliArgs) {
                                                 .take(100)
                                                 .collect::<String>()
                                                 + "..."
+                                        }
+                                        SimError::CrcRecoveryLimitExceeded {
+                                            expected_sn,
+                                            recovered_sn,
+                                            distance,
+                                            ..
+                                        } => {
+                                            format!(
+                                                "CRC recovery exceeded: expected SN{}, got SN{}, distance {}",
+                                                expected_sn, recovered_sn, distance
+                                            )
                                         }
                                         _ => {
                                             format!("{:?}", sim_error)

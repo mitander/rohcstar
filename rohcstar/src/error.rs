@@ -342,6 +342,18 @@ pub enum DecompressionError {
     /// Packet parsing failed during decompression.
     #[error("Packet parsing failed: {0}")]
     ParsingFailed(#[from] RohcParsingError),
+
+    /// CRC recovery failed because sequence number distance exceeded safe limits.
+    #[error(
+        "CRC recovery limit exceeded in context {cid}: expected SN{expected_sn}, recovered SN{recovered_sn} (distance {distance} > limit {limit})"
+    )]
+    CrcRecoveryLimitExceeded {
+        cid: ContextId,
+        expected_sn: u16,
+        recovered_sn: u16,
+        distance: u16,
+        limit: u16,
+    },
 }
 
 /// Errors that can occur during engine operations.

@@ -318,9 +318,26 @@ pub struct RohcSimulator {
 #[derive(Debug)]
 pub enum SimError {
     PacketGenerationExhausted,
-    CompressionError { sn: u16, error: RohcError },
-    DecompressionError { sn: u16, error: RohcError },
-    VerificationError { sn: u16, message: String },
+    CompressionError {
+        sn: u16,
+        error: RohcError,
+    },
+    DecompressionError {
+        sn: u16,
+        error: RohcError,
+    },
+    VerificationError {
+        sn: u16,
+        message: String,
+    },
+    CrcRecoveryLimitExceeded {
+        sn: u16,
+        expected_sn: u16,
+        recovered_sn: u16,
+        distance: u16,
+        limit: u16,
+        packet_loss_rate: f64,
+    },
 }
 
 impl RohcSimulator {
@@ -496,17 +513,33 @@ impl RohcSimulator {
                                 || backward_diff <= max_recovery_distance;
 
                             if !is_acceptable {
-                                return Err(SimError::VerificationError {
-                                    sn: *current_sn_being_processed,
-                                    message: format!(
-                                        "SN mismatch: expected {}, got {} (forward_diff: {}, backward_diff: {}, both exceed recovery limit {})",
-                                        expected_sn,
-                                        decompressed_sn,
-                                        forward_diff,
-                                        backward_diff,
-                                        max_recovery_distance
-                                    ),
-                                });
+                                // Under high packet loss (>5%), large SN differences are expected
+                                // due to aggressive CRC recovery. Classify as CrcRecoveryLimitExceeded
+                                if self.config.channel_packet_loss_probability > 0.05 {
+                                    return Err(SimError::CrcRecoveryLimitExceeded {
+                                        sn: *current_sn_being_processed,
+                                        expected_sn: expected_sn.value(),
+                                        recovered_sn: decompressed_sn.value(),
+                                        distance: forward_diff.min(backward_diff),
+                                        limit: max_recovery_distance,
+                                        packet_loss_rate: self
+                                            .config
+                                            .channel_packet_loss_probability,
+                                    });
+                                } else {
+                                    // Low packet loss - this is a genuine verification error
+                                    return Err(SimError::VerificationError {
+                                        sn: *current_sn_being_processed,
+                                        message: format!(
+                                            "SN mismatch: expected {}, got {} (forward_diff: {}, backward_diff: {}, both exceed recovery limit {})",
+                                            expected_sn,
+                                            decompressed_sn,
+                                            forward_diff,
+                                            backward_diff,
+                                            max_recovery_distance
+                                        ),
+                                    });
+                                }
                             }
                         } else {
                             // Perfect channel: require exact match

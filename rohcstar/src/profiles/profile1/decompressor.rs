@@ -17,7 +17,7 @@ use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP
 use crate::crc::CrcCalculators;
 use crate::encodings::decode_lsb;
 use crate::error::{DecompressionError, RohcError, RohcParsingError};
-use crate::packet_defs::RohcProfile;
+use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::RohcDecompressorContext;
 use crate::types::{IpId, SequenceNumber, Timestamp};
 
@@ -27,6 +27,69 @@ use crate::profiles::profile1::constants::{
 
 const MAX_SN_RECOVERY_ATTEMPTS_UO1: u16 = P1_MAX_SN_RECOVERY_WINDOW_UO1;
 const MAX_SN_RECOVERY_ATTEMPTS_UO0: u16 = P1_MAX_SN_RECOVERY_WINDOW_UO0;
+
+/// Decompression outcome including initial CRC failure status.
+///
+/// RFC 3095 requires that initial CRC failures trigger confidence degradation
+/// even when recovery succeeds. This type tracks both the final result and
+/// whether there was an initial CRC failure that required recovery.
+#[derive(Debug)]
+pub(super) struct DecompressionOutcome {
+    /// Final decompression result after any recovery attempts.
+    pub result: Result<RtpUdpIpv4Headers, RohcError>,
+    /// Whether the initial CRC check failed (before recovery).
+    pub had_initial_crc_failure: bool,
+}
+
+impl DecompressionOutcome {
+    /// Creates successful outcome without initial CRC failure.
+    fn success(headers: RtpUdpIpv4Headers) -> Self {
+        Self {
+            result: Ok(headers),
+            had_initial_crc_failure: false,
+        }
+    }
+
+    /// Creates successful outcome after CRC recovery.
+    fn success_after_recovery(headers: RtpUdpIpv4Headers) -> Self {
+        Self {
+            result: Ok(headers),
+            had_initial_crc_failure: true,
+        }
+    }
+
+    /// Creates failed outcome with CRC failure.
+    fn failure(error: RohcError) -> Self {
+        Self {
+            result: Err(error),
+            had_initial_crc_failure: true,
+        }
+    }
+}
+
+impl DecompressionOutcome {
+    #![allow(dead_code)] // Allow dead code for unused test helpers during development
+
+    /// Consumes the outcome and returns the packet Result.
+    pub fn into_packet(self) -> Result<GenericUncompressedHeaders, RohcError> {
+        self.result.map(GenericUncompressedHeaders::RtpUdpIpv4)
+    }
+
+    /// Returns true if the final result is Ok.
+    pub fn is_ok(&self) -> bool {
+        self.result.is_ok()
+    }
+
+    /// Returns true if the final result is Err.
+    pub fn is_err(&self) -> bool {
+        self.result.is_err()
+    }
+
+    /// Unwraps the headers, panicking if it's an error.
+    pub fn unwrap(self) -> RtpUdpIpv4Headers {
+        self.result.unwrap()
+    }
+}
 
 /// Attempts CRC recovery using conservative distance limits.
 ///
@@ -270,33 +333,61 @@ pub(super) fn decompress_as_uo(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
-) -> Result<RtpUdpIpv4Headers, RohcError> {
+) -> DecompressionOutcome {
     if packet.is_empty() {
-        return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
-            needed: 1,
-            got: 0,
-            context: crate::error::ParseContext::UoPacketTypeDiscriminator,
-        }));
+        return DecompressionOutcome::failure(RohcError::Parsing(
+            RohcParsingError::NotEnoughData {
+                needed: 1,
+                got: 0,
+                context: crate::error::ParseContext::UoPacketTypeDiscriminator,
+            },
+        ));
     }
 
     let packet_type = Profile1PacketType::from_first_byte(packet[0]);
 
     match packet_type {
         Profile1PacketType::Uo0 => decompress_as_uo0(context, packet, crc_calculators),
-        Profile1PacketType::Uo1Sn { .. } => decompress_as_uo1_sn(context, packet, crc_calculators),
-        Profile1PacketType::Uo1Ts => decompress_as_uo1_ts(context, packet, crc_calculators),
-        Profile1PacketType::Uo1Id => decompress_as_uo1_id(context, packet, crc_calculators),
+        Profile1PacketType::Uo1Sn { .. } => {
+            // TODO: Update to proper DecompressionOutcome tracking
+            let result = decompress_as_uo1_sn(context, packet, crc_calculators);
+            match result {
+                Ok(headers) => DecompressionOutcome::success(headers),
+                Err(error) => DecompressionOutcome::failure(error),
+            }
+        }
+        Profile1PacketType::Uo1Ts => {
+            // TODO: Update to proper DecompressionOutcome tracking
+            let result = decompress_as_uo1_ts(context, packet, crc_calculators);
+            match result {
+                Ok(headers) => DecompressionOutcome::success(headers),
+                Err(error) => DecompressionOutcome::failure(error),
+            }
+        }
+        Profile1PacketType::Uo1Id => {
+            // TODO: Update to proper DecompressionOutcome tracking
+            let result = decompress_as_uo1_id(context, packet, crc_calculators);
+            match result {
+                Ok(headers) => DecompressionOutcome::success(headers),
+                Err(error) => DecompressionOutcome::failure(error),
+            }
+        }
         Profile1PacketType::Uo1Rtp { .. } => {
-            decompress_as_uo1_rtp(context, packet, crc_calculators)
+            // TODO: Update to proper DecompressionOutcome tracking
+            let result = decompress_as_uo1_rtp(context, packet, crc_calculators);
+            match result {
+                Ok(headers) => DecompressionOutcome::success(headers),
+                Err(error) => DecompressionOutcome::failure(error),
+            }
         }
         Profile1PacketType::IrStatic | Profile1PacketType::IrDynamic => {
-            Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
+            DecompressionOutcome::failure(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                 discriminator: packet[0],
                 profile_id: Some(RohcProfile::RtpUdpIp.into()),
             }))
         }
         Profile1PacketType::Unknown(discriminator) => {
-            Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
+            DecompressionOutcome::failure(RohcError::Parsing(RohcParsingError::InvalidPacketType {
                 discriminator,
                 profile_id: Some(RohcProfile::RtpUdpIp.into()),
             }))
@@ -313,7 +404,7 @@ fn decompress_as_uo0(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
     crc_calculators: &CrcCalculators,
-) -> Result<RtpUdpIpv4Headers, RohcError> {
+) -> DecompressionOutcome {
     debug_assert_eq!(packet.len(), 1, "UO-0 core packet must be 1 byte long.");
 
     let cid_for_parse = if context.cid() == 0 {
@@ -321,7 +412,10 @@ fn decompress_as_uo0(
     } else {
         Some(context.cid())
     };
-    let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
+    let parsed_uo0 = match deserialize_uo0(packet, cid_for_parse) {
+        Ok(parsed) => parsed,
+        Err(error) => return DecompressionOutcome::failure(RohcError::Parsing(error)),
+    };
 
     // Hot path optimization: Use specialized UO-0 LSB decode
     let decoded_sn = crate::encodings::decode_lsb_uo0_sn(
@@ -340,7 +434,7 @@ fn decompress_as_uo0(
     if sn_diff_forward > P1_MAX_REASONABLE_UO0_SN_JUMP
         && sn_diff_backward > P1_MAX_REASONABLE_UO0_SN_JUMP
     {
-        let recovery_sn = attempt_sn_recovery(
+        match attempt_sn_recovery(
             context,
             parsed_uo0.crc3,
             crate::error::CrcType::Crc3Uo0,
@@ -356,21 +450,28 @@ fn decompress_as_uo0(
                 .to_vec()
             },
             Some(decoded_sn.into()),
-        )?;
+        ) {
+            Ok(recovery_sn) => {
+                let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
 
-        let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
+                context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
+                context.last_reconstructed_rtp_sn_full = recovery_sn;
+                context.last_reconstructed_rtp_ts_full = decoded_ts;
 
-        context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
-        context.last_reconstructed_rtp_sn_full = recovery_sn;
-        context.last_reconstructed_rtp_ts_full = decoded_ts;
-
-        return Ok(reconstruct_headers_from_context(
-            context,
-            recovery_sn,
-            decoded_ts,
-            context.last_reconstructed_rtp_marker,
-            context.last_reconstructed_ip_id_full,
-        ));
+                return DecompressionOutcome::success_after_recovery(
+                    reconstruct_headers_from_context(
+                        context,
+                        recovery_sn,
+                        decoded_ts,
+                        context.last_reconstructed_rtp_marker,
+                        context.last_reconstructed_ip_id_full,
+                    ),
+                );
+            }
+            Err(error) => {
+                return DecompressionOutcome::failure(error);
+            }
+        }
     }
 
     let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
@@ -408,20 +509,24 @@ fn decompress_as_uo0(
                 context.last_reconstructed_rtp_sn_full = recovery_sn;
                 context.last_reconstructed_rtp_ts_full = decoded_ts;
 
-                return Ok(reconstruct_headers_from_context(
-                    context,
-                    recovery_sn,
-                    decoded_ts,
-                    context.last_reconstructed_rtp_marker,
-                    context.last_reconstructed_ip_id_full,
-                ));
+                return DecompressionOutcome::success_after_recovery(
+                    reconstruct_headers_from_context(
+                        context,
+                        recovery_sn,
+                        decoded_ts,
+                        context.last_reconstructed_rtp_marker,
+                        context.last_reconstructed_ip_id_full,
+                    ),
+                );
             }
             Err(_) => {
-                return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-                    expected: parsed_uo0.crc3,
-                    calculated: calculated_crc3,
-                    crc_type: crate::error::CrcType::Crc3Uo0,
-                }));
+                return DecompressionOutcome::failure(RohcError::Parsing(
+                    RohcParsingError::CrcMismatch {
+                        expected: parsed_uo0.crc3,
+                        calculated: calculated_crc3,
+                        crc_type: crate::error::CrcType::Crc3Uo0,
+                    },
+                ));
             }
         }
     }
@@ -430,7 +535,7 @@ fn decompress_as_uo0(
     context.last_reconstructed_rtp_sn_full = decoded_sn.into();
     context.last_reconstructed_rtp_ts_full = decoded_ts;
 
-    Ok(reconstruct_headers_from_context(
+    DecompressionOutcome::success(reconstruct_headers_from_context(
         context,
         decoded_sn.into(),
         decoded_ts,
@@ -1242,7 +1347,7 @@ mod tests {
         let result = decompress_as_uo0(&mut context, uo0_bytes_bad_crc, &crc_calculators);
 
         // CRC3 collision rate ~12.5% - recovery may find false positives
-        match result {
+        match &result.result {
             Ok(recovered_headers) => {
                 let recovered_sn = recovered_headers.rtp_sequence_number;
                 let distance_from_last = recovered_sn
@@ -1267,9 +1372,9 @@ mod tests {
                 calculated,
                 crc_type,
             })) => {
-                assert_eq!(expected, wrong_crc3_in_packet);
-                assert_eq!(calculated, correct_crc3);
-                assert_eq!(crc_type, crate::error::CrcType::Crc3Uo0);
+                assert_eq!(*expected, wrong_crc3_in_packet);
+                assert_eq!(*calculated, correct_crc3);
+                assert_eq!(*crc_type, crate::error::CrcType::Crc3Uo0);
                 println!("CRC3 recovery correctly failed - no valid alternatives found");
             }
             _ => {
@@ -1738,9 +1843,9 @@ mod tests {
 
         if let Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
             discriminator, ..
-        })) = result
+        })) = &result.result
         {
-            assert_eq!(discriminator, P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
+            assert_eq!(*discriminator, P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
         } else {
             panic!(
                 "Expected InvalidPacketType error for IR packet, got {:?}",
@@ -1761,9 +1866,9 @@ mod tests {
 
         if let Err(RohcError::Parsing(RohcParsingError::InvalidPacketType {
             discriminator, ..
-        })) = result
+        })) = &result.result
         {
-            assert_eq!(discriminator, 0xFF);
+            assert_eq!(*discriminator, 0xFF);
         } else {
             panic!(
                 "Expected InvalidPacketType error for unknown packet, got {:?}",
@@ -1784,7 +1889,7 @@ mod tests {
 
         if let Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
             needed: 1, got: 0, ..
-        })) = result
+        })) = &result.result
         {
             // Expected behavior
         } else {
