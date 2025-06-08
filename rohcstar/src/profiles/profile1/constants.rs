@@ -45,6 +45,11 @@ pub const P1_UO0_SN_LSB_WIDTH_DEFAULT: u8 = 4;
 pub const P1_UO1_SN_LSB_WIDTH_DEFAULT: u8 = 8;
 /// Default LSBs for RTP TS in UO-1-TS packets (16 bits).
 pub const P1_UO1_TS_LSB_WIDTH_DEFAULT: u8 = 16;
+
+// --- Profile 1 Recovery & Sanity Check Parameters ---
+/// Maximum reasonable SN jump for UO-1-SN packets before triggering recovery.
+/// Large jumps (e.g., +256) indicate W-LSB decoding errors from CRC collisions.
+pub const P1_MAX_REASONABLE_SN_JUMP: u16 = 64;
 /// Default LSBs for IP-ID in UO-1-ID packets (8 bits).
 pub const P1_UO1_IPID_LSB_WIDTH_DEFAULT: u8 = 8;
 
