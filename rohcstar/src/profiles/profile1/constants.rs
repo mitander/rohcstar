@@ -50,6 +50,9 @@ pub const P1_UO1_TS_LSB_WIDTH_DEFAULT: u8 = 16;
 /// Maximum reasonable SN jump for UO-1-SN packets before triggering recovery.
 /// Large jumps (e.g., +256) indicate W-LSB decoding errors from CRC collisions.
 pub const P1_MAX_REASONABLE_SN_JUMP: u16 = 64;
+/// Maximum reasonable SN jump for UO-0 packets before triggering recovery.
+/// UO-0 uses 4-bit SN field (16 values) with weaker CRC3, so tighter threshold.
+pub const P1_MAX_REASONABLE_UO0_SN_JUMP: u16 = 20;
 /// Default LSBs for IP-ID in UO-1-ID packets (8 bits).
 pub const P1_UO1_IPID_LSB_WIDTH_DEFAULT: u8 = 8;
 
