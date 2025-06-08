@@ -55,7 +55,8 @@ while true; do
         fi
         sleep 60
     else
-        echo "rohcstar-sim exited gracefully. Restarting..."
+        echo "rohcstar-sim exiting gracefully..."
+        exit 0
     fi
 done
 
