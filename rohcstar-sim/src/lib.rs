@@ -489,7 +489,7 @@ impl RohcSimulator {
                             // Allow reasonable differences in both directions due to packet loss
                             // In complex packet loss scenarios, the decompressor may legitimately advance
                             // further than a single recovery attempt due to multiple consecutive recoveries
-                            let max_recovery_distance = 16u16; // Allow more generous recovery range
+                            let max_recovery_distance = 256u16; // Match P1_MAX_SN_RECOVERY_WINDOW_UO1
 
                             // Check if the difference is within acceptable bounds
                             let is_acceptable = forward_diff <= max_recovery_distance

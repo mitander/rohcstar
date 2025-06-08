@@ -47,12 +47,15 @@ pub const P1_UO1_SN_LSB_WIDTH_DEFAULT: u8 = 8;
 pub const P1_UO1_TS_LSB_WIDTH_DEFAULT: u8 = 16;
 
 // --- Profile 1 Recovery & Sanity Check Parameters ---
-/// Maximum reasonable SN jump for UO-1-SN packets before triggering recovery.
-/// Large jumps (e.g., +256) indicate W-LSB decoding errors from CRC collisions.
-pub const P1_MAX_REASONABLE_SN_JUMP: u16 = 64;
-/// Maximum reasonable SN jump for UO-0 packets before triggering recovery.
-/// UO-0 uses 4-bit SN field (16 values) with weaker CRC3, so tighter threshold.
-pub const P1_MAX_REASONABLE_UO0_SN_JUMP: u16 = 20;
+/// Maximum reasonable SN jump for UO-1 before triggering recovery.
+pub const P1_MAX_REASONABLE_SN_JUMP: u16 = 128;
+/// Maximum reasonable SN jump for UO-0 before triggering recovery.
+pub const P1_MAX_REASONABLE_UO0_SN_JUMP: u16 = 16;
+
+/// SN recovery search window for UO-1 packets (CRC8 protection).
+pub const P1_MAX_SN_RECOVERY_WINDOW_UO1: u16 = 256;
+/// SN recovery search window for UO-0 packets (CRC3 protection).
+pub const P1_MAX_SN_RECOVERY_WINDOW_UO0: u16 = 32;
 /// Default LSBs for IP-ID in UO-1-ID packets (8 bits).
 pub const P1_UO1_IPID_LSB_WIDTH_DEFAULT: u8 = 8;
 
