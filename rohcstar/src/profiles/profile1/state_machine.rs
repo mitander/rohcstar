@@ -5,11 +5,10 @@
 //! It works in conjunction with `decompressor.rs` which handles packet parsing
 //! and header reconstruction.
 
-use super::constants::*;
 use super::context::{Profile1DecompressorContext, Profile1DecompressorMode};
 use super::decompressor;
 use super::discriminator::Profile1PacketType;
-use super::protocol_types::RtpUdpIpv4Headers;
+use super::state_transitions::{TransitionEvent, process_transition};
 
 use crate::crc::CrcCalculators;
 use crate::error::{DecompressionError, RohcError, RohcParsingError};
@@ -40,26 +39,12 @@ pub(super) fn process_ir_packet(
     let reconstructed_rtp_headers =
         decompressor::decompress_as_ir(context, packet_bytes, crc_calculators, handler_profile_id)?;
 
-    debug_assert!(
-        matches!(
-            context.mode,
-            Profile1DecompressorMode::NoContext
-                | Profile1DecompressorMode::StaticContext
-                | Profile1DecompressorMode::FullContext
-                | Profile1DecompressorMode::SecondOrder
-        ),
-        "Invalid mode before IR transition: {:?}",
-        context.mode
+    // Use new transition system
+    process_transition(
+        &mut context.mode,
+        &mut context.counters,
+        TransitionEvent::IrReceived,
     );
-    context.mode = Profile1DecompressorMode::FullContext;
-    context.consecutive_crc_failures_in_fc = 0;
-    context.fc_packets_successful_streak = 0;
-    context.so_static_confidence = 0; // Reset SO confidence if previously in SO
-    context.so_dynamic_confidence = 0;
-    context.so_packets_received_in_so = 0;
-    context.so_consecutive_failures = 0;
-    context.sc_to_nc_k_failures = 0; // Reset SC counters
-    context.sc_to_nc_n_window_count = 0;
 
     Ok(GenericUncompressedHeaders::RtpUdpIpv4(
         reconstructed_rtp_headers,
@@ -98,7 +83,22 @@ pub(super) fn process_packet_in_fc_mode(
     );
 
     let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
-    handle_fc_uo_packet_outcome(context, outcome).map(GenericUncompressedHeaders::RtpUdpIpv4)
+
+    // Determine event based on outcome
+    let event = match &outcome {
+        Ok(_) => TransitionEvent::UoSuccess {
+            is_dynamic_updating: discriminated_type.is_dynamic_updating(),
+        },
+        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => {
+            TransitionEvent::CrcFailure
+        }
+        Err(_) => TransitionEvent::ParseError,
+    };
+
+    // Process state transition
+    process_transition(&mut context.mode, &mut context.counters, event);
+
+    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
 }
 
 /// Processes a received ROHC packet when the decompressor is in Static Context (SC) mode.
@@ -168,44 +168,28 @@ pub(super) fn process_packet_in_sc_mode(
                 discriminated_type
             );
 
-            // Dynamic packet success transitions to FC.
-            debug_assert_eq!(
-                context.mode,
-                Profile1DecompressorMode::StaticContext,
-                "SC->FC transition from invalid mode: {:?}",
-                context.mode
+            // Process state transition for successful dynamic update
+            process_transition(
+                &mut context.mode,
+                &mut context.counters,
+                TransitionEvent::UoSuccess {
+                    is_dynamic_updating: true,
+                },
             );
-            context.sc_to_nc_k_failures = 0;
-            context.sc_to_nc_n_window_count = 0;
-            context.mode = Profile1DecompressorMode::FullContext;
-            context.fc_packets_successful_streak = 1;
+
             Ok(GenericUncompressedHeaders::RtpUdpIpv4(headers))
         }
         Err(e) => {
-            // Only dynamic updating packets (UO-1 types) count for SC->NC N2 window logic.
+            // Only dynamic updating packets count for SC->NC logic
             if discriminated_type.is_dynamic_updating() {
-                context.sc_to_nc_n_window_count = context.sc_to_nc_n_window_count.saturating_add(1);
+                let event = if matches!(e, RohcError::Parsing(RohcParsingError::CrcMismatch { .. }))
+                {
+                    TransitionEvent::CrcFailure
+                } else {
+                    TransitionEvent::ParseError
+                };
 
-                if matches!(e, RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) {
-                    context.sc_to_nc_k_failures = context.sc_to_nc_k_failures.saturating_add(1);
-                }
-
-                let should_reset_counters =
-                    context.sc_to_nc_n_window_count >= P1_DECOMPRESSOR_SC_TO_NC_N2;
-
-                if should_transition_sc_to_nc(context) {
-                    debug_assert_eq!(
-                        context.mode,
-                        Profile1DecompressorMode::StaticContext,
-                        "SC->NC transition from invalid mode: {:?}",
-                        context.mode
-                    );
-                    context.mode = Profile1DecompressorMode::NoContext;
-                    context.reset_for_nc_transition();
-                } else if should_reset_counters {
-                    context.sc_to_nc_k_failures = 0;
-                    context.sc_to_nc_n_window_count = 0;
-                }
+                process_transition(&mut context.mode, &mut context.counters, event);
             }
             Err(e)
         }
@@ -244,123 +228,23 @@ pub(super) fn process_packet_in_so_mode(
         "IR packet routed to UO processing in SO mode"
     );
 
-    let parse_reconstruct_result =
-        decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
+    let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
 
-    match parse_reconstruct_result {
-        Ok(headers) => {
-            context.so_dynamic_confidence = context
-                .so_dynamic_confidence
-                .saturating_add(P1_SO_SUCCESS_CONFIDENCE_BOOST);
-            context.so_consecutive_failures = 0;
-            context.so_packets_received_in_so = context.so_packets_received_in_so.saturating_add(1);
-            Ok(GenericUncompressedHeaders::RtpUdpIpv4(headers))
+    // Determine event based on outcome
+    let event = match &outcome {
+        Ok(_) => TransitionEvent::UoSuccess {
+            is_dynamic_updating: discriminated_type.is_dynamic_updating(),
+        },
+        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => {
+            TransitionEvent::CrcFailure
         }
-        Err(e) => {
-            context.so_dynamic_confidence = context
-                .so_dynamic_confidence
-                .saturating_sub(P1_SO_FAILURE_CONFIDENCE_PENALTY);
-            context.so_consecutive_failures = context.so_consecutive_failures.saturating_add(1);
+        Err(_) => TransitionEvent::ParseError,
+    };
 
-            if should_transition_so_to_nc(context) {
-                debug_assert_eq!(
-                    context.mode,
-                    Profile1DecompressorMode::SecondOrder,
-                    "SO->NC transition from invalid mode: {:?}",
-                    context.mode
-                );
-                context.mode = Profile1DecompressorMode::NoContext;
-                context.reset_for_nc_transition();
-            }
-            Err(e)
-        }
-    }
-}
+    // Process state transition
+    process_transition(&mut context.mode, &mut context.counters, event);
 
-/// Handles the outcome of UO packet processing in Full Context mode.
-fn handle_fc_uo_packet_outcome(
-    context: &mut Profile1DecompressorContext,
-    parse_outcome: Result<RtpUdpIpv4Headers, RohcError>,
-) -> Result<RtpUdpIpv4Headers, RohcError> {
-    debug_assert_eq!(
-        context.mode,
-        Profile1DecompressorMode::FullContext,
-        "handle_fc_uo_packet_outcome called outside of FullContext mode"
-    );
-
-    match parse_outcome {
-        Ok(reconstructed_headers) => {
-            context.consecutive_crc_failures_in_fc = 0;
-            context.fc_packets_successful_streak =
-                context.fc_packets_successful_streak.saturating_add(1);
-
-            if context.fc_packets_successful_streak >= P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
-                debug_assert_eq!(
-                    context.mode,
-                    Profile1DecompressorMode::FullContext,
-                    "FC->SO transition from invalid mode: {:?}",
-                    context.mode
-                );
-                context.mode = Profile1DecompressorMode::SecondOrder;
-                context.so_static_confidence = P1_SO_INITIAL_STATIC_CONFIDENCE;
-                context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
-                context.so_packets_received_in_so = 0;
-                context.so_consecutive_failures = 0;
-                context.fc_packets_successful_streak = 0; // Reset streak after transition
-            }
-            Ok(reconstructed_headers)
-        }
-        Err(e) => {
-            // Only CRC mismatches count towards FC->SC transition threshold.
-            if matches!(e, RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) {
-                context.consecutive_crc_failures_in_fc =
-                    context.consecutive_crc_failures_in_fc.saturating_add(1);
-            }
-            context.fc_packets_successful_streak = 0;
-
-            if context.consecutive_crc_failures_in_fc
-                >= P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD
-            {
-                debug_assert_eq!(
-                    context.mode,
-                    Profile1DecompressorMode::FullContext,
-                    "FC->SC transition from invalid mode: {:?}",
-                    context.mode
-                );
-                context.mode = Profile1DecompressorMode::StaticContext;
-                context.sc_to_nc_k_failures = 0;
-                context.sc_to_nc_n_window_count = 0;
-                context.consecutive_crc_failures_in_fc = 0;
-            }
-            Err(e)
-        }
-    }
-}
-
-/// Checks if the decompressor should transition from Second Order to NoContext mode.
-fn should_transition_so_to_nc(context: &Profile1DecompressorContext) -> bool {
-    debug_assert_eq!(
-        context.mode,
-        Profile1DecompressorMode::SecondOrder,
-        "should_transition_so_to_nc called outside of SecondOrder mode"
-    );
-    if context.so_consecutive_failures >= P1_SO_MAX_CONSECUTIVE_FAILURES {
-        return true;
-    }
-    if context.so_dynamic_confidence < P1_SO_TO_NC_CONFIDENCE_THRESHOLD {
-        return true;
-    }
-    false
-}
-
-/// Checks if the decompressor should transition from Static Context to NoContext mode.
-fn should_transition_sc_to_nc(context: &Profile1DecompressorContext) -> bool {
-    debug_assert_eq!(
-        context.mode,
-        Profile1DecompressorMode::StaticContext,
-        "should_transition_sc_to_nc called outside of StaticContext mode"
-    );
-    context.sc_to_nc_k_failures >= P1_DECOMPRESSOR_SC_TO_NC_K2
+    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
 }
 
 #[cfg(test)]
@@ -368,6 +252,7 @@ mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
     use crate::packet_defs::RohcProfile;
+    use crate::profiles::profile1::constants::*;
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
@@ -375,16 +260,7 @@ mod tests {
         prepare_generic_uo_crc_input_payload, serialize_ir, serialize_uo0, serialize_uo1_sn,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
     use crate::types::{ContextId, SequenceNumber, Timestamp};
-
-    // Helper for dummy headers in state machine tests where content doesn't matter
-    fn create_dummy_rtp_headers() -> RtpUdpIpv4Headers {
-        RtpUdpIpv4Headers {
-            rtp_ssrc: 1.into(),
-            ..Default::default()
-        }
-    }
 
     // Helper to create a basic decompressor context in a given mode
     fn setup_context_in_mode(mode: Profile1DecompressorMode) -> Profile1DecompressorContext {
@@ -399,58 +275,50 @@ mod tests {
     #[test]
     fn fc_uo_outcome_success_leads_to_so() {
         let mut context = setup_context_in_mode(Profile1DecompressorMode::FullContext);
-        let headers = create_dummy_rtp_headers();
 
         for i in 0..P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK {
-            let outcome = Ok(headers.clone());
-            let _ = handle_fc_uo_packet_outcome(&mut context, outcome);
+            let event = TransitionEvent::UoSuccess {
+                is_dynamic_updating: true,
+            };
+            let _ = process_transition(&mut context.mode, &mut context.counters, event);
             if i < P1_DECOMPRESSOR_FC_TO_SO_THRESHOLD_STREAK - 1 {
                 assert_eq!(context.mode, Profile1DecompressorMode::FullContext);
-                assert_eq!(context.fc_packets_successful_streak, i + 1);
+                assert_eq!(context.counters.fc_success_streak, i + 1);
             }
         }
         assert_eq!(context.mode, Profile1DecompressorMode::SecondOrder);
         assert_eq!(
-            context.so_static_confidence,
+            context.counters.so_static_confidence,
             P1_SO_INITIAL_STATIC_CONFIDENCE
         );
-        assert_eq!(context.fc_packets_successful_streak, 0); // Check reset
+        assert_eq!(context.counters.fc_success_streak, 0); // Check reset
     }
 
     #[test]
     fn fc_uo_outcome_crc_failure_leads_to_sc() {
         let mut context = setup_context_in_mode(Profile1DecompressorMode::FullContext);
-        let crc_error = Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected: 0,
-            calculated: 1,
-            crc_type: crate::error::CrcType::TestCrc,
-        }));
 
         for i in 0..P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
-            let _ = handle_fc_uo_packet_outcome(&mut context, crc_error.clone());
+            let event = TransitionEvent::CrcFailure;
+            let _ = process_transition(&mut context.mode, &mut context.counters, event);
             if i < P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD - 1 {
                 assert_eq!(context.mode, Profile1DecompressorMode::FullContext);
-                assert_eq!(context.consecutive_crc_failures_in_fc, i + 1);
+                assert_eq!(context.counters.fc_crc_failures, i + 1);
             }
         }
         assert_eq!(context.mode, Profile1DecompressorMode::StaticContext);
-        assert_eq!(context.consecutive_crc_failures_in_fc, 0); // Check reset
+        assert_eq!(context.counters.fc_crc_failures, 0); // Check reset
     }
 
     #[test]
     fn fc_uo_outcome_non_crc_failure_no_sc_transition() {
         let mut context = setup_context_in_mode(Profile1DecompressorMode::FullContext);
-        let non_crc_error = Err(RohcError::Parsing(RohcParsingError::InvalidFieldValue {
-            field: crate::error::Field::RtpVersion,
-            structure: crate::error::StructureType::RtpHeader,
-            expected: 2,
-            got: 1,
-        }));
 
         for _i in 0..P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
-            let _ = handle_fc_uo_packet_outcome(&mut context, non_crc_error.clone());
+            let event = TransitionEvent::ParseError;
+            let _ = process_transition(&mut context.mode, &mut context.counters, event);
             assert_eq!(context.mode, Profile1DecompressorMode::FullContext);
-            assert_eq!(context.consecutive_crc_failures_in_fc, 0); // Non-CRC errors don't increment
+            assert_eq!(context.counters.fc_crc_failures, 0); // Non-CRC errors don't increment
         }
         assert_eq!(context.mode, Profile1DecompressorMode::FullContext); // Stays FC
     }
@@ -511,9 +379,12 @@ mod tests {
             );
         }
         assert_eq!(context.mode, Profile1DecompressorMode::StaticContext);
-        assert_eq!(context.sc_to_nc_k_failures, P1_DECOMPRESSOR_SC_TO_NC_K2 - 1);
         assert_eq!(
-            context.sc_to_nc_n_window_count,
+            context.counters.sc_k_failures,
+            P1_DECOMPRESSOR_SC_TO_NC_K2 - 1
+        );
+        assert_eq!(
+            context.counters.sc_n_window,
             P1_DECOMPRESSOR_SC_TO_NC_K2 - 1
         );
 
@@ -538,10 +409,10 @@ mod tests {
         if context.mode == Profile1DecompressorMode::StaticContext {
             // Only if it hasn't transitioned
             assert_eq!(
-                context.sc_to_nc_k_failures, 0,
+                context.counters.sc_k_failures, 0,
                 "K failures should reset after N2 window without K2 threshold"
             );
-            assert_eq!(context.sc_to_nc_n_window_count, 0, "N window should reset");
+            assert_eq!(context.counters.sc_n_window, 0, "N window should reset");
         }
     }
 
@@ -585,14 +456,14 @@ mod tests {
             result.err()
         );
         assert_eq!(context.mode, Profile1DecompressorMode::FullContext);
-        assert_eq!(context.fc_packets_successful_streak, 1);
+        assert_eq!(context.counters.fc_success_streak, 1);
     }
 
     #[test]
     fn so_to_nc_transition_on_consecutive_failures() {
         let crc_calculators = CrcCalculators::new();
         let mut context = setup_context_in_mode(Profile1DecompressorMode::SecondOrder);
-        context.so_dynamic_confidence = P1_SO_FAILURE_CONFIDENCE_PENALTY
+        context.counters.so_dynamic_confidence = P1_SO_FAILURE_CONFIDENCE_PENALTY
             * P1_SO_MAX_CONSECUTIVE_FAILURES
             + P1_SO_TO_NC_CONFIDENCE_THRESHOLD;
 
@@ -626,14 +497,14 @@ mod tests {
             Profile1DecompressorMode::NoContext,
             "Should be NoContext after max consecutive failures"
         );
-        assert_eq!(context.so_consecutive_failures, 0); // Reset by reset_for_nc_transition
+        assert_eq!(context.counters.so_consecutive_failures, 0); // Reset by reset_for_nc_transition
     }
 
     #[test]
     fn so_to_nc_transition_on_low_confidence() {
         let crc_calculators = CrcCalculators::new();
         let mut context = setup_context_in_mode(Profile1DecompressorMode::SecondOrder);
-        context.so_dynamic_confidence = P1_SO_TO_NC_CONFIDENCE_THRESHOLD; // Start just at threshold
+        context.counters.so_dynamic_confidence = P1_SO_TO_NC_CONFIDENCE_THRESHOLD; // Start just at threshold
 
         let uo0_data_bad_crc = Uo0Packet {
             crc3: 0x07,
@@ -657,7 +528,7 @@ mod tests {
     fn so_confidence_management() {
         let crc_calculators = CrcCalculators::new();
         let mut context = setup_context_in_mode(Profile1DecompressorMode::SecondOrder);
-        context.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
+        context.counters.so_dynamic_confidence = P1_SO_INITIAL_DYNAMIC_CONFIDENCE;
 
         let next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
         let sn_lsb_good =
@@ -685,10 +556,10 @@ mod tests {
             &crc_calculators,
         );
         assert_eq!(
-            context.so_dynamic_confidence,
+            context.counters.so_dynamic_confidence,
             P1_SO_INITIAL_DYNAMIC_CONFIDENCE + P1_SO_SUCCESS_CONFIDENCE_BOOST
         );
-        assert_eq!(context.so_consecutive_failures, 0);
+        assert_eq!(context.counters.so_consecutive_failures, 0);
 
         let uo0_data_bad_crc = Uo0Packet {
             crc3: 0x07,
@@ -705,20 +576,20 @@ mod tests {
             &crc_calculators,
         );
         assert_eq!(
-            context.so_dynamic_confidence,
+            context.counters.so_dynamic_confidence,
             P1_SO_INITIAL_DYNAMIC_CONFIDENCE + P1_SO_SUCCESS_CONFIDENCE_BOOST
                 - P1_SO_FAILURE_CONFIDENCE_PENALTY
         );
-        assert_eq!(context.so_consecutive_failures, 1);
+        assert_eq!(context.counters.so_consecutive_failures, 1);
     }
 
     #[test]
     fn process_ir_packet_resets_to_fc_and_counters() {
         let crc_calculators = CrcCalculators::new();
         let mut context = setup_context_in_mode(Profile1DecompressorMode::SecondOrder);
-        context.so_consecutive_failures = 2;
-        context.consecutive_crc_failures_in_fc = 1; // Should be reset by IR
-        context.sc_to_nc_k_failures = 1; // Should be reset
+        context.counters.so_consecutive_failures = 2;
+        context.counters.fc_crc_failures = 1; // Should be reset by IR
+        context.counters.sc_k_failures = 1; // Should be reset
 
         let ir_content = IrPacket {
             cid: ContextId::new(0),
@@ -741,13 +612,13 @@ mod tests {
         assert!(result.is_ok());
 
         assert_eq!(context.mode, Profile1DecompressorMode::FullContext);
-        assert_eq!(context.consecutive_crc_failures_in_fc, 0);
-        assert_eq!(context.fc_packets_successful_streak, 0);
-        assert_eq!(context.so_static_confidence, 0);
-        assert_eq!(context.so_dynamic_confidence, 0);
-        assert_eq!(context.so_packets_received_in_so, 0);
-        assert_eq!(context.so_consecutive_failures, 0);
-        assert_eq!(context.sc_to_nc_k_failures, 0);
-        assert_eq!(context.sc_to_nc_n_window_count, 0);
+        assert_eq!(context.counters.fc_crc_failures, 0);
+        assert_eq!(context.counters.fc_success_streak, 0);
+        assert_eq!(context.counters.so_static_confidence, 0);
+        assert_eq!(context.counters.so_dynamic_confidence, 0);
+        assert_eq!(context.counters.so_packets_in_so, 0);
+        assert_eq!(context.counters.so_consecutive_failures, 0);
+        assert_eq!(context.counters.sc_k_failures, 0);
+        assert_eq!(context.counters.sc_n_window, 0);
     }
 }

@@ -620,7 +620,7 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
     assert_eq!(decomp_ctx2.last_reconstructed_rtp_sn_full, 50);
     assert_eq!(decomp_ctx2.last_reconstructed_rtp_ts_full, 500,);
     assert!(decomp_ctx2.last_reconstructed_rtp_marker);
-    assert_eq!(decomp_ctx2.consecutive_crc_failures_in_fc, 0); // Reset on IR
+    assert_eq!(decomp_ctx2.counters.fc_crc_failures, 0); // Reset on IR
 }
 
 /// Performance test for IR packet compression and decompression.

@@ -15,6 +15,7 @@ use super::constants::{
 };
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
+use super::state_types::StateCounters;
 use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
 use crate::packet_defs::RohcProfile;
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
@@ -385,7 +386,7 @@ impl RohcCompressorContext for Profile1CompressorContext {
 }
 
 /// Operational modes for the ROHC Profile 1 decompressor.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Profile1DecompressorMode {
     /// No context established. Awaits an IR packet.
     #[default]
@@ -442,22 +443,8 @@ pub struct Profile1DecompressorContext {
     pub expected_lsb_ip_id_width: u8,
     /// W-LSB `p` offset for IP-ID decoding.
     pub p_ip_id: i64,
-    /// Counter for consecutive CRC failures in Full Context (FC) mode.
-    pub consecutive_crc_failures_in_fc: u8,
-    /// Counter for consecutive successful packet decompressions in FC mode (for FC->SO).
-    pub fc_packets_successful_streak: u32,
-    /// Static confidence level in Second Order (SO) state.
-    pub so_static_confidence: u32,
-    /// Dynamic confidence level in SO state.
-    pub so_dynamic_confidence: u32,
-    /// Number of packets received while in SO state.
-    pub so_packets_received_in_so: u32,
-    /// Counter for consecutive failures in SO state.
-    pub so_consecutive_failures: u32,
-    /// Counter for K2 failures in Static Context (SC) mode (for SC->NC transition).
-    pub sc_to_nc_k_failures: u8,
-    /// Counter for N2 window packets in SC mode (for SC->NC transition).
-    pub sc_to_nc_n_window_count: u8,
+    /// Aggregated state machine counters.
+    pub counters: StateCounters,
     /// Timestamp of the last successful access (e.g., decompression operation).
     pub last_accessed: Instant,
 
@@ -498,9 +485,9 @@ impl Profile1DecompressorContext {
             self.expected_lsb_ip_id_width
         );
         debug_assert!(
-            self.consecutive_crc_failures_in_fc <= 10,
+            self.counters.fc_crc_failures <= 10,
             "CRC failure count {} exceeds reasonable limit",
-            self.consecutive_crc_failures_in_fc
+            self.counters.fc_crc_failures
         );
     }
 
@@ -534,14 +521,7 @@ impl Profile1DecompressorContext {
             last_reconstructed_ip_id_full: IpId::new(0),
             expected_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
             p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
-            consecutive_crc_failures_in_fc: 0,
-            fc_packets_successful_streak: 0,
-            so_static_confidence: 0,
-            so_dynamic_confidence: 0,
-            so_packets_received_in_so: 0,
-            so_consecutive_failures: 0,
-            sc_to_nc_k_failures: 0,
-            sc_to_nc_n_window_count: 0,
+            counters: StateCounters::default(),
             last_accessed: Instant::now(),
             ts_stride: None,
             ts_offset: Timestamp::new(0),
@@ -593,29 +573,6 @@ impl Profile1DecompressorContext {
         self.ts_scaled_mode = ir_packet.ts_stride.is_some();
 
         self.debug_validate_invariants();
-    }
-
-    /// Resets dynamic fields and state machine counters when transitioning to NoContext (NC) mode.
-    /// Static chain information (IP addresses, ports, SSRC) is preserved.
-    /// TS Stride information is also reset.
-    pub(super) fn reset_for_nc_transition(&mut self) {
-        self.last_reconstructed_rtp_sn_full = SequenceNumber::default();
-        self.last_reconstructed_rtp_ts_full = Timestamp::default();
-        self.last_reconstructed_rtp_marker = false;
-        self.last_reconstructed_ip_id_full = IpId::default();
-
-        self.consecutive_crc_failures_in_fc = 0;
-        self.fc_packets_successful_streak = 0;
-        self.so_static_confidence = 0;
-        self.so_dynamic_confidence = 0;
-        self.so_packets_received_in_so = 0;
-        self.so_consecutive_failures = 0;
-        self.sc_to_nc_k_failures = 0;
-        self.sc_to_nc_n_window_count = 0;
-
-        self.ts_stride = None;
-        self.ts_offset = Timestamp::default();
-        self.ts_scaled_mode = false;
     }
 
     /// Reconstructs the full RTP Timestamp from a received TS_SCALED value.

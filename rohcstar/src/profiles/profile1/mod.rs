@@ -26,6 +26,8 @@ pub mod packet_processor;
 pub mod packet_types;
 pub mod protocol_types;
 pub mod state_machine;
+mod state_transitions;
+mod state_types;
 
 pub use self::constants::*;
 pub use self::context::{Profile1CompressorContext, Profile1DecompressorContext};

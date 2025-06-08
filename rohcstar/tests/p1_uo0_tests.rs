@@ -388,7 +388,7 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
         let decomp_ctx = get_decompressor_context(&engine, cid);
         if i < P1_DECOMPRESSOR_FC_TO_SC_CRC_FAILURE_THRESHOLD {
             assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::FullContext);
-            assert_eq!(decomp_ctx.consecutive_crc_failures_in_fc, i);
+            assert_eq!(decomp_ctx.counters.fc_crc_failures, i);
         } else {
             assert_eq!(decomp_ctx.mode, Profile1DecompressorMode::StaticContext);
         }
