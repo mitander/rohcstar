@@ -282,6 +282,7 @@ mod tests {
     use crate::packet_defs::GenericUncompressedHeaders;
     use crate::profiles::profile1::constants::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
     use crate::profiles::profile1::context::Profile1CompressorMode;
+    use crate::profiles::profile1::packet_types::IrPacket;
     use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
 
     #[test]
@@ -318,7 +319,7 @@ mod tests {
         let handler = Profile1Handler::new();
         let mut decomp_ctx_dyn = handler.create_decompressor_context(0.into(), Instant::now());
 
-        let ir_data_content = super::super::packet_types::IrPacket {
+        let ir_data_content = IrPacket {
             cid: 0.into(),
             profile_id: RohcProfile::RtpUdpIp,
             static_ip_src: "1.1.1.1".parse().unwrap(),
@@ -326,6 +327,9 @@ mod tests {
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
             static_rtp_ssrc: 0xABCDE.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: false,

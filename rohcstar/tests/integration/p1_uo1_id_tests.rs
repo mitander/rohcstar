@@ -144,7 +144,7 @@ fn p1_uo1_id_large_ipid_jump_forces_ir() {
         .unwrap();
     let compressed2 = &compress_buf2[..compressed2_len];
 
-    assert_eq!(compressed2.len(), 29);
+    assert_eq!(compressed2.len(), 32);
     assert_eq!(compressed2[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 }
 

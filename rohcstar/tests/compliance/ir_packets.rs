@@ -121,8 +121,7 @@ fn p1_ir_with_cid_uses_add_cid_octet() {
 }
 
 #[test]
-#[ignore] // TODO: fix RTP payload type preservation
-fn p1_ir_handles_max_static_fields() {
+fn p1_ir_handles_max_field_values() {
     let mut engine = create_test_engine();
     let mut headers = create_rfc_example_headers();
 

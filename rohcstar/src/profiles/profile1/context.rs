@@ -48,7 +48,7 @@ pub struct Profile1CompressorContext {
     pub ip_source: Ipv4Addr,
     /// Destination IPv4 address from the static chain.
     pub ip_destination: Ipv4Addr,
-    /// IP TTL from the original packet (not part of RFC 3095 static chain but needed for compliance).
+    /// IP TTL from the original packet
     pub ip_ttl: u8,
     /// UDP source port from the static chain.
     pub udp_source_port: u16,
@@ -425,7 +425,13 @@ pub struct Profile1DecompressorContext {
     pub udp_destination_port: u16,
     /// RTP SSRC from the static chain.
     pub rtp_ssrc: Ssrc,
-    /// IP TTL from the original packet (not part of RFC 3095 static chain but needed for compliance).
+    /// RTP payload type indicating the format of the RTP payload.
+    pub rtp_payload_type: u8,
+    /// RTP extension header profile/type identifier.
+    pub rtp_extension: bool,
+    /// RTP padding configuration or pattern.
+    pub rtp_padding: bool,
+    /// IP TTL from the original packet
     pub ip_ttl: u8,
     /// Current operational mode of the decompressor for this context.
     pub mode: Profile1DecompressorMode,
@@ -516,6 +522,9 @@ impl Profile1DecompressorContext {
             udp_source_port: 0,
             udp_destination_port: 0,
             rtp_ssrc: Ssrc::new(0),
+            rtp_payload_type: 0,
+            rtp_extension: false,
+            rtp_padding: false,
             ip_ttl: DEFAULT_IPV4_TTL,
             mode: Profile1DecompressorMode::NoContext,
             last_reconstructed_rtp_sn_full: SequenceNumber::new(0),
@@ -563,6 +572,9 @@ impl Profile1DecompressorContext {
         self.udp_source_port = ir_packet.static_udp_src_port;
         self.udp_destination_port = ir_packet.static_udp_dst_port;
         self.rtp_ssrc = ir_packet.static_rtp_ssrc;
+        self.rtp_payload_type = ir_packet.static_rtp_payload_type;
+        self.rtp_extension = ir_packet.static_rtp_extension;
+        self.rtp_padding = ir_packet.static_rtp_padding;
 
         self.last_reconstructed_rtp_sn_full = ir_packet.dyn_rtp_sn;
         self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
@@ -1095,6 +1107,9 @@ mod tests {
             static_udp_src_port: 1000,
             static_udp_dst_port: 2000,
             static_rtp_ssrc: 0xABCD.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 200.into(),
             dyn_rtp_timestamp: 20000.into(),
             dyn_rtp_marker: true,
@@ -1132,6 +1147,9 @@ mod tests {
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
             static_rtp_ssrc: 0x1234.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 50.into(),
             dyn_rtp_timestamp: 5000.into(),
             dyn_rtp_marker: false,

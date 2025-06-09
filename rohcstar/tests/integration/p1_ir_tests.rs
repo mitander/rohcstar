@@ -546,6 +546,13 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_successfully() {
     ir_packet_bytes.extend_from_slice(&ir_data_for_static_part.static_udp_src_port.to_be_bytes());
     ir_packet_bytes.extend_from_slice(&ir_data_for_static_part.static_udp_dst_port.to_be_bytes());
     ir_packet_bytes.extend_from_slice(&ir_data_for_static_part.static_rtp_ssrc.to_be_bytes());
+    ir_packet_bytes.extend_from_slice(
+        &ir_data_for_static_part
+            .static_rtp_payload_type
+            .to_be_bytes(),
+    );
+    ir_packet_bytes.push(ir_data_for_static_part.static_rtp_extension.into());
+    ir_packet_bytes.push(ir_data_for_static_part.static_rtp_padding.into());
 
     // CRC for IR-STATIC is over Profile ID + Static Chain
     let crc_payload_slice = &ir_packet_bytes[1..]; // Skip Type, include Profile + Static

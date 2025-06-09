@@ -34,6 +34,12 @@ pub struct IrPacket {
     pub static_udp_dst_port: u16,
     /// RTP Synchronization Source (SSRC) identifier.
     pub static_rtp_ssrc: Ssrc,
+    /// RTP payload type indicating the format of the RTP payload.
+    pub static_rtp_payload_type: u8,
+    /// RTP extension header profile/type identifier.
+    pub static_rtp_extension: bool,
+    /// RTP padding configuration or pattern.
+    pub static_rtp_padding: bool,
 
     /// RTP sequence number from dynamic chain.
     pub dyn_rtp_sn: SequenceNumber,
@@ -62,6 +68,9 @@ impl Default for IrPacket {
             static_udp_src_port: 0,
             static_udp_dst_port: 0,
             static_rtp_ssrc: Ssrc::new(0),
+            static_rtp_payload_type: 0,
+            static_rtp_padding: false,
+            static_rtp_extension: false,
             dyn_rtp_sn: SequenceNumber::new(0),
             dyn_rtp_timestamp: Timestamp::new(0),
             dyn_rtp_marker: false,
@@ -138,6 +147,9 @@ mod tests {
             static_udp_src_port: 1000,
             static_udp_dst_port: 2000,
             static_rtp_ssrc: 0x12345678.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 100.into(),
             dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: true,
@@ -219,6 +231,9 @@ mod tests {
             static_udp_src_port: 10,
             static_udp_dst_port: 20,
             static_rtp_ssrc: 30.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 40.into(),
             dyn_rtp_timestamp: 50.into(),
             dyn_rtp_marker: true,

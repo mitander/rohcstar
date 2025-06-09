@@ -950,10 +950,10 @@ fn reconstruct_headers_from_context(
         udp_length: 0,   // Recalculated by higher layers
         udp_checksum: 0, // May be 0 if not used, or recalculated
         rtp_version: RTP_VERSION,
-        rtp_padding: false,   // Assumed false unless payload indicates otherwise
-        rtp_extension: false, // Assumed false
-        rtp_csrc_count: 0,    // Assumed 0
-        rtp_payload_type: 0,  // Application-specific, not typically in ROHC context
+        rtp_padding: context.rtp_padding, // Assumed false unless payload indicates otherwise
+        rtp_extension: context.rtp_extension, // Assumed false
+        rtp_csrc_count: 0,                // Assumed 0
+        rtp_payload_type: context.rtp_payload_type,
         rtp_csrc_list: Vec::new(),
     }
 }

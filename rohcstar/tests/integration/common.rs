@@ -331,6 +331,9 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPac
         static_udp_src_port: 100,
         static_udp_dst_port: 200,
         static_rtp_ssrc: ssrc.into(),
+        static_rtp_payload_type: 0,
+        static_rtp_extension: false,
+        static_rtp_padding: false,
         dyn_rtp_sn: sn.into(),
         dyn_rtp_timestamp: ts_val.into(),
         dyn_rtp_marker: false, // Default marker for this helper

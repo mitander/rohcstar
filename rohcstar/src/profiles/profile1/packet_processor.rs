@@ -297,6 +297,12 @@ pub fn serialize_ir(
     bytes_written += 2;
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
     bytes_written += 4;
+    out[bytes_written] = ir_data.static_rtp_payload_type;
+    bytes_written += 1;
+    out[bytes_written] = ir_data.static_rtp_extension.into();
+    bytes_written += 1;
+    out[bytes_written] = ir_data.static_rtp_padding.into();
+    bytes_written += 1;
 
     // Dynamic chain
     out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
@@ -402,7 +408,7 @@ pub fn deserialize_ir(
     if d_bit_set {
         dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
         // Index of RTP_Flags within core_packet_bytes:
-        // PacketType(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4) + TTL(1) + IP_ID(2) = index 27
+        // PacketType(1) + ProfileID(1) + StaticChain(19) + SN(2) + TS(4) + TTL(1) + IP_ID(2) = index 30
         const RTP_FLAGS_IDX_IN_CORE: usize = 1
             + 1
             + P1_STATIC_CHAIN_LENGTH_BYTES
@@ -490,6 +496,12 @@ pub fn deserialize_ir(
         core_packet_bytes[current_offset_for_fields + 3],
     ]));
     current_offset_for_fields += 4;
+    let static_rtp_payload_type = core_packet_bytes[current_offset_for_fields];
+    current_offset_for_fields += 1;
+    let static_rtp_extension = core_packet_bytes[current_offset_for_fields] == 1;
+    current_offset_for_fields += 1;
+    let static_rtp_padding = core_packet_bytes[current_offset_for_fields] == 1;
+    current_offset_for_fields += 1;
 
     let (
         dyn_rtp_sn,
@@ -561,6 +573,9 @@ pub fn deserialize_ir(
         static_udp_src_port,
         static_udp_dst_port,
         static_rtp_ssrc,
+        static_rtp_payload_type,
+        static_rtp_extension,
+        static_rtp_padding,
         dyn_rtp_sn: SequenceNumber::new(dyn_rtp_sn),
         dyn_rtp_timestamp: Timestamp::new(dyn_rtp_timestamp_val),
         dyn_rtp_marker,
@@ -1422,6 +1437,9 @@ mod tests {
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
             static_rtp_ssrc: 0xABC.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_padding: false,
+            static_rtp_extension: false,
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: true,
@@ -1434,7 +1452,7 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 29);
+        assert_eq!(built_bytes_slice.len(), 32);
         assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
         let parsed_ir = deserialize_ir(built_bytes_slice, 0.into(), &crc_calculators).unwrap();
@@ -1458,6 +1476,9 @@ mod tests {
             static_udp_src_port: 100,
             static_udp_dst_port: 200,
             static_rtp_ssrc: 0xABC.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: false,
@@ -1470,10 +1491,10 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 33);
+        assert_eq!(built_bytes_slice.len(), 36);
         assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let rtp_flags_octet_idx_in_core = 27;
+        let rtp_flags_octet_idx_in_core = 30;
         assert_eq!(
             built_bytes_slice[rtp_flags_octet_idx_in_core] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
@@ -1503,6 +1524,9 @@ mod tests {
             static_udp_src_port: 0,
             static_udp_dst_port: 0,
             static_rtp_ssrc: 0.into(),
+            static_rtp_payload_type: 0,
+            static_rtp_extension: false,
+            static_rtp_padding: false,
             dyn_rtp_sn: 0.into(),
             dyn_rtp_marker: false,
             dyn_ip_ttl: 64,
@@ -1514,7 +1538,7 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 30);
+        assert_eq!(built_bytes_slice.len(), 33);
         assert_eq!(built_bytes_slice[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes_slice[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
