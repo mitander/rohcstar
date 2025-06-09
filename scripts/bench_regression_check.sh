@@ -12,21 +12,18 @@ ROHCSTAR_DIR="$REPO_ROOT/rohcstar"
 # Environment-aware performance thresholds (nanoseconds)
 if [[ "${GITHUB_ACTIONS}" == "true" ]]; then
     # GitHub Actions runner thresholds (more lenient for x86_64 runners)
-
-    #  TODO: COMPRESS_FIRST_THRESHOLD increased [389ns -> 608ns]
-    # Investigate cause of regression and either revert threshold or remove this comment.
-    COMPRESS_FIRST_THRESHOLD=608        # ~608 + margin
-    COMPRESS_SUBSEQUENT_THRESHOLD=200   # ~154ns + margin
-    DECOMPRESS_IR_THRESHOLD=600         # ~533ns + margin
-    DECOMPRESS_UO_THRESHOLD=100         # ~70ns + margin
-    ROUNDTRIP_THRESHOLD=850             # ~769ns + margin
+    COMPRESS_FIRST_THRESHOLD=650        # ~520ns + margin
+    COMPRESS_SUBSEQUENT_THRESHOLD=250   # ~200ns + margin
+    DECOMPRESS_IR_THRESHOLD=650         # ~520ns + margin
+    DECOMPRESS_UO_THRESHOLD=130         # ~100ns + margin
+    ROUNDTRIP_THRESHOLD=950             # ~750ns + margin
 else
     # Local development thresholds (tighter for faster hardware)
-    COMPRESS_FIRST_THRESHOLD=350        # ~304ns + margin
-    COMPRESS_SUBSEQUENT_THRESHOLD=150   # ~116ns + margin
-    DECOMPRESS_IR_THRESHOLD=300         # ~255ns + margin
-    DECOMPRESS_UO_THRESHOLD=80          # ~55ns + margin
-    ROUNDTRIP_THRESHOLD=600             # ~521ns + margin
+    COMPRESS_FIRST_THRESHOLD=450        # ~368ns + margin
+    COMPRESS_SUBSEQUENT_THRESHOLD=190   # ~157ns + margin
+    DECOMPRESS_IR_THRESHOLD=470         # ~390ns + margin
+    DECOMPRESS_UO_THRESHOLD=100         # ~82ns + margin
+    ROUNDTRIP_THRESHOLD=740             # ~613ns + margin
 fi
 
 # Parse threshold factor argument
