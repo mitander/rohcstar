@@ -84,10 +84,19 @@ pub(super) fn process_packet_in_fc_mode(
 
     let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
 
-    // RFC 3095: Track CRC failures separately from final outcome
-    match (&outcome.result, outcome.had_initial_crc_failure) {
-        (Ok(_), false) => {
-            // Clean success - normal UO success handling
+    // Simple RFC 3095 compliant CRC failure tracking
+    match &outcome {
+        Ok(_) => {
+            // Check if there was a CRC failure during decompression
+            if context.counters.had_recent_crc_failure {
+                // Successful recovery - report both CRC failure and success
+                process_transition(
+                    &mut context.mode,
+                    &mut context.counters,
+                    TransitionEvent::CrcFailure,
+                );
+                context.counters.had_recent_crc_failure = false;
+            }
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
@@ -96,32 +105,14 @@ pub(super) fn process_packet_in_fc_mode(
                 },
             );
         }
-        (Ok(_), true) => {
-            // Successful recovery after CRC failure
-            // RFC 3095: Report BOTH CrcFailure (for confidence degradation) AND UoSuccess (for processing success)
-            process_transition(
-                &mut context.mode,
-                &mut context.counters,
-                TransitionEvent::CrcFailure,
-            );
-            process_transition(
-                &mut context.mode,
-                &mut context.counters,
-                TransitionEvent::UoSuccess {
-                    is_dynamic_updating: discriminated_type.is_dynamic_updating(),
-                },
-            );
-        }
-        (Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })), _) => {
-            // Pure CRC failure
+        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => {
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
                 TransitionEvent::CrcFailure,
             );
         }
-        (Err(_), _) => {
-            // Other parsing error
+        Err(_) => {
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
@@ -130,7 +121,7 @@ pub(super) fn process_packet_in_fc_mode(
         }
     }
 
-    outcome.into_packet()
+    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
 }
 
 /// Processes a received ROHC packet when the decompressor is in Static Context (SC) mode.
@@ -192,22 +183,23 @@ pub(super) fn process_packet_in_sc_mode(
         }
     };
 
-    // RFC 3095: Report initial CRC failures for confidence degradation
-    if discriminated_type.is_dynamic_updating() && decompress_result.had_initial_crc_failure {
-        process_transition(
-            &mut context.mode,
-            &mut context.counters,
-            TransitionEvent::CrcFailure,
-        );
-    }
-
-    match &decompress_result.result {
+    match &decompress_result {
         Ok(_) => {
             debug_assert!(
                 discriminated_type.is_dynamic_updating(),
                 "Packet processed in SC mode that was not a dynamic updater (and not UO-0): {:?}",
                 discriminated_type
             );
+
+            // Check if there was a CRC failure during decompression
+            if discriminated_type.is_dynamic_updating() && context.counters.had_recent_crc_failure {
+                process_transition(
+                    &mut context.mode,
+                    &mut context.counters,
+                    TransitionEvent::CrcFailure,
+                );
+                context.counters.had_recent_crc_failure = false;
+            }
 
             // Process state transition for successful dynamic update
             process_transition(
@@ -218,19 +210,28 @@ pub(super) fn process_packet_in_sc_mode(
                 },
             );
 
-            decompress_result.into_packet()
+            Ok(GenericUncompressedHeaders::RtpUdpIpv4(
+                decompress_result.as_ref().unwrap().clone(),
+            ))
         }
         Err(e) => {
             // Only dynamic updating packets count for SC->NC logic
             if discriminated_type.is_dynamic_updating() {
-                // Report additional events only for non-CRC errors
-                // (CRC failures already reported above)
-                if !matches!(e, RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) {
-                    process_transition(
-                        &mut context.mode,
-                        &mut context.counters,
-                        TransitionEvent::ParseError,
-                    );
+                match e {
+                    RohcError::Parsing(RohcParsingError::CrcMismatch { .. }) => {
+                        process_transition(
+                            &mut context.mode,
+                            &mut context.counters,
+                            TransitionEvent::CrcFailure,
+                        );
+                    }
+                    _ => {
+                        process_transition(
+                            &mut context.mode,
+                            &mut context.counters,
+                            TransitionEvent::ParseError,
+                        );
+                    }
                 }
             }
             Err(e.clone())
@@ -272,10 +273,13 @@ pub(super) fn process_packet_in_so_mode(
 
     let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
 
-    // SO mode: only report CRC failures for actual failures, not successful recovery
-    match (&outcome.result, outcome.had_initial_crc_failure) {
-        (Ok(_), false) => {
-            // Clean success - boost confidence
+    // SO mode: treat successful recovery as confidence boost, not penalty
+    match &outcome {
+        Ok(_) => {
+            // SO mode: successful recovery demonstrates context reliability
+            // Reset the flag without reporting CRC failure
+            context.counters.had_recent_crc_failure = false;
+
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
@@ -284,27 +288,14 @@ pub(super) fn process_packet_in_so_mode(
                 },
             );
         }
-        (Ok(_), true) => {
-            // Successful recovery - boost confidence, don't penalize for initial CRC failure
-            // In SO mode, successful recovery demonstrates context reliability
-            process_transition(
-                &mut context.mode,
-                &mut context.counters,
-                TransitionEvent::UoSuccess {
-                    is_dynamic_updating: discriminated_type.is_dynamic_updating(),
-                },
-            );
-        }
-        (Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })), _) => {
-            // Actual CRC failure - penalize confidence
+        Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) => {
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
                 TransitionEvent::CrcFailure,
             );
         }
-        (Err(_), _) => {
-            // Other parsing error
+        Err(_) => {
             process_transition(
                 &mut context.mode,
                 &mut context.counters,
@@ -313,7 +304,7 @@ pub(super) fn process_packet_in_so_mode(
         }
     }
 
-    outcome.into_packet()
+    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
 }
 
 #[cfg(test)]

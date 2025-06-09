@@ -297,12 +297,13 @@ pub fn serialize_ir(
     bytes_written += 2;
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
     bytes_written += 4;
-    out[bytes_written] = ir_data.static_rtp_payload_type;
-    bytes_written += 1;
-    out[bytes_written] = ir_data.static_rtp_extension.into();
-    bytes_written += 1;
-    out[bytes_written] = ir_data.static_rtp_padding.into();
-    bytes_written += 1;
+    // Batch write the 3 new RTP fields for better performance
+    out[bytes_written..bytes_written + 3].copy_from_slice(&[
+        ir_data.static_rtp_payload_type,
+        ir_data.static_rtp_extension as u8,
+        ir_data.static_rtp_padding as u8,
+    ]);
+    bytes_written += 3;
 
     // Dynamic chain
     out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
@@ -496,12 +497,12 @@ pub fn deserialize_ir(
         core_packet_bytes[current_offset_for_fields + 3],
     ]));
     current_offset_for_fields += 4;
-    let static_rtp_payload_type = core_packet_bytes[current_offset_for_fields];
-    current_offset_for_fields += 1;
-    let static_rtp_extension = core_packet_bytes[current_offset_for_fields] == 1;
-    current_offset_for_fields += 1;
-    let static_rtp_padding = core_packet_bytes[current_offset_for_fields] == 1;
-    current_offset_for_fields += 1;
+    // Batch read the 3 new RTP fields for better performance
+    let rtp_fields = &core_packet_bytes[current_offset_for_fields..current_offset_for_fields + 3];
+    let static_rtp_payload_type = rtp_fields[0];
+    let static_rtp_extension = rtp_fields[1] == 1;
+    let static_rtp_padding = rtp_fields[2] == 1;
+    current_offset_for_fields += 3;
 
     let (
         dyn_rtp_sn,
