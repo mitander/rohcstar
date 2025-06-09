@@ -124,16 +124,16 @@ fn p1_uo1_triggered_by_ts_change() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn p1_uo1_marker_bit_encoding() {
     let mut engine = create_test_engine();
     let cid = ContextId::new(0);
 
-    // Establish context
-    let _ = establish_context(&mut engine, cid);
+    // Establish context with timestamp stride for TsScaled mode
+    let _ = establish_context_with_ts_stride(&mut engine, cid);
 
-    // Marker bit change should trigger UO-1
-    let mut headers = create_headers_with_sn(101);
+    // Marker bit change should trigger UO-1 (continue stride: TS = 1000 + 4*160 = 1640)
+    let mut headers = create_headers_with_sn(104);
+    headers.rtp_timestamp = 1640.into();
     headers.rtp_marker = true;
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 

@@ -150,3 +150,55 @@ pub fn establish_context(engine: &mut RohcEngine, cid: ContextId) -> usize {
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic, &mut buf)
         .expect("IR compression should succeed")
 }
+
+/// Establishes a compression context with timestamp stride for TsScaled mode.
+///
+/// Sends sufficient packets to establish timestamp stride detection, enabling
+/// UO-1-RTP packet usage with marker bit changes. Required for tests that
+/// expect TsScaled compression capabilities.
+///
+/// # Parameters
+/// - `engine`: The ROHC engine to use
+/// - `cid`: Context ID to establish
+///
+/// # Returns
+/// Number of bytes in the final packet.
+pub fn establish_context_with_ts_stride(engine: &mut RohcEngine, cid: ContextId) -> usize {
+    let mut buf = [0u8; 256];
+
+    // Send initial IR packet
+    let headers = create_rfc_example_headers();
+    let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
+
+    let ir_len = engine
+        .compress(cid, Some(RohcProfile::RtpUdpIp), &generic, &mut buf)
+        .expect("IR compression should succeed");
+
+    // Decompress IR to establish decompressor context
+    let _ = engine
+        .decompress(&buf[..ir_len])
+        .expect("IR decompression should succeed");
+
+    // Send 3 more packets with consistent stride to establish TsScaled mode
+    // Stride of 160 is typical for audio (8kHz sample rate, 20ms packets)
+    const TS_STRIDE: u32 = 160;
+
+    let mut last_len = 0;
+    for i in 1..=3 {
+        let mut headers = create_rfc_example_headers();
+        headers.rtp_sequence_number = SequenceNumber::new(100 + i);
+        headers.rtp_timestamp = Timestamp::new(1000 + (i as u32) * TS_STRIDE);
+        let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
+
+        last_len = engine
+            .compress(cid, None, &generic, &mut buf)
+            .expect("Stride establishment compression should succeed");
+
+        // Decompress to keep contexts in sync
+        let _ = engine
+            .decompress(&buf[..last_len])
+            .expect("Stride establishment decompression should succeed");
+    }
+
+    last_len
+}
