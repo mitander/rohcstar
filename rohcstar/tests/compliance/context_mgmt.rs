@@ -27,9 +27,14 @@ fn engine_context_reinitialization_after_loss() {
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
     let mut buf = [0u8; 256];
-    let _ = engine
+    let initial_len = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic, &mut buf)
         .expect("Initial compression should succeed");
+
+    // Decompress initial IR to establish decompressor context
+    let _ = engine
+        .decompress(&buf[..initial_len])
+        .expect("Initial IR decompression should succeed");
 
     // Simulate context loss
     engine
@@ -50,7 +55,6 @@ fn engine_context_reinitialization_after_loss() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn engine_context_timeout_removes_stale() {
     let start_time = Instant::now();
     let mock_clock = Arc::new(MockClock::new(start_time));
@@ -194,7 +198,8 @@ fn engine_context_independent_state() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
+#[ignore]
+// TODO: Only small-CID is supported for now, enable this test when large-CID are implemented
 fn engine_context_limit_enforcement() {
     let mut engine = create_test_engine();
 
@@ -226,7 +231,6 @@ fn engine_context_limit_enforcement() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn engine_context_recovery_from_desync() {
     let mut engine = create_test_engine_with_refresh(5);
     let cid = ContextId::new(0);
@@ -236,24 +240,36 @@ fn engine_context_recovery_from_desync() {
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
     let mut buf = [0u8; 256];
-    let _ = engine
+    let initial_len = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic, &mut buf)
         .expect("Initial compression should succeed");
 
-    // Generate several UO packets
+    // Decompress initial IR to establish decompressor context
+    let _ = engine
+        .decompress(&buf[..initial_len])
+        .expect("Initial IR decompression should succeed");
+
+    // Generate several UO packets and decompress them to maintain context sync
     for i in 1..=3 {
         let h = create_headers_with_sn(100 + i);
         let g = GenericUncompressedHeaders::RtpUdpIpv4(h);
-        let _ = engine
+        let len = engine
             .compress(cid, None, &g, &mut buf)
             .expect("UO compression should succeed");
+
+        let _ = engine
+            .decompress(&buf[..len])
+            .expect("UO decompression should succeed");
     }
 
-    // Simulate context desync by corrupting decompressor state
-    // (In real scenario, this would be packet loss)
-    // The next packets should fail until IR refresh
+    // Simulate context desync by removing decompressor context
+    // (In real scenario, this would be packet loss causing context corruption)
+    engine
+        .context_manager_mut()
+        .remove_decompressor_context(cid);
 
-    // Continue compressing - should trigger IR refresh at packet 5
+    // Continue compressing - packet 4 should fail decompression due to missing context
+    // but packet 5 should be an IR refresh that allows recovery
     for i in 4..=6 {
         let h = create_headers_with_sn(100 + i);
         let g = GenericUncompressedHeaders::RtpUdpIpv4(h);
@@ -262,21 +278,34 @@ fn engine_context_recovery_from_desync() {
             .compress(cid, None, &g, &mut buf)
             .expect("Compression should succeed");
 
-        if i == 5 {
-            // Should be IR refresh
+        let result = engine.decompress(&buf[..len]);
+
+        if i == 4 {
+            // Should fail due to missing decompressor context
+            assert!(
+                result.is_err(),
+                "Decompression should fail at packet {} due to missing context",
+                i
+            );
+        } else if i == 5 {
+            // Should be IR refresh that recovers context
             assert_eq!(
                 buf[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
                 "Should send IR refresh at interval"
             );
+            assert!(
+                result.is_ok(),
+                "Decompression should succeed at packet {} after IR refresh",
+                i
+            );
+        } else {
+            // Should work after IR refresh
+            assert!(
+                result.is_ok(),
+                "Decompression should succeed at packet {}",
+                i
+            );
         }
-
-        // Decompression should work after IR
-        let result = engine.decompress(&buf[..len]);
-        assert!(
-            result.is_ok(),
-            "Decompression should succeed at packet {}",
-            i
-        );
     }
 }
 
