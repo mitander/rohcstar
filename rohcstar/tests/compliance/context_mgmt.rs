@@ -126,7 +126,6 @@ fn engine_context_timeout_removes_stale() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn engine_context_independent_state() {
     let mut engine = create_test_engine();
 
@@ -149,13 +148,22 @@ fn engine_context_independent_state() {
     let mut buf1 = [0u8; 256];
     let mut buf2 = [0u8; 256];
 
-    let _ = engine
+    let ir_len1 = engine
         .compress(cid1, Some(RohcProfile::RtpUdpIp), &generic1, &mut buf1)
         .expect("CID1 initial compression should succeed");
 
-    let _ = engine
+    let ir_len2 = engine
         .compress(cid2, Some(RohcProfile::RtpUdpIp), &generic2, &mut buf2)
         .expect("CID2 initial compression should succeed");
+
+    // Establish decompressor contexts
+    let _ = engine
+        .decompress(&buf1[..ir_len1])
+        .expect("CID1 IR decompression should succeed");
+
+    let _ = engine
+        .decompress(&buf2[..ir_len2])
+        .expect("CID2 IR decompression should succeed");
 
     // Update contexts independently
     for i in 1..=5 {
