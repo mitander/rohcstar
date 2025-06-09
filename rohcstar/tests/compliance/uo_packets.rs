@@ -210,7 +210,6 @@ fn p1_uo_packets_preserve_crc_integrity() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn p1_uo_sequence_wraparound() {
     let mut engine = create_test_engine();
     let cid = ContextId::new(0);
@@ -221,9 +220,14 @@ fn p1_uo_sequence_wraparound() {
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
     let mut buf = [0u8; 256];
-    let _ = engine
+    let ir_len = engine
         .compress(cid, Some(RohcProfile::RtpUdpIp), &generic, &mut buf)
         .expect("Initial compression should succeed");
+
+    // Establish decompressor context
+    let _ = engine
+        .decompress(&buf[..ir_len])
+        .expect("IR decompression should succeed");
 
     // Test wraparound sequence
     for sn in [65531, 65532, 65533, 65534, 65535, 0, 1, 2, 3] {
