@@ -13,7 +13,7 @@ use super::packet_processor::{
 };
 use super::protocol_types::RtpUdpIpv4Headers;
 
-use crate::constants::{DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
+use crate::constants::{IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc::CrcCalculators;
 use crate::encodings::decode_lsb;
 use crate::error::{DecompressionError, RohcError, RohcParsingError};
@@ -944,7 +944,7 @@ fn reconstruct_headers_from_context(
         ip_dont_fragment: true, // Common assumption for ROHC Profile 1
         ip_more_fragments: false,
         ip_fragment_offset: 0,
-        ip_ttl: DEFAULT_IPV4_TTL,
+        ip_ttl: context.ip_ttl,
         ip_protocol: IP_PROTOCOL_UDP,
         ip_checksum: 0,  // Recalculated by network stack
         udp_length: 0,   // Recalculated by higher layers
@@ -1584,7 +1584,7 @@ mod tests {
         assert!(headers.rtp_marker);
         assert_eq!(headers.ip_identification, 54321);
 
-        assert_eq!(headers.ip_ttl, DEFAULT_IPV4_TTL);
+        assert_eq!(headers.ip_ttl, 64);
         assert_eq!(headers.ip_protocol, IP_PROTOCOL_UDP);
         assert_eq!(headers.rtp_version, RTP_VERSION);
     }

@@ -13,7 +13,7 @@ use super::constants::*;
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::RtpUdpIpv4Headers;
 use crate::constants::{
-    IP_PROTOCOL_UDP, IPV4_MIN_HEADER_LENGTH_BYTES, IPV4_STANDARD_IHL,
+    DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_MIN_HEADER_LENGTH_BYTES, IPV4_STANDARD_IHL,
     ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK, RTP_MIN_HEADER_LENGTH_BYTES,
     RTP_VERSION, UDP_HEADER_LENGTH_BYTES,
 };
@@ -303,6 +303,8 @@ pub fn serialize_ir(
     bytes_written += 2;
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
     bytes_written += 4;
+    out[bytes_written] = ir_data.dyn_ip_ttl;
+    bytes_written += 1;
 
     let mut rtp_flags_octet = 0u8;
     if ir_data.dyn_rtp_marker {
@@ -398,9 +400,9 @@ pub fn deserialize_ir(
     if d_bit_set {
         dynamic_chain_len_for_crc = P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES;
         // Index of RTP_Flags within core_packet_bytes:
-        // PacketType(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4) = index 24
+        // PacketType(1) + ProfileID(1) + StaticChain(16) + SN(2) + TS(4) + TTL(1) = index 25
         const RTP_FLAGS_IDX_IN_CORE: usize =
-            1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_SN_LENGTH_BYTES + P1_TS_LENGTH_BYTES;
+            1 + 1 + P1_STATIC_CHAIN_LENGTH_BYTES + P1_SN_LENGTH_BYTES + P1_TS_LENGTH_BYTES + 1;
 
         if core_packet_bytes.len() > RTP_FLAGS_IDX_IN_CORE {
             let rtp_flags_octet_val = core_packet_bytes[RTP_FLAGS_IDX_IN_CORE];
@@ -482,45 +484,48 @@ pub fn deserialize_ir(
     ]));
     current_offset_for_fields += 4;
 
-    let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker, parsed_ts_stride) = if d_bit_set {
-        let sn = u16::from_be_bytes([
-            core_packet_bytes[current_offset_for_fields],
-            core_packet_bytes[current_offset_for_fields + 1],
-        ]);
-        current_offset_for_fields += 2;
-        let ts_val = u32::from_be_bytes([
-            core_packet_bytes[current_offset_for_fields],
-            core_packet_bytes[current_offset_for_fields + 1],
-            core_packet_bytes[current_offset_for_fields + 2],
-            core_packet_bytes[current_offset_for_fields + 3],
-        ]);
-        current_offset_for_fields += 4;
-        let rtp_flags_octet_val = core_packet_bytes[current_offset_for_fields];
-        current_offset_for_fields += 1;
-        let marker = (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK) != 0;
-
-        let mut temp_ts_stride = None;
-        if ts_stride_present_flag_for_crc_logic {
-            if core_packet_bytes.len()
-                < current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
-            {
-                return Err(RohcParsingError::NotEnoughData {
-                    needed: current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
-                    got: core_packet_bytes.len(),
-                    context: crate::error::ParseContext::IrPacketTsStrideExtension,
-                });
-            }
-            temp_ts_stride = Some(u32::from_be_bytes([
+    let (dyn_rtp_sn, dyn_rtp_timestamp_val, dyn_rtp_marker, dyn_ip_ttl_val, parsed_ts_stride) =
+        if d_bit_set {
+            let sn = u16::from_be_bytes([
+                core_packet_bytes[current_offset_for_fields],
+                core_packet_bytes[current_offset_for_fields + 1],
+            ]);
+            current_offset_for_fields += 2;
+            let ts_val = u32::from_be_bytes([
                 core_packet_bytes[current_offset_for_fields],
                 core_packet_bytes[current_offset_for_fields + 1],
                 core_packet_bytes[current_offset_for_fields + 2],
                 core_packet_bytes[current_offset_for_fields + 3],
-            ]));
-        }
-        (sn, ts_val, marker, temp_ts_stride)
-    } else {
-        (0, 0, false, None)
-    };
+            ]);
+            current_offset_for_fields += 4;
+            let dyn_ip_ttl = core_packet_bytes[current_offset_for_fields];
+            current_offset_for_fields += 1;
+            let rtp_flags_octet_val = core_packet_bytes[current_offset_for_fields];
+            current_offset_for_fields += 1;
+            let marker = (rtp_flags_octet_val & P1_IR_DYN_RTP_FLAGS_MARKER_BIT_MASK) != 0;
+
+            let mut temp_ts_stride = None;
+            if ts_stride_present_flag_for_crc_logic {
+                if core_packet_bytes.len()
+                    < current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+                {
+                    return Err(RohcParsingError::NotEnoughData {
+                        needed: current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
+                        got: core_packet_bytes.len(),
+                        context: crate::error::ParseContext::IrPacketTsStrideExtension,
+                    });
+                }
+                temp_ts_stride = Some(u32::from_be_bytes([
+                    core_packet_bytes[current_offset_for_fields],
+                    core_packet_bytes[current_offset_for_fields + 1],
+                    core_packet_bytes[current_offset_for_fields + 2],
+                    core_packet_bytes[current_offset_for_fields + 3],
+                ]));
+            }
+            (sn, ts_val, marker, dyn_ip_ttl, temp_ts_stride)
+        } else {
+            (0, 0, false, DEFAULT_IPV4_TTL, None)
+        };
 
     Ok(IrPacket {
         cid: cid_from_engine,
@@ -534,6 +539,7 @@ pub fn deserialize_ir(
         dyn_rtp_sn: SequenceNumber::new(dyn_rtp_sn),
         dyn_rtp_timestamp: Timestamp::new(dyn_rtp_timestamp_val),
         dyn_rtp_marker,
+        dyn_ip_ttl: dyn_ip_ttl_val,
         ts_stride: parsed_ts_stride,
     })
 }
@@ -1393,6 +1399,7 @@ mod tests {
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: true,
+            dyn_ip_ttl: 64,
             ts_stride: None,
             crc8: 0,
         };
@@ -1400,7 +1407,7 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 26);
+        assert_eq!(built_bytes_slice.len(), 27);
         assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
         let parsed_ir = deserialize_ir(built_bytes_slice, 0.into(), &crc_calculators).unwrap();
@@ -1427,6 +1434,7 @@ mod tests {
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 100.into(),
             dyn_rtp_marker: false,
+            dyn_ip_ttl: 64,
             ts_stride: Some(160),
             crc8: 0,
         };
@@ -1434,10 +1442,10 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 30);
+        assert_eq!(built_bytes_slice.len(), 31);
         assert_eq!(built_bytes_slice[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 
-        let rtp_flags_octet_idx_in_core = 24;
+        let rtp_flags_octet_idx_in_core = 25;
         assert_eq!(
             built_bytes_slice[rtp_flags_octet_idx_in_core] & P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
             P1_IR_DYN_RTP_FLAGS_TS_STRIDE_BIT_MASK,
@@ -1469,6 +1477,7 @@ mod tests {
             static_rtp_ssrc: 0.into(),
             dyn_rtp_sn: 0.into(),
             dyn_rtp_marker: false,
+            dyn_ip_ttl: 64,
             ts_stride: None,
             crc8: 0,
         };
@@ -1476,7 +1485,7 @@ mod tests {
         let len = serialize_ir(&ir_content, &crc_calculators, &mut buf).unwrap();
         let built_bytes_slice = &buf[..len];
 
-        assert_eq!(built_bytes_slice.len(), 27);
+        assert_eq!(built_bytes_slice.len(), 28);
         assert_eq!(built_bytes_slice[0], ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | 5);
         assert_eq!(built_bytes_slice[1], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 

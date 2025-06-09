@@ -46,6 +46,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         dyn_rtp_sn: 1.into(),
         dyn_rtp_timestamp: 1000.into(),
         dyn_rtp_marker: false,
+        dyn_ip_ttl: 64,
         ts_stride: None,
         crc8: 0, // Will be calculated by serialize_ir
     };

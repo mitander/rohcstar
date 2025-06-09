@@ -329,6 +329,7 @@ mod tests {
             dyn_rtp_sn: 10.into(),
             dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: false,
+            dyn_ip_ttl: 64,
             ts_stride: None,
             crc8: 0,
         };

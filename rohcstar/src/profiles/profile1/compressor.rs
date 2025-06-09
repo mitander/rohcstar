@@ -145,6 +145,7 @@ pub(super) fn compress_as_ir(
         dyn_rtp_sn: headers.rtp_sequence_number,
         dyn_rtp_timestamp: headers.rtp_timestamp,
         dyn_rtp_marker: headers.rtp_marker,
+        dyn_ip_ttl: context.ip_ttl,
         ts_stride: stride_to_signal,
     };
 

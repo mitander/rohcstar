@@ -16,7 +16,7 @@ use super::constants::{
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
 use super::state_types::StateCounters;
-use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
+use crate::constants::{DEFAULT_IPV4_TTL, DEFAULT_IR_REFRESH_INTERVAL};
 use crate::packet_defs::RohcProfile;
 use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
 use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
@@ -48,6 +48,8 @@ pub struct Profile1CompressorContext {
     pub ip_source: Ipv4Addr,
     /// Destination IPv4 address from the static chain.
     pub ip_destination: Ipv4Addr,
+    /// IP TTL from the original packet (not part of RFC 3095 static chain but needed for compliance).
+    pub ip_ttl: u8,
     /// UDP source port from the static chain.
     pub udp_source_port: u16,
     /// UDP destination port from the static chain.
@@ -156,6 +158,7 @@ impl Profile1CompressorContext {
             cid,
             ip_source: Ipv4Addr::UNSPECIFIED,
             ip_destination: Ipv4Addr::UNSPECIFIED,
+            ip_ttl: DEFAULT_IPV4_TTL,
             udp_source_port: 0,
             udp_destination_port: 0,
             rtp_ssrc: Ssrc::new(0),
@@ -197,6 +200,7 @@ impl Profile1CompressorContext {
     pub fn initialize_context_from_uncompressed_headers(&mut self, headers: &RtpUdpIpv4Headers) {
         self.ip_source = headers.ip_src;
         self.ip_destination = headers.ip_dst;
+        self.ip_ttl = headers.ip_ttl;
         self.udp_source_port = headers.udp_src_port;
         self.udp_destination_port = headers.udp_dst_port;
         self.rtp_ssrc = headers.rtp_ssrc;
@@ -421,6 +425,8 @@ pub struct Profile1DecompressorContext {
     pub udp_destination_port: u16,
     /// RTP SSRC from the static chain.
     pub rtp_ssrc: Ssrc,
+    /// IP TTL from the original packet (not part of RFC 3095 static chain but needed for compliance).
+    pub ip_ttl: u8,
     /// Current operational mode of the decompressor for this context.
     pub mode: Profile1DecompressorMode,
     /// Full value of the RTP Sequence Number from the last reconstructed packet.
@@ -510,6 +516,7 @@ impl Profile1DecompressorContext {
             udp_source_port: 0,
             udp_destination_port: 0,
             rtp_ssrc: Ssrc::new(0),
+            ip_ttl: DEFAULT_IPV4_TTL,
             mode: Profile1DecompressorMode::NoContext,
             last_reconstructed_rtp_sn_full: SequenceNumber::new(0),
             last_reconstructed_rtp_ts_full: Timestamp::new(0),
@@ -552,6 +559,7 @@ impl Profile1DecompressorContext {
 
         self.ip_source = ir_packet.static_ip_src;
         self.ip_destination = ir_packet.static_ip_dst;
+        self.ip_ttl = ir_packet.dyn_ip_ttl;
         self.udp_source_port = ir_packet.static_udp_src_port;
         self.udp_destination_port = ir_packet.static_udp_dst_port;
         self.rtp_ssrc = ir_packet.static_rtp_ssrc;
@@ -1090,6 +1098,7 @@ mod tests {
             dyn_rtp_sn: 200.into(),
             dyn_rtp_timestamp: 20000.into(),
             dyn_rtp_marker: true,
+            dyn_ip_ttl: 64,
             ts_stride: None,
         };
 
@@ -1125,6 +1134,7 @@ mod tests {
             dyn_rtp_sn: 50.into(),
             dyn_rtp_timestamp: 5000.into(),
             dyn_rtp_marker: false,
+            dyn_ip_ttl: 64,
             ts_stride: Some(160),
         };
         decomp_ctx.initialize_from_ir_packet(&ir_data_with_stride);

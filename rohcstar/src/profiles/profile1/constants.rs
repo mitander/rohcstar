@@ -100,8 +100,8 @@ pub const P1_DEFAULT_P_IPID_OFFSET: i64 = 0;
 // --- Profile 1 Chain Lengths (RFC 3095, Sec 5.8) ---
 /// Static chain length (IP_Src/Dst, UDP_Src/Dst, RTP_SSRC) in bytes. (16 bytes)
 pub const P1_STATIC_CHAIN_LENGTH_BYTES: usize = 16;
-/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, RTP_Flags) in bytes. (7 bytes)
-pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 7;
+/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, IP_TTL, RTP_Flags) in bytes. (8 bytes)
+pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 8;
 /// Length of TS_STRIDE extension in IR-DYN dynamic chain, in bytes. (4 bytes)
 pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;
 
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn chain_length_constants_are_correct() {
         assert_eq!(P1_STATIC_CHAIN_LENGTH_BYTES, 16);
-        assert_eq!(P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, 7);
+        assert_eq!(P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, 8);
         assert_eq!(P1_TS_STRIDE_EXTENSION_LENGTH_BYTES, 4);
     }
 
