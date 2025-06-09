@@ -1333,6 +1333,28 @@ pub(crate) fn prepare_generic_uo_crc_input_payload(
     crc_input
 }
 
+/// Prepares a generic UO packet CRC input payload into provided buffer.
+///
+/// Zero-allocation version that writes directly to the provided buffer.
+/// Returns the number of bytes written.
+#[inline]
+pub(crate) fn prepare_generic_uo_crc_input_into_buf(
+    context_ssrc: Ssrc,
+    sn_for_crc: SequenceNumber,
+    ts_for_crc: Timestamp,
+    marker_for_crc: bool,
+    buf: &mut [u8],
+) -> usize {
+    debug_assert!(buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES);
+
+    buf[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
+    buf[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());
+    buf[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
+    buf[10] = if marker_for_crc { 0x01 } else { 0x00 };
+
+    P1_UO_CRC_INPUT_LENGTH_BYTES
+}
+
 /// Prepares a UO-1-ID specific CRC input payload on the stack.
 ///
 /// The CRC input consists of:
@@ -1375,6 +1397,30 @@ pub(crate) fn prepare_uo1_id_specific_crc_input_payload(
     crc_input[11] = ip_id_lsb_for_crc;
 
     crc_input
+}
+
+/// Prepares a UO-1-ID specific CRC input payload into provided buffer.
+///
+/// Zero-allocation version that writes directly to the provided buffer.
+/// Returns the number of bytes written.
+#[inline]
+pub(crate) fn prepare_uo1_id_specific_crc_input_into_buf(
+    context_ssrc: Ssrc,
+    sn_for_crc: SequenceNumber,
+    ts_for_crc: Timestamp,
+    marker_for_crc: bool,
+    ip_id_lsb_for_crc: u8,
+    buf: &mut [u8],
+) -> usize {
+    debug_assert!(buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES + 1);
+
+    buf[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
+    buf[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());
+    buf[6..10].copy_from_slice(&ts_for_crc.to_be_bytes());
+    buf[10] = if marker_for_crc { 0x01 } else { 0x00 };
+    buf[11] = ip_id_lsb_for_crc;
+
+    P1_UO_CRC_INPUT_LENGTH_BYTES + 1
 }
 
 #[cfg(test)]

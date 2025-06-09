@@ -8,7 +8,8 @@ use super::context::Profile1DecompressorContext;
 use super::discriminator::Profile1PacketType;
 use super::packet_processor::{
     deserialize_ir, deserialize_uo0, deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn,
-    deserialize_uo1_ts, prepare_generic_uo_crc_input_payload,
+    deserialize_uo1_ts, prepare_generic_uo_crc_input_into_buf,
+    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_into_buf,
     prepare_uo1_id_specific_crc_input_payload,
 };
 use super::protocol_types::RtpUdpIpv4Headers;
@@ -171,14 +172,14 @@ fn decompress_as_uo0(
             4,    // backward_window: small for UO-0
             None, // no LSB constraint for UO-0
             |input| crc_calculators.crc3(input),
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, candidate_ts, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     candidate_ts,
                     context.last_reconstructed_rtp_marker,
+                    buf,
                 )
-                .to_vec()
             },
         ) {
             Ok(recovery_sn) => {
@@ -225,14 +226,14 @@ fn decompress_as_uo0(
             4,    // backward_window
             None, // no LSB constraint
             |input| crc_calculators.crc3(input),
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, candidate_ts, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     candidate_ts,
                     context.last_reconstructed_rtp_marker,
+                    buf,
                 )
-                .to_vec()
             },
         )?;
 
@@ -304,14 +305,14 @@ fn decompress_as_uo1_sn(
             8,  // backward_window
             Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)), // LSB constraint
             |input| crc_calculators.crc8(input),
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, candidate_ts, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     candidate_ts,
                     parsed_uo1.marker,
+                    buf,
                 )
-                .to_vec()
             },
         ) {
             Ok(recovery_sn) => {
@@ -355,14 +356,14 @@ fn decompress_as_uo1_sn(
             8,  // backward_window
             Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
             |input| crc_calculators.crc8(input),
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, candidate_ts, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     candidate_ts,
                     parsed_uo1.marker,
+                    buf,
                 )
-                .to_vec()
             },
         ) {
             Ok(recovery_sn) => {
@@ -458,14 +459,14 @@ fn decompress_as_uo1_ts(
             8,    // backward_window
             None, // no LSB constraint for UO-1-TS
             |input| crc_calculators.crc8(input),
-            |candidate_sn, _| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, _, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     decoded_ts,
                     context.last_reconstructed_rtp_marker,
+                    buf,
                 )
-                .to_vec()
             },
         )?
     };
@@ -542,15 +543,15 @@ fn decompress_as_uo1_id(
             8,    // backward_window
             None, // no LSB constraint for UO-1-ID
             |input| crc_calculators.crc8(input),
-            |candidate_sn, _| {
-                prepare_uo1_id_specific_crc_input_payload(
+            |candidate_sn, _, buf| {
+                prepare_uo1_id_specific_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     ts_for_sn_plus_one,
                     context.last_reconstructed_rtp_marker,
                     ip_id_lsb,
+                    buf,
                 )
-                .to_vec()
             },
         )?
     };
@@ -631,14 +632,14 @@ fn decompress_as_uo1_rtp(
             8,    // backward_window
             None, // no LSB constraint for UO-1-RTP
             |input| crc_calculators.crc8(input),
-            |candidate_sn, _| {
-                prepare_generic_uo_crc_input_payload(
+            |candidate_sn, _, buf| {
+                prepare_generic_uo_crc_input_into_buf(
                     context.rtp_ssrc,
                     candidate_sn,
                     expected_ts_from_scaled,
                     parsed_uo1_rtp.marker,
+                    buf,
                 )
-                .to_vec()
             },
         )?
     };
@@ -686,7 +687,7 @@ fn try_sn_recovery<F, G>(
 ) -> Result<SequenceNumber, RohcError>
 where
     F: Fn(&[u8]) -> u8,
-    G: Fn(SequenceNumber, Timestamp) -> Vec<u8>,
+    G: Fn(SequenceNumber, Timestamp, &mut [u8]) -> usize,
 {
     let expected_next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
@@ -695,6 +696,9 @@ where
         let mask = (1u16 << num_bits) - 1;
         (mask, lsb_value)
     });
+
+    // Stack buffer for CRC input - largest is 12 bytes for UO-1-ID
+    let mut crc_input_buf = [0u8; 16];
 
     // Forward search
     for offset in 1..=forward_window {
@@ -714,9 +718,9 @@ where
         }
 
         let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-        let crc_input = crc_input_generator(candidate_sn, candidate_ts);
+        let crc_len = crc_input_generator(candidate_sn, candidate_ts, &mut crc_input_buf);
 
-        if crc_calculator(&crc_input) == received_crc {
+        if crc_calculator(&crc_input_buf[..crc_len]) == received_crc {
             return Ok(candidate_sn);
         }
     }
@@ -737,9 +741,9 @@ where
         }
 
         let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-        let crc_input = crc_input_generator(candidate_sn, candidate_ts);
+        let crc_len = crc_input_generator(candidate_sn, candidate_ts, &mut crc_input_buf);
 
-        if crc_calculator(&crc_input) == received_crc {
+        if crc_calculator(&crc_input_buf[..crc_len]) == received_crc {
             return Ok(candidate_sn);
         }
     }
