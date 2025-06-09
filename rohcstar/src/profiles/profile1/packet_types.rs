@@ -6,7 +6,7 @@
 //! incoming ROHC packets and for building outgoing ROHC packets.
 
 use crate::packet_defs::RohcProfile;
-use crate::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
+use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
@@ -43,6 +43,8 @@ pub struct IrPacket {
     pub dyn_rtp_marker: bool,
     /// IP TTL from dynamic chain.
     pub dyn_ip_ttl: u8,
+    /// IP identification from dynamic chain.
+    pub dyn_ip_id: IpId,
     /// Optional RTP timestamp stride value from the IR-DYN packet's extension.
     /// Present if the compressor is signaling TS stride for TS_SCALED mode.
     pub ts_stride: Option<u32>,
@@ -64,6 +66,7 @@ impl Default for IrPacket {
             dyn_rtp_timestamp: Timestamp::new(0),
             dyn_rtp_marker: false,
             dyn_ip_ttl: crate::constants::DEFAULT_IPV4_TTL,
+            dyn_ip_id: 0.into(),
             ts_stride: None,
         }
     }
@@ -139,6 +142,7 @@ mod tests {
             dyn_rtp_timestamp: 1000.into(),
             dyn_rtp_marker: true,
             dyn_ip_ttl: 64,
+            dyn_ip_id: 0.into(),
             ts_stride: Some(160),
         };
         assert_eq!(custom_ir.cid, 5);
@@ -219,6 +223,7 @@ mod tests {
             dyn_rtp_timestamp: 50.into(),
             dyn_rtp_marker: true,
             dyn_ip_ttl: 255,
+            dyn_ip_id: 0.into(),
             ts_stride: Some(80),
         };
         let ser_ir = serde_json::to_string(&ir).unwrap();

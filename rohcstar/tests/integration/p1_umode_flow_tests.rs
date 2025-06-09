@@ -797,10 +797,10 @@ fn p1_umode_ir_to_fo_sequence_cid0_context_consistent() {
         comp_ctx.last_sent_rtp_marker,
         decomp_ctx.last_reconstructed_rtp_marker
     );
-    // For Profile 1, IP-ID is not sent in IR, so decompressor initializes it to 0.
-    // The compressor knows the IP-ID of the packet it used for IR.
-    // This assertion specifically checks the decompressor's state.
-    assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0);
+
+    // IP-ID is now included in IR dynamic chain and preserved in both contexts.
+    // Both compressor and decompressor should have the same IP-ID value.
+    assert_eq!(decomp_ctx.last_reconstructed_ip_id_full, 0x1234);
 
     // P2: UO-0 - create headers that exactly match compressor context expectations
     let mut uo0_headers = create_rtp_headers_fixed_ssrc(

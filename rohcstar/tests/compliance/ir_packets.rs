@@ -11,9 +11,9 @@ use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
 use rohcstar::types::ContextId;
 
-/// Minimum IR packet size: type(1) + profile(1) + static_chain(16) + dynamic_chain(7) + CRC(1).
+/// Minimum IR packet size: type(1) + profile(1) + static_chain(16) + dynamic_chain(9) + CRC(1).
 /// RFC 3095 IR packets contain compressed header info, not full uncompressed headers.
-const P1_IR_MINIMUM_SIZE: usize = 26;
+const P1_IR_MINIMUM_SIZE: usize = 28;
 
 #[test]
 fn p1_ir_packet_structure_conforms_to_rfc() {
@@ -121,7 +121,7 @@ fn p1_ir_with_cid_uses_add_cid_octet() {
 }
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
+#[ignore] // TODO: fix RTP payload type preservation
 fn p1_ir_handles_max_static_fields() {
     let mut engine = create_test_engine();
     let mut headers = create_rfc_example_headers();

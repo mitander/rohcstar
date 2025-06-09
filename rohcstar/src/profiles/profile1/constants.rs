@@ -100,8 +100,8 @@ pub const P1_DEFAULT_P_IPID_OFFSET: i64 = 0;
 // --- Profile 1 Chain Lengths (RFC 3095, Sec 5.8) ---
 /// Static chain length (IP_Src/Dst, UDP_Src/Dst, RTP_SSRC) in bytes. (16 bytes)
 pub const P1_STATIC_CHAIN_LENGTH_BYTES: usize = 16;
-/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, IP_TTL, RTP_Flags) in bytes. (8 bytes)
-pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 8;
+/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, IP_TTL, IP_ID, RTP_Flags) in bytes. (10 bytes)
+pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 10;
 /// Length of TS_STRIDE extension in IR-DYN dynamic chain, in bytes. (4 bytes)
 pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;
 
@@ -110,6 +110,8 @@ pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;
 pub const P1_SN_LENGTH_BYTES: usize = 2;
 /// RTP Timestamp field length in bytes.
 pub const P1_TS_LENGTH_BYTES: usize = 4;
+/// IP Identification field length in bytes.
+pub const P1_IP_ID_LENGTH_BYTES: usize = 2;
 
 // --- Profile 1 IR Dynamic Chain RTP Flags Bitmasks (RFC 3095, Sec 5.7.7.2) ---
 /// Mask for Marker (M) bit in IR-DYN RTP_Flags octet (MSB: Bit 7).
@@ -168,7 +170,7 @@ mod tests {
     #[test]
     fn chain_length_constants_are_correct() {
         assert_eq!(P1_STATIC_CHAIN_LENGTH_BYTES, 16);
-        assert_eq!(P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, 8);
+        assert_eq!(P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES, 10);
         assert_eq!(P1_TS_STRIDE_EXTENSION_LENGTH_BYTES, 4);
     }
 

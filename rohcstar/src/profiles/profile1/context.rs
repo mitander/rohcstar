@@ -567,7 +567,7 @@ impl Profile1DecompressorContext {
         self.last_reconstructed_rtp_sn_full = ir_packet.dyn_rtp_sn;
         self.last_reconstructed_rtp_ts_full = ir_packet.dyn_rtp_timestamp;
         self.last_reconstructed_rtp_marker = ir_packet.dyn_rtp_marker;
-        self.last_reconstructed_ip_id_full = IpId::new(0);
+        self.last_reconstructed_ip_id_full = ir_packet.dyn_ip_id;
 
         self.expected_lsb_sn_width = P1_UO0_SN_LSB_WIDTH_DEFAULT;
         self.p_sn = P1_DEFAULT_P_SN_OFFSET;
@@ -1099,6 +1099,7 @@ mod tests {
             dyn_rtp_timestamp: 20000.into(),
             dyn_rtp_marker: true,
             dyn_ip_ttl: 64,
+            dyn_ip_id: 0.into(),
             ts_stride: None,
         };
 
@@ -1135,6 +1136,7 @@ mod tests {
             dyn_rtp_timestamp: 5000.into(),
             dyn_rtp_marker: false,
             dyn_ip_ttl: 64,
+            dyn_ip_id: 0.into(),
             ts_stride: Some(160),
         };
         decomp_ctx.initialize_from_ir_packet(&ir_data_with_stride);

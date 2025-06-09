@@ -167,7 +167,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_at_edge.rtp_sequence_number, sn_at_edge);
     assert_eq!(decomp_at_edge.rtp_timestamp, initial_ts_val);
-    assert_eq!(decomp_at_edge.ip_identification, 0);
+    assert_eq!(decomp_at_edge.ip_identification, ip_id_from_ir_context);
 
     // Test SN beyond +15 window, still UO-0 if TS stable
     let sn_next_to_edge = sn_at_edge + 1;
@@ -195,7 +195,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         .clone();
     assert_eq!(decomp_next_to_edge.rtp_sequence_number, sn_next_to_edge);
     assert_eq!(decomp_next_to_edge.rtp_timestamp, initial_ts_val);
-    assert_eq!(decomp_next_to_edge.ip_identification, 0);
+    assert_eq!(decomp_next_to_edge.ip_identification, ip_id_from_ir_context);
 
     // Re-establish context for larger jump test
     let new_ir_base_ts_val: u32 = initial_ts_val + 100;
@@ -316,7 +316,10 @@ fn p1_uo0_sn_at_lsb_window_edge() {
         decomp_outside_window.rtp_timestamp,
         expected_ts_for_decomp_uo1_sn
     );
-    assert_eq!(decomp_outside_window.ip_identification, 0);
+    assert_eq!(
+        decomp_outside_window.ip_identification,
+        ip_id_from_new_ir_context
+    );
 }
 
 /// Tests that consecutive UO-0 CRC failures trigger FC→SC mode downgrade.

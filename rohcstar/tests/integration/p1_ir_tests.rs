@@ -332,7 +332,10 @@ fn p1_multiple_flows_different_cids() {
     assert_eq!(decompressed2_flow1.rtp_sequence_number, sn2_flow1);
     assert_eq!(decompressed2_flow1.rtp_marker, marker2_flow1);
     assert_eq!(decompressed2_flow1.rtp_timestamp, ts2_flow1_val);
-    assert_eq!(decompressed2_flow1.ip_identification, 0); // IP-ID reconstructed from LSBs or context (here, default 0 for UO-0)
+    assert_eq!(
+        decompressed2_flow1.ip_identification,
+        headers2_flow1.ip_identification
+    ); // IP-ID reconstructed from context
 }
 
 /// Tests that a change in SSRC forces the compressor to reinitialize context and send an IR packet.

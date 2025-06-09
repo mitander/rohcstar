@@ -464,7 +464,7 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
 
     assert_eq!(
         compressed_jump_neg.len(),
-        27,
+        29,
         "Negative jump part should result in an IR"
     );
 
