@@ -149,11 +149,13 @@ pub(super) fn process_packet_in_sc_mode(
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
-    debug_assert_eq!(
-        context.mode,
-        Profile1DecompressorMode::StaticContext,
-        "process_packet_in_sc_mode called outside of StaticContext mode"
-    );
+    // Function may transition mode during execution, so only verify initial state
+    if context.mode != Profile1DecompressorMode::StaticContext {
+        return Err(RohcError::InvalidState(format!(
+            "process_packet_in_sc_mode called with mode {:?}, expected StaticContext",
+            context.mode
+        )));
+    }
     debug_assert!(
         !discriminated_type.is_ir(),
         "IR packet routed to process_packet_in_sc_mode"

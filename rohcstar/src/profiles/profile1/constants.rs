@@ -58,6 +58,8 @@ pub const P1_MAX_SN_RECOVERY_WINDOW_UO1: u16 = 256;
 pub const P1_MAX_SN_RECOVERY_WINDOW_UO0: u16 = 32;
 /// Default LSBs for IP-ID in UO-1-ID packets (8 bits).
 pub const P1_UO1_IPID_LSB_WIDTH_DEFAULT: u8 = 8;
+/// Maximum allowed SN jump distance to prevent extreme reconstructions.
+pub const P1_MAX_SN_JUMP_DISTANCE: u16 = 64;
 
 // --- Profile 1 Decompressor Mode Transition Thresholds (RFC 3095, Sec 5.3.2.2.3) ---
 /// Consecutive CRC failures in FC mode before FC -> SC transition.

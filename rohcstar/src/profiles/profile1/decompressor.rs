@@ -13,199 +13,18 @@ use super::packet_processor::{
 };
 use super::protocol_types::RtpUdpIpv4Headers;
 
+use crate::CrcType::{self, Crc3Uo0, Crc8Uo1Sn};
+use crate::Field::{self, IpIdLsb, NumIpIdLsbBits, NumTsLsbBits, TsLsb, TsScaled};
+use crate::ParseContext::UoPacketTypeDiscriminator;
+use crate::StructureType::{Uo1IdPacket, Uo1RtpPacket, Uo1TsPacket};
 use crate::constants::{IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc::CrcCalculators;
 use crate::encodings::decode_lsb;
 use crate::error::{DecompressionError, RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
+
 use crate::traits::RohcDecompressorContext;
 use crate::types::{IpId, SequenceNumber, Timestamp};
-
-use crate::profiles::profile1::constants::{
-    P1_MAX_SN_RECOVERY_WINDOW_UO0, P1_MAX_SN_RECOVERY_WINDOW_UO1,
-};
-
-const MAX_SN_RECOVERY_ATTEMPTS_UO1: u16 = P1_MAX_SN_RECOVERY_WINDOW_UO1;
-const MAX_SN_RECOVERY_ATTEMPTS_UO0: u16 = P1_MAX_SN_RECOVERY_WINDOW_UO0;
-
-/// Attempts CRC recovery using conservative distance limits.
-///
-/// CRC3 (~12.5% collision rate): 8-packet window
-/// CRC8 (~0.4% collision rate): 64-packet window
-fn attempt_sn_recovery<F, G>(
-    context: &Profile1DecompressorContext,
-    received_crc: u8,
-    crc_error_type: crate::error::CrcType,
-    max_attempts: u16,
-    crc_calculator: F,
-    crc_input_generator: G,
-    decoded_sn_candidate: Option<SequenceNumber>,
-) -> Result<SequenceNumber, RohcError>
-where
-    F: Fn(&[u8]) -> u8,
-    G: Fn(SequenceNumber, Timestamp) -> Vec<u8>,
-{
-    let expected_next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-    let is_weak_crc = matches!(crc_error_type, crate::error::CrcType::Crc3Uo0);
-
-    if is_weak_crc {
-        let max_distance = 8u16;
-
-        for recovery_attempt in 1..=max_distance {
-            let candidate_sn = context
-                .last_reconstructed_rtp_sn_full
-                .wrapping_add(recovery_attempt);
-            let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-            let crc_input_bytes = crc_input_generator(candidate_sn, candidate_ts);
-            let calculated_crc = crc_calculator(&crc_input_bytes);
-
-            if calculated_crc == received_crc {
-                return Ok(candidate_sn);
-            }
-            if recovery_attempt <= 4 {
-                let candidate_sn = SequenceNumber::new(
-                    context
-                        .last_reconstructed_rtp_sn_full
-                        .wrapping_sub(SequenceNumber::new(recovery_attempt)),
-                );
-                let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-                let crc_input_bytes = crc_input_generator(candidate_sn, candidate_ts);
-                let calculated_crc = crc_calculator(&crc_input_bytes);
-
-                if calculated_crc == received_crc {
-                    return Ok(candidate_sn);
-                }
-            }
-        }
-    } else {
-        if let Some(decoded_sn) = decoded_sn_candidate {
-            for offset in [0i16, 256i16, -256i16] {
-                let candidate_sn =
-                    SequenceNumber::new(decoded_sn.value().wrapping_add_signed(offset));
-
-                // Reject candidates too far from expected progression (prevents extreme jumps)
-                let distance_from_expected =
-                    candidate_sn.value().wrapping_sub(expected_next_sn.value());
-                if distance_from_expected > 64 && distance_from_expected < (u16::MAX - 64) {
-                    continue;
-                }
-
-                let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-                let crc_input_bytes = crc_input_generator(candidate_sn, candidate_ts);
-                let calculated_crc = crc_calculator(&crc_input_bytes);
-
-                if calculated_crc == received_crc {
-                    return Ok(candidate_sn);
-                }
-            }
-        }
-        let conservative_max = 64u16.min(max_attempts);
-        for recovery_attempt in 1..=conservative_max {
-            let candidate_sn = context
-                .last_reconstructed_rtp_sn_full
-                .wrapping_add(recovery_attempt);
-            let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-            let crc_input_bytes = crc_input_generator(candidate_sn, candidate_ts);
-            let calculated_crc = crc_calculator(&crc_input_bytes);
-
-            if calculated_crc == received_crc {
-                return Ok(candidate_sn);
-            }
-        }
-        for recovery_attempt in 1..=8 {
-            let candidate_sn = SequenceNumber::new(
-                context
-                    .last_reconstructed_rtp_sn_full
-                    .wrapping_sub(SequenceNumber::new(recovery_attempt)),
-            );
-            let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-            let crc_input_bytes = crc_input_generator(candidate_sn, candidate_ts);
-            let calculated_crc = crc_calculator(&crc_input_bytes);
-
-            if calculated_crc == received_crc {
-                return Ok(candidate_sn);
-            }
-        }
-    }
-
-    Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-        expected: received_crc,
-        calculated: 0, // No valid CRC found
-        crc_type: crc_error_type,
-    }))
-}
-
-/// UO-1-SN recovery with strict LSB validation.
-fn attempt_sn_recovery_for_uo1_sn(
-    context: &Profile1DecompressorContext,
-    received_crc: u8,
-    crc_calculators: &CrcCalculators,
-    marker: bool,
-    sn_lsb: u8,
-    num_sn_lsb_bits: u8,
-    decoded_sn_candidate: SequenceNumber,
-) -> Result<SequenceNumber, RohcError> {
-    let lsb_mask = (1u16 << num_sn_lsb_bits) - 1;
-    let expected_next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-    for window_offset in [0i16, 256i16, -256i16] {
-        let candidate_sn = SequenceNumber::new(
-            decoded_sn_candidate
-                .value()
-                .wrapping_add_signed(window_offset),
-        );
-        let candidate_lsbs = (candidate_sn.value() & lsb_mask) as u8;
-
-        if candidate_lsbs != sn_lsb {
-            continue;
-        }
-
-        let distance_from_expected = candidate_sn.value().wrapping_sub(expected_next_sn.value());
-        if distance_from_expected > 64 && distance_from_expected < (u16::MAX - 64) {
-            continue;
-        }
-
-        let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-        let crc_input_bytes = prepare_generic_uo_crc_input_payload(
-            context.rtp_ssrc,
-            candidate_sn,
-            candidate_ts,
-            marker,
-        );
-        let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
-
-        if calculated_crc8 == received_crc {
-            return Ok(candidate_sn);
-        }
-    }
-    for recovery_attempt in 1..=64 {
-        let candidate_sn = context
-            .last_reconstructed_rtp_sn_full
-            .wrapping_add(recovery_attempt);
-        let candidate_lsbs = (candidate_sn.value() & lsb_mask) as u8;
-        if candidate_lsbs != sn_lsb {
-            continue;
-        }
-
-        let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
-        let crc_input_bytes = prepare_generic_uo_crc_input_payload(
-            context.rtp_ssrc,
-            candidate_sn,
-            candidate_ts,
-            marker,
-        );
-        let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
-
-        if calculated_crc8 == received_crc {
-            return Ok(candidate_sn);
-        }
-    }
-
-    Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-        expected: received_crc,
-        calculated: 0, // No valid CRC found
-        crc_type: crate::error::CrcType::Crc8Uo1Sn,
-    }))
-}
 
 /// Decompresses IR packet and reconstructs headers.
 /// static chain information (IP addresses, ports, SSRC) and dynamic chain elements
@@ -275,7 +94,7 @@ pub(super) fn decompress_as_uo(
         return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
             needed: 1,
             got: 0,
-            context: crate::error::ParseContext::UoPacketTypeDiscriminator,
+            context: UoPacketTypeDiscriminator,
         }));
     }
 
@@ -329,72 +148,28 @@ fn decompress_as_uo0(
         *context.last_reconstructed_rtp_sn_full,
     );
 
-    // Sanity check: UO-0 should have reasonable SN progression
-    // UO-0 uses 4-bit SN field, so max valid jump is 15, but allow some tolerance
-    let expected_sn_range_start = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-    let sn_diff_forward = decoded_sn.wrapping_sub(expected_sn_range_start.value());
-    let sn_diff_backward = expected_sn_range_start.value().wrapping_sub(decoded_sn);
-
-    // UO-0 has smaller window (4 bits = 16 values), so use tighter threshold
-
-    if sn_diff_forward > P1_MAX_REASONABLE_UO0_SN_JUMP
-        && sn_diff_backward > P1_MAX_REASONABLE_UO0_SN_JUMP
-    {
-        // Mark CRC failure for RFC compliance
-        context.counters.had_recent_crc_failure = true;
-
-        let recovery_sn = attempt_sn_recovery(
-            context,
-            parsed_uo0.crc3,
-            crate::error::CrcType::Crc3Uo0,
-            MAX_SN_RECOVERY_ATTEMPTS_UO0,
-            |input| crc_calculators.crc3(input),
-            |candidate_sn, candidate_ts| {
-                prepare_generic_uo_crc_input_payload(
-                    context.rtp_ssrc,
-                    candidate_sn,
-                    candidate_ts,
-                    context.last_reconstructed_rtp_marker,
-                )
-                .to_vec()
-            },
-            Some(decoded_sn.into()),
-        )?;
-
-        let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
-
-        context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
-        context.last_reconstructed_rtp_sn_full = recovery_sn;
-        context.last_reconstructed_rtp_ts_full = decoded_ts;
-
-        return Ok(reconstruct_headers_from_context(
-            context,
-            recovery_sn,
-            decoded_ts,
-            context.last_reconstructed_rtp_marker,
-            context.last_reconstructed_ip_id_full,
-        ));
-    }
-
     let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         decoded_sn.into(),
         decoded_ts,
-        context.last_reconstructed_rtp_marker, // UO-0 implies marker is unchanged from context
+        context.last_reconstructed_rtp_marker,
     );
     let calculated_crc3 = crc_calculators.crc3(&crc_input_bytes);
 
+    // Hot path: CRC validation first, then sanity checks
     if calculated_crc3 != parsed_uo0.crc3 {
         // Mark CRC failure for RFC compliance
         context.counters.had_recent_crc_failure = true;
 
-        match attempt_sn_recovery(
+        match try_sn_recovery(
             context,
             parsed_uo0.crc3,
-            crate::error::CrcType::Crc3Uo0,
-            MAX_SN_RECOVERY_ATTEMPTS_UO0,
+            Crc3Uo0,
+            8,    // forward_window: CRC3 ~12.5% collision rate, conservative
+            4,    // backward_window: small for UO-0
+            None, // no LSB constraint for UO-0
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts| {
                 prepare_generic_uo_crc_input_payload(
@@ -405,7 +180,6 @@ fn decompress_as_uo0(
                 )
                 .to_vec()
             },
-            Some(decoded_sn.into()),
         ) {
             Ok(recovery_sn) => {
                 let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
@@ -426,10 +200,55 @@ fn decompress_as_uo0(
                 return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                     expected: parsed_uo0.crc3,
                     calculated: calculated_crc3,
-                    crc_type: crate::error::CrcType::Crc3Uo0,
+                    crc_type: Crc3Uo0,
                 }));
             }
         }
+    }
+
+    // Sanity check: Only validate after CRC passes to avoid penalizing hot path
+    let expected_sn_range_start = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
+    let sn_diff_forward = decoded_sn.wrapping_sub(expected_sn_range_start.value());
+    let sn_diff_backward = expected_sn_range_start.value().wrapping_sub(decoded_sn);
+
+    if sn_diff_forward > P1_MAX_REASONABLE_UO0_SN_JUMP
+        && sn_diff_backward > P1_MAX_REASONABLE_UO0_SN_JUMP
+    {
+        // Mark CRC failure for RFC compliance
+        context.counters.had_recent_crc_failure = true;
+
+        let recovery_sn = try_sn_recovery(
+            context,
+            parsed_uo0.crc3,
+            Crc3Uo0,
+            8,    // forward_window
+            4,    // backward_window
+            None, // no LSB constraint
+            |input| crc_calculators.crc3(input),
+            |candidate_sn, candidate_ts| {
+                prepare_generic_uo_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    candidate_ts,
+                    context.last_reconstructed_rtp_marker,
+                )
+                .to_vec()
+            },
+        )?;
+
+        let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
+
+        context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
+        context.last_reconstructed_rtp_sn_full = recovery_sn;
+        context.last_reconstructed_rtp_ts_full = decoded_ts;
+
+        return Ok(reconstruct_headers_from_context(
+            context,
+            recovery_sn,
+            decoded_ts,
+            context.last_reconstructed_rtp_marker,
+            context.last_reconstructed_ip_id_full,
+        ));
     }
 
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, SequenceNumber::new(decoded_sn));
@@ -465,61 +284,47 @@ fn decompress_as_uo1_sn(
         context.p_sn,
     )? as u16;
 
-    // Sanity check: UO-1-SN should have reasonable SN progression
-    // Large jumps (>256) are likely W-LSB decoding errors due to CRC collisions
-    let expected_sn_range_start = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
-    let sn_diff_forward = decoded_sn.wrapping_sub(expected_sn_range_start.value());
-    let sn_diff_backward = expected_sn_range_start.value().wrapping_sub(decoded_sn);
-
-    let recovery_sn = if sn_diff_forward > P1_MAX_REASONABLE_SN_JUMP
-        && sn_diff_backward > P1_MAX_REASONABLE_SN_JUMP
-    {
-        Some(attempt_sn_recovery_for_uo1_sn(
-            context,
-            parsed_uo1.crc8,
-            crc_calculators,
-            parsed_uo1.marker,
-            parsed_uo1.sn_lsb as u8,
-            parsed_uo1.num_sn_lsb_bits,
-            decoded_sn.into(),
-        )?)
-    } else {
-        None
-    };
-
-    let final_sn = recovery_sn.unwrap_or_else(|| decoded_sn.into());
-    let decoded_ts = calculate_reconstructed_ts_implicit(context, final_sn);
+    let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        final_sn,
+        decoded_sn.into(),
         decoded_ts,
-        parsed_uo1.marker, // UO-1-SN carries the marker bit.
+        parsed_uo1.marker,
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
-    if calculated_crc8 != parsed_uo1.crc8 && recovery_sn.is_none() {
-        match attempt_sn_recovery_for_uo1_sn(
+    // Hot path: CRC validation first, then sanity checks
+    if calculated_crc8 != parsed_uo1.crc8 {
+        match try_sn_recovery(
             context,
             parsed_uo1.crc8,
-            crc_calculators,
-            parsed_uo1.marker,
-            parsed_uo1.sn_lsb as u8,
-            parsed_uo1.num_sn_lsb_bits,
-            final_sn,
+            Crc8Uo1Sn,
+            32, // forward_window: larger for 8-bit CRC
+            8,  // backward_window
+            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)), // LSB constraint
+            |input| crc_calculators.crc8(input),
+            |candidate_sn, candidate_ts| {
+                prepare_generic_uo_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    candidate_ts,
+                    parsed_uo1.marker,
+                )
+                .to_vec()
+            },
         ) {
-            Ok(recovery_result) => {
-                let final_sn = recovery_result;
-                let decoded_ts = calculate_reconstructed_ts_implicit(context, final_sn);
+            Ok(recovery_sn) => {
+                let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
 
-                context.infer_ts_stride_from_decompressed_ts(decoded_ts, final_sn);
-                context.last_reconstructed_rtp_sn_full = final_sn;
+                context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
+                context.last_reconstructed_rtp_sn_full = recovery_sn;
                 context.last_reconstructed_rtp_ts_full = decoded_ts;
                 context.last_reconstructed_rtp_marker = parsed_uo1.marker;
 
                 return Ok(reconstruct_headers_from_context(
                     context,
-                    final_sn,
+                    recovery_sn,
                     decoded_ts,
                     parsed_uo1.marker,
                     context.last_reconstructed_ip_id_full,
@@ -529,17 +334,61 @@ fn decompress_as_uo1_sn(
                 return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                     expected: parsed_uo1.crc8,
                     calculated: calculated_crc8,
-                    crc_type: crate::error::CrcType::Crc8Uo1Sn,
+                    crc_type: Crc8Uo1Sn,
                 }));
             }
         }
-    } else if calculated_crc8 != parsed_uo1.crc8 {
-        return Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
-            expected: parsed_uo1.crc8,
-            calculated: calculated_crc8,
-            crc_type: crate::error::CrcType::Crc8Uo1Sn,
-        }));
     }
+
+    // Sanity check: Only validate after CRC passes to avoid penalizing hot path
+    let expected_sn_range_start = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
+    let sn_diff_forward = decoded_sn.wrapping_sub(expected_sn_range_start.value());
+    let sn_diff_backward = expected_sn_range_start.value().wrapping_sub(decoded_sn);
+
+    if sn_diff_forward > P1_MAX_REASONABLE_SN_JUMP && sn_diff_backward > P1_MAX_REASONABLE_SN_JUMP {
+        // Use recovery for extreme jumps even if CRC passed (false positive protection)
+        match try_sn_recovery(
+            context,
+            parsed_uo1.crc8,
+            Crc8Uo1Sn,
+            32, // forward_window
+            8,  // backward_window
+            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
+            |input| crc_calculators.crc8(input),
+            |candidate_sn, candidate_ts| {
+                prepare_generic_uo_crc_input_payload(
+                    context.rtp_ssrc,
+                    candidate_sn,
+                    candidate_ts,
+                    parsed_uo1.marker,
+                )
+                .to_vec()
+            },
+        ) {
+            Ok(recovery_sn) => {
+                let decoded_ts = calculate_reconstructed_ts_implicit(context, recovery_sn);
+
+                context.infer_ts_stride_from_decompressed_ts(decoded_ts, recovery_sn);
+                context.last_reconstructed_rtp_sn_full = recovery_sn;
+                context.last_reconstructed_rtp_ts_full = decoded_ts;
+                context.last_reconstructed_rtp_marker = parsed_uo1.marker;
+
+                return Ok(reconstruct_headers_from_context(
+                    context,
+                    recovery_sn,
+                    decoded_ts,
+                    parsed_uo1.marker,
+                    context.last_reconstructed_ip_id_full,
+                ));
+            }
+            Err(_) => {
+                // Recovery failed, but CRC passed - use original decode
+                // This handles edge case where extreme jump is actually valid
+            }
+        }
+    }
+
+    let final_sn = decoded_sn.into();
 
     context.infer_ts_stride_from_decompressed_ts(decoded_ts, final_sn);
     context.last_reconstructed_rtp_sn_full = final_sn;
@@ -571,14 +420,14 @@ fn decompress_as_uo1_ts(
 
     let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field: crate::error::Field::TsLsb,
-            structure: crate::error::StructureType::Uo1TsPacket,
+            field: TsLsb,
+            structure: Uo1TsPacket,
         })
     })?;
     let num_ts_lsb_bits = parsed_uo1_ts.num_ts_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field: crate::error::Field::NumTsLsbBits,
-            structure: crate::error::StructureType::Uo1TsPacket,
+            field: NumTsLsbBits,
+            structure: Uo1TsPacket,
         })
     })?;
 
@@ -601,11 +450,13 @@ fn decompress_as_uo1_ts(
     let final_sn = if calculated_crc8 == parsed_uo1_ts.crc8 {
         expected_sn
     } else {
-        attempt_sn_recovery(
+        try_sn_recovery(
             context,
             parsed_uo1_ts.crc8,
-            crate::error::CrcType::Crc8Uo1Sn,
-            MAX_SN_RECOVERY_ATTEMPTS_UO1,
+            Crc8Uo1Sn,
+            32,   // forward_window
+            8,    // backward_window
+            None, // no LSB constraint for UO-1-TS
             |input| crc_calculators.crc8(input),
             |candidate_sn, _| {
                 prepare_generic_uo_crc_input_payload(
@@ -616,7 +467,6 @@ fn decompress_as_uo1_ts(
                 )
                 .to_vec()
             },
-            None,
         )?
     };
 
@@ -650,14 +500,14 @@ fn decompress_as_uo1_id(
 
     let ip_id_lsb_from_packet = parsed_uo1_id.ip_id_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field: crate::error::Field::IpIdLsb,
-            structure: crate::error::StructureType::Uo1IdPacket,
+            field: IpIdLsb,
+            structure: Uo1IdPacket,
         })
     })?;
     let num_ip_id_lsb_bits = parsed_uo1_id.num_ip_id_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field: crate::error::Field::NumIpIdLsbBits,
-            structure: crate::error::StructureType::Uo1IdPacket,
+            field: NumIpIdLsbBits,
+            structure: Uo1IdPacket,
         })
     })?;
 
@@ -684,11 +534,13 @@ fn decompress_as_uo1_id(
         let ts_for_sn_plus_one = calculate_reconstructed_ts_implicit_sn_plus_one(context);
         let ip_id_lsb = parsed_uo1_id.ip_id_lsb.unwrap_or(0) as u8;
 
-        attempt_sn_recovery(
+        try_sn_recovery(
             context,
             parsed_uo1_id.crc8,
-            crate::error::CrcType::Crc8Uo1Sn,
-            MAX_SN_RECOVERY_ATTEMPTS_UO1,
+            Crc8Uo1Sn,
+            32,   // forward_window
+            8,    // backward_window
+            None, // no LSB constraint for UO-1-ID
             |input| crc_calculators.crc8(input),
             |candidate_sn, _| {
                 prepare_uo1_id_specific_crc_input_payload(
@@ -700,7 +552,6 @@ fn decompress_as_uo1_id(
                 )
                 .to_vec()
             },
-            Some(expected_sn),
         )?
     };
     let decoded_ts = expected_ts;
@@ -745,8 +596,8 @@ fn decompress_as_uo1_rtp(
 
     let ts_scaled_received = parsed_uo1_rtp.ts_scaled.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
-            field: crate::error::Field::TsScaled,
-            structure: crate::error::StructureType::Uo1RtpPacket,
+            field: TsScaled,
+            structure: Uo1RtpPacket,
         })
     })?;
 
@@ -755,7 +606,7 @@ fn decompress_as_uo1_rtp(
         .ok_or_else(|| {
             RohcError::Decompression(DecompressionError::LsbDecodingFailed {
                 cid: context.cid(),
-                field: crate::error::Field::TsScaled,
+                field: Field::TsScaled,
             })
         })?;
 
@@ -772,11 +623,13 @@ fn decompress_as_uo1_rtp(
     let decoded_sn = if calculated_crc8 == parsed_uo1_rtp.crc8 {
         expected_sn
     } else {
-        attempt_sn_recovery(
+        try_sn_recovery(
             context,
             parsed_uo1_rtp.crc8,
-            crate::error::CrcType::Crc8Uo1Sn,
-            MAX_SN_RECOVERY_ATTEMPTS_UO1,
+            Crc8Uo1Sn,
+            32,   // forward_window
+            8,    // backward_window
+            None, // no LSB constraint for UO-1-RTP
             |input| crc_calculators.crc8(input),
             |candidate_sn, _| {
                 prepare_generic_uo_crc_input_payload(
@@ -787,7 +640,6 @@ fn decompress_as_uo1_rtp(
                 )
                 .to_vec()
             },
-            None,
         )?
     };
     let decoded_ts = expected_ts_from_scaled;
@@ -808,6 +660,95 @@ fn decompress_as_uo1_rtp(
         parsed_uo1_rtp.marker,
         context.last_reconstructed_ip_id_full,
     ))
+}
+
+/// Attempts sequence number recovery on CRC mismatch.
+///
+/// Unified recovery function that handles all packet types with configurable
+/// search windows and optional LSB validation. Uses minimal generics for
+/// performance while maintaining flexibility.
+///
+/// # Parameters
+/// - `forward_window`: Maximum packets to search forward from current SN
+/// - `backward_window`: Maximum packets to search backward from current SN  
+/// - `lsb_constraint`: Optional (lsb_value, num_bits) for LSB validation
+/// - `crc_calculator`: Closure for CRC calculation
+/// - `crc_input_generator`: Closure to generate CRC input
+fn try_sn_recovery<F, G>(
+    context: &Profile1DecompressorContext,
+    received_crc: u8,
+    crc_type: CrcType,
+    forward_window: u16,
+    backward_window: u16,
+    lsb_constraint: Option<(u8, u8)>,
+    crc_calculator: F,
+    crc_input_generator: G,
+) -> Result<SequenceNumber, RohcError>
+where
+    F: Fn(&[u8]) -> u8,
+    G: Fn(SequenceNumber, Timestamp) -> Vec<u8>,
+{
+    let expected_next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
+
+    // Pre-compute LSB mask if needed
+    let lsb_mask_and_value = lsb_constraint.map(|(lsb_value, num_bits)| {
+        let mask = (1u16 << num_bits) - 1;
+        (mask, lsb_value)
+    });
+
+    // Forward search
+    for offset in 1..=forward_window {
+        let candidate_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(offset);
+
+        // LSB validation if required
+        if let Some((mask, expected_lsb)) = lsb_mask_and_value {
+            if (candidate_sn.value() & mask) as u8 != expected_lsb {
+                continue;
+            }
+        }
+
+        // Reject extreme jumps (conservative distance check)
+        let distance = candidate_sn.value().wrapping_sub(expected_next_sn.value());
+        if distance > forward_window && distance < (u16::MAX - forward_window) {
+            continue;
+        }
+
+        let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
+        let crc_input = crc_input_generator(candidate_sn, candidate_ts);
+
+        if crc_calculator(&crc_input) == received_crc {
+            return Ok(candidate_sn);
+        }
+    }
+
+    // Backward search
+    for offset in 1..=backward_window {
+        let candidate_sn = SequenceNumber::new(
+            context
+                .last_reconstructed_rtp_sn_full
+                .wrapping_sub(SequenceNumber::new(offset)),
+        );
+
+        // LSB validation if required
+        if let Some((mask, expected_lsb)) = lsb_mask_and_value {
+            if (candidate_sn.value() & mask) as u8 != expected_lsb {
+                continue;
+            }
+        }
+
+        let candidate_ts = calculate_reconstructed_ts_implicit(context, candidate_sn);
+        let crc_input = crc_input_generator(candidate_sn, candidate_ts);
+
+        if crc_calculator(&crc_input) == received_crc {
+            return Ok(candidate_sn);
+        }
+    }
+
+    Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
+        expected: received_crc,
+        calculated: 0,
+        crc_type,
+    }))
 }
 
 /// Reconstructs full RTP/UDP/IPv4 headers using context and current dynamic values.
@@ -1275,7 +1216,7 @@ mod tests {
             })) => {
                 assert_eq!(expected, &wrong_crc3_in_packet);
                 assert_eq!(calculated, &correct_crc3);
-                assert_eq!(crc_type, &crate::error::CrcType::Crc3Uo0);
+                assert_eq!(crc_type, &Crc3Uo0);
                 println!("CRC3 recovery correctly failed - no valid alternatives found");
             }
             _ => {
@@ -1375,7 +1316,7 @@ mod tests {
             result
         {
             assert_eq!(cid, context.cid);
-            assert_eq!(field, crate::error::Field::TsScaled);
+            assert_eq!(field, TsScaled);
         } else {
             panic!(
                 "Expected InvalidState error for UO-1-RTP without stride, got {:?}",
@@ -1796,6 +1737,62 @@ mod tests {
         } else {
             panic!(
                 "Expected NotEnoughData error for empty packet, got {:?}",
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn p1_uo1_sn_recovery_rejects_extreme_jumps() {
+        let crc_calculators = CrcCalculators::new();
+        let ssrc = 0x12345678;
+        let mut context = create_test_context(795, 10000, false, 100, ssrc);
+        context.expected_lsb_sn_width = P1_UO1_SN_LSB_WIDTH_DEFAULT;
+
+        // Simulate the problematic scenario: expected SN=796, candidate=1071 (distance=275)
+        let target_sn = 1071u16;
+        let target_marker = true;
+        let sn_lsb = encode_lsb(target_sn as u64, P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16;
+
+        // Calculate what TS the decompressor will expect for an extreme SN jump
+        let expected_ts = calculate_reconstructed_ts_implicit(&context, target_sn.into());
+
+        // Create CRC input that matches - this simulates a CRC collision scenario
+        let crc_input = prepare_generic_uo_crc_input_payload(
+            ssrc.into(),
+            target_sn.into(),
+            expected_ts,
+            target_marker,
+        );
+        let crc8 = crc_calculators.crc8(&crc_input);
+
+        let uo1_packet = Uo1Packet {
+            sn_lsb,
+            num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
+            marker: target_marker,
+            crc8,
+            ..Default::default()
+        };
+        let mut uo1_buf = [0u8; 8];
+        let uo1_len = serialize_uo1_sn(&uo1_packet, &mut uo1_buf).unwrap();
+        let uo1_bytes = &uo1_buf[..uo1_len];
+
+        // Before the fix, this would succeed with the extreme jump
+        // After the fix, it should fail because 276-packet jump exceeds reasonable limits
+        let result = decompress_as_uo1_sn(&mut context, uo1_bytes, &crc_calculators);
+
+        // Should reject the extreme jump (distance=275 > 64)
+        assert!(
+            result.is_err(),
+            "Decompressor should reject 276-packet jump (SN 795->1071)"
+        );
+
+        // Verify the rejection is due to CRC mismatch (no valid recovery found)
+        if let Err(RohcError::Parsing(RohcParsingError::CrcMismatch { .. })) = result {
+            // Expected: No valid SN candidate found within reasonable distance
+        } else {
+            panic!(
+                "Expected CrcMismatch error for extreme jump rejection, got {:?}",
                 result
             );
         }

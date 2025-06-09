@@ -381,6 +381,10 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
             corrupted_packet[0] &= 0x7F;
         }
 
+        // Get context state before decompression to check recovery is within algorithm's window
+        let context_before = get_decompressor_context(&engine, cid);
+        let context_last_sn_before = context_before.last_reconstructed_rtp_sn_full.value();
+
         let result = engine.decompress_raw(&corrupted_packet);
         let decomp_ctx = get_decompressor_context(&engine, cid);
 
@@ -395,18 +399,18 @@ fn p1_uo0_crc_failures_trigger_context_downgrade() {
                 // CRC mismatch - no valid recovery found
             }
             Ok(recovered_headers) => {
-                // Recovery succeeded - found alternative SN that matches corrupted CRC
+                // Recovery succeeded - validate it's within the algorithm's search window
                 let recovered_headers = recovered_headers.as_rtp_udp_ipv4().unwrap();
-                let distance_from_expected = recovered_headers
+                let distance_from_context = recovered_headers
                     .rtp_sequence_number
                     .value()
-                    .wrapping_sub(current_sn_for_uo0);
+                    .wrapping_sub(context_last_sn_before);
                 assert!(
-                    distance_from_expected <= 8 || distance_from_expected >= (u16::MAX - 8),
-                    "Recovered SN {} too far from expected {}, distance={}",
+                    distance_from_context <= 8 || distance_from_context >= (u16::MAX - 4),
+                    "Recovered SN {} outside UO-0 algorithm window from context SN {}, distance={}",
                     recovered_headers.rtp_sequence_number.value(),
-                    current_sn_for_uo0,
-                    distance_from_expected
+                    context_last_sn_before,
+                    distance_from_context
                 );
             }
             Err(ref other) => {
