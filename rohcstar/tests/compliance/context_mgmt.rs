@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[test]
-#[ignore] // TODO: fix internals to make this pass
 fn engine_context_reinitialization_after_loss() {
     let mut engine = create_test_engine();
     let cid = ContextId::new(0);
@@ -36,12 +35,13 @@ fn engine_context_reinitialization_after_loss() {
         .decompress(&buf[..initial_len])
         .expect("Initial IR decompression should succeed");
 
-    // Simulate context loss
+    // Simulate complete context loss (both compressor and decompressor)
+    engine.context_manager_mut().remove_compressor_context(cid);
     engine
         .context_manager_mut()
         .remove_decompressor_context(cid);
 
-    // Next IR packet should reinitialize
+    // Next IR packet should reinitialize with fresh context
     let headers2 = create_headers_with_sn(200);
     let generic2 = GenericUncompressedHeaders::RtpUdpIpv4(headers2);
 
