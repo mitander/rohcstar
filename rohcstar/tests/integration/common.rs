@@ -334,6 +334,7 @@ pub fn create_ir_packet_data(cid: u16, ssrc: u32, sn: u16, ts_val: u32) -> IrPac
         dyn_rtp_sn: sn.into(),
         dyn_rtp_timestamp: ts_val.into(),
         dyn_rtp_marker: false, // Default marker for this helper
+        dyn_ip_ttl: 64,        // Default TTL value
         ts_stride: None,       // Defaults to None for basic IR data helper
         crc8: 0,               // Placeholder, calculated by builder
     }

@@ -5,8 +5,7 @@
 //! RTP TS and Marker bit remain unchanged from the context.
 //! (RFC 3095, Section 5.7.5)
 
-mod common;
-use common::{
+use super::common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
     get_compressor_context, get_decompressor_context, get_ip_id_established_by_ir,
 };
@@ -146,7 +145,7 @@ fn p1_uo1_id_large_ipid_jump_forces_ir() {
         .unwrap();
     let compressed2 = &compress_buf2[..compressed2_len];
 
-    assert_eq!(compressed2.len(), 26);
+    assert_eq!(compressed2.len(), 27);
     assert_eq!(compressed2[0], P1_ROHC_IR_PACKET_TYPE_WITH_DYN);
 }
 

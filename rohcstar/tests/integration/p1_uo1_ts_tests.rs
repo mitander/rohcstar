@@ -4,8 +4,7 @@
 //! when the RTP Timestamp changes, the RTP Sequence Number increments by one,
 //! and the RTP Marker bit remains unchanged from the context.
 
-mod common;
-use common::{
+use super::common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
     get_decompressor_context,
 };

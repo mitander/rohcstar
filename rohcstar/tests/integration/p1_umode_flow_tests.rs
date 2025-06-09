@@ -4,8 +4,7 @@
 //! typical compression sequences. Tests cover the progression from IR packets through
 //! various UO (Uncompressed/Optimized) packet types under different conditions.
 
-mod common;
-use common::{
+use super::common::{
     create_rtp_headers, create_rtp_headers_fixed_ssrc, create_test_engine_with_system_clock,
     establish_ir_context, get_compressor_context, get_decompressor_context,
     get_ip_id_established_by_ir,

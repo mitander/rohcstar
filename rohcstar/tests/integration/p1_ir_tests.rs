@@ -4,14 +4,13 @@
 //! used to establish and refresh compression contexts. Tests cover error conditions,
 //! context state management, CID handling, and robustness scenarios.
 
-mod common;
 use std::sync::Arc;
 use std::time::Instant;
 
-use common::{
-    create_ir_packet_data, create_rtp_headers, create_test_engine_with_system_clock,
-    establish_ir_context, get_compressor_context, get_decompressor_context,
-    get_ip_id_established_by_ir,
+use super::common::{
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers,
+    create_test_engine_with_system_clock, establish_ir_context, get_compressor_context,
+    get_decompressor_context, get_ip_id_established_by_ir,
 };
 
 use rohcstar::ProfileHandler;
@@ -630,7 +629,7 @@ fn p1_decompressor_context_persistence_across_ir_packets() {
 fn p1_ir_packet_processing_performance() {
     let mut engine = RohcEngine::new(
         u32::MAX, // Large interval to mostly force unique IRs if SSRC changes
-        common::DEFAULT_ENGINE_TEST_TIMEOUT,
+        DEFAULT_ENGINE_TEST_TIMEOUT,
         Arc::new(SystemClock),
     );
     engine

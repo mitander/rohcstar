@@ -3,8 +3,7 @@
 //! Tests UO-1-RTP packet format with TS_SCALED when stride is established.
 //! Covers TS_SCALED calculation, stride detection, marker bit, and IR-DYN TS_STRIDE signaling.
 
-mod common;
-use common::{
+use super::common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
     establish_ts_stride_context_for_uo1_rtp, get_compressor_context, get_decompressor_context,
     get_ip_id_established_by_ir,
