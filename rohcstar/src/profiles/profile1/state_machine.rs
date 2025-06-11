@@ -662,26 +662,11 @@ mod tests {
         let uo0_len_good = serialize_uo0(&uo0_data_good_crc, &mut uo0_buf_good).unwrap();
         let uo0_bytes_good = &uo0_buf_good[..uo0_len_good];
 
-        println!(
-            "DEBUG: Before good packet - mode: {:?}, dynamic_confidence: {}, consecutive_failures: {}",
-            context.mode,
-            context.counters.so_dynamic_confidence,
-            context.counters.so_consecutive_failures
-        );
-
-        let result_good = process_packet_in_so_mode(
+        let _result_good = process_packet_in_so_mode(
             &mut context,
             uo0_bytes_good,
             Profile1PacketType::Uo0,
             &crc_calculators,
-        );
-
-        println!(
-            "DEBUG: After good packet - result: {:?}, mode: {:?}, dynamic_confidence: {}, consecutive_failures: {}",
-            result_good.is_ok(),
-            context.mode,
-            context.counters.so_dynamic_confidence,
-            context.counters.so_consecutive_failures
         );
 
         assert_eq!(
@@ -722,13 +707,6 @@ mod tests {
             }
         }
 
-        println!(
-            "DEBUG: After bad packet attempts - mode: {:?}, dynamic_confidence: {}, consecutive_failures: {}",
-            context.mode,
-            context.counters.so_dynamic_confidence,
-            context.counters.so_consecutive_failures
-        );
-
         if actual_failure_found {
             // Verify confidence decreased due to failure
             assert_eq!(
@@ -744,9 +722,6 @@ mod tests {
                 "Confidence should have increased or stayed same due to successful recovery"
             );
             assert_eq!(context.counters.so_consecutive_failures, 0);
-            println!(
-                "DEBUG: Recovery mechanism prevented all failures - robust error recovery working"
-            );
         }
     }
 

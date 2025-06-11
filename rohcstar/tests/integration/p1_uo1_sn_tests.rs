@@ -6,58 +6,15 @@
 
 use super::common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    get_compressor_context, get_decompressor_context, get_ip_id_established_by_ir,
+    establish_stride_after_ir, get_compressor_context, get_decompressor_context,
+    get_ip_id_established_by_ir,
 };
 
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::RtpUdpIpv4Headers;
 use rohcstar::profiles::profile1::{
-    P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR,
-    Profile1Handler,
+    P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, Profile1Handler,
 };
-
-/// Establishes TS stride by sending UO-1-TS packet after IR context.
-#[allow(clippy::too_many_arguments)]
-fn establish_stride_after_ir(
-    engine: &mut rohcstar::engine::RohcEngine,
-    cid: u16,
-    ssrc: u32,
-    base_sn: u16,
-    base_ts_val: u32,
-    base_marker: bool,
-    base_ip_id: u16,
-    stride_to_establish: u32,
-) {
-    let sn_for_stride = base_sn.wrapping_add(1);
-    let ts_for_stride = base_ts_val.wrapping_add(stride_to_establish);
-    let headers_for_stride = create_rtp_headers(sn_for_stride, ts_for_stride, base_marker, ssrc)
-        .with_ip_id(base_ip_id.into());
-
-    let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride);
-    let mut compress_buf_stride = [0u8; 128];
-    let compressed_stride_len = engine
-        .compress(
-            cid.into(),
-            Some(RohcProfile::RtpUdpIp),
-            &generic_for_stride,
-            &mut compress_buf_stride,
-        )
-        .unwrap();
-    let compressed_stride_packet = &compress_buf_stride[..compressed_stride_len];
-
-    assert_eq!(compressed_stride_packet.len(), 4);
-    if !compressed_stride_packet.is_empty() {
-        assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
-    }
-
-    let _ = engine.decompress(compressed_stride_packet).unwrap();
-
-    let comp_ctx = get_compressor_context(engine, cid);
-    assert_eq!(comp_ctx.ts_stride, Some(stride_to_establish));
-    assert_eq!(comp_ctx.last_sent_rtp_sn_full, sn_for_stride);
-    assert_eq!(comp_ctx.last_sent_rtp_ts_full, ts_for_stride);
-    assert_eq!(comp_ctx.last_sent_rtp_marker, base_marker);
-}
 
 /// Tests UO-1-SN with SN wraparound and marker bit handling.
 #[test]
@@ -69,7 +26,7 @@ fn p1_uo1_sn_with_sn_wraparound() {
     let cid = 0u16;
     let ssrc = 0xABCDEF01;
 
-    let ir_sn = 65530;
+    let ir_sn = 65532;
     let ir_ts_val: u32 = 1000;
     let ir_marker = false;
     establish_ir_context(&mut engine, cid, ir_sn, ir_ts_val, ir_marker, ssrc);
@@ -87,15 +44,15 @@ fn p1_uo1_sn_with_sn_wraparound() {
         stride_val,
     );
 
-    // Packet 1 (UO-1-SN): SN near wraparound, marker true
-    let sn1: u16 = 65532;
-    let marker1 = true; // Marker changes
+    // Packet 1 (UO-1-SN): SN continues from stride establishment, marker true
     let comp_ctx_p1 = get_compressor_context(&engine, cid);
-    let sn_delta_p1 = sn1.wrapping_sub(comp_ctx_p1.last_sent_rtp_sn_full.value()); // 65532 - 65531 = 1
+    let sn1: u16 = comp_ctx_p1.last_sent_rtp_sn_full.wrapping_add(1).value();
+    let marker1 = true; // Marker changes
+    let sn_delta_p1 = sn1.wrapping_sub(comp_ctx_p1.last_sent_rtp_sn_full.value()); // Should be 1
     let expected_ts1_val = comp_ctx_p1
         .last_sent_rtp_ts_full
         .value()
-        .wrapping_add(sn_delta_p1 as u32 * stride_val); // 1160 + 1*160 = 1320
+        .wrapping_add(sn_delta_p1 as u32 * stride_val);
 
     let headers1 =
         create_rtp_headers(sn1, expected_ts1_val, marker1, ssrc).with_ip_id(ip_id_from_ir.into());
@@ -464,8 +421,8 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
 
     assert_eq!(
         compressed_jump_neg.len(),
-        32,
-        "Negative jump part should result in an IR"
+        36,
+        "Negative jump part should result in an IR with TS stride"
     );
 
     let decompress_result_neg_jump = engine.decompress(compressed_jump_neg);
@@ -554,12 +511,12 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
 
     let decomp_ctx_after_uo1 = get_decompressor_context(&engine, cid);
     assert_eq!(
-        decomp_ctx_after_uo1.ts_stride,
+        decomp_ctx_after_uo1.potential_ts_stride,
         Some(stride_val),
-        "Decompressor stride should remain {} after UO-1-SN with SN delta {}. Got {:?}. Prev D state: sn={}, ts={}",
+        "Decompressor potential stride should remain {} after UO-1-SN with SN delta {}. Got {:?}. Prev D state: sn={}, ts={}",
         stride_val,
         sn_delta_uo1,
-        decomp_ctx_after_uo1.ts_stride,
+        decomp_ctx_after_uo1.potential_ts_stride,
         sn_after_stride_packet,
         ts_after_stride_packet
     );

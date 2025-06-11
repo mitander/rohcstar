@@ -212,34 +212,37 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     let ip_id_from_new_ir_context = new_ir_headers_for_context.ip_identification;
 
-    // Send UO-1-TS to establish stride
-    let sn_for_stride_establish = new_ir_sn.wrapping_add(1);
-    let ts_for_stride_establish = new_ir_base_ts_val.wrapping_add(160);
-    let headers_for_stride = create_rtp_headers(
-        sn_for_stride_establish,
-        ts_for_stride_establish,
-        initial_marker,
-        ssrc,
-    )
-    .with_ip_id(ip_id_from_new_ir_context);
-    let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
-    let mut compressed_stride_packet = [0u8; 1500];
-    let compressed_stride_packet_len = engine
-        .compress(
-            cid.into(),
-            Some(RohcProfile::RtpUdpIp),
-            &generic_for_stride,
-            &mut compressed_stride_packet,
+    // Send 3 UO-1-TS packets to establish stride (RFC-compliant confirmation counting)
+    for i in 1..=3 {
+        let sn_for_stride_establish = new_ir_sn.wrapping_add(i);
+        let ts_for_stride_establish = new_ir_base_ts_val.wrapping_add(i as u32 * 160);
+        let headers_for_stride = create_rtp_headers(
+            sn_for_stride_establish,
+            ts_for_stride_establish,
+            initial_marker,
+            ssrc,
         )
-        .unwrap();
-    assert_eq!(
-        compressed_stride_packet_len, 4,
-        "Stride establishment packet should be UO-1-TS"
-    );
-    let compressed_stride_packet = &compressed_stride_packet[..compressed_stride_packet_len];
-    assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
+        .with_ip_id(ip_id_from_new_ir_context);
+        let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
+        let mut compressed_stride_packet = [0u8; 1500];
+        let compressed_stride_packet_len = engine
+            .compress(
+                cid.into(),
+                Some(RohcProfile::RtpUdpIp),
+                &generic_for_stride,
+                &mut compressed_stride_packet,
+            )
+            .unwrap();
+        assert_eq!(
+            compressed_stride_packet_len, 4,
+            "Stride establishment packet {} should be UO-1-TS",
+            i
+        );
+        let compressed_stride_packet = &compressed_stride_packet[..compressed_stride_packet_len];
+        assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
 
-    let _ = engine.decompress(compressed_stride_packet).unwrap();
+        let _ = engine.decompress(compressed_stride_packet).unwrap();
+    }
 
     let comp_ctx_check = get_compressor_context(&engine, cid);
     assert!(
@@ -248,17 +251,19 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
     assert_eq!(
         comp_ctx_check.last_sent_rtp_sn_full,
-        sn_for_stride_establish
+        new_ir_sn.wrapping_add(3)
     );
     assert_eq!(
         comp_ctx_check.last_sent_rtp_ts_full,
-        ts_for_stride_establish
+        new_ir_base_ts_val.wrapping_add(3 * 160)
     );
     let established_stride = comp_ctx_check.ts_stride.unwrap();
 
     // Test SN jump beyond UO-0 window
-    let sn_outside_window = sn_for_stride_establish.wrapping_add(16);
-    let actual_ts_for_packet_outside_window = ts_for_stride_establish
+    let final_sn_after_stride = new_ir_sn.wrapping_add(3);
+    let final_ts_after_stride = new_ir_base_ts_val.wrapping_add(3 * 160);
+    let sn_outside_window = final_sn_after_stride.wrapping_add(16);
+    let actual_ts_for_packet_outside_window = final_ts_after_stride
         .wrapping_add(established_stride * 16)
         .wrapping_add(30);
 
@@ -310,8 +315,7 @@ fn p1_uo0_sn_at_lsb_window_edge() {
     );
 
     // UO-1-SN uses implicit TS based on stride
-    let expected_ts_for_decomp_uo1_sn =
-        ts_for_stride_establish.wrapping_add(16 * established_stride);
+    let expected_ts_for_decomp_uo1_sn = final_ts_after_stride.wrapping_add(16 * established_stride);
     assert_eq!(
         decomp_outside_window.rtp_timestamp,
         expected_ts_for_decomp_uo1_sn

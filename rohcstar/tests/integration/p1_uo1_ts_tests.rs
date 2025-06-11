@@ -205,11 +205,9 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp2.rtp_marker);
     assert_eq!(decomp2.rtp_timestamp, 5000);
 
-    // Packet 3: SN=303 (ctx_sn+1), TS=4000 (same as P2 context), Marker=false (changed from P2 context), IP-ID=same
-    // Expected: UO-1-SN (Marker change)
-    let headers3 = create_rtp_headers(303, 4000, false, ssrc).with_ip_id(ip_id_in_context);
-    // Packet 3: SN=303 (ctx_sn+1), TS=6000 (changed), Marker=false (same as P2 context), IP-ID same
-    // Expected: UO-1-SN (SN+1, TS changed, but SN takes priority for packet type selection)
+    // Packet 3: SN=303 (ctx_sn+1), TS=6000 (changed but follows stride), Marker=false (changed from P2 context), IP-ID=same
+    // Expected: UO-1-SN (Marker change forces UO-1-SN even though TS follows stride)
+    let headers3 = create_rtp_headers(303, 6000, false, ssrc).with_ip_id(ip_id_in_context);
     let mut compress_buf3 = [0u8; 1500];
     let compressed3_len = engine
         .compress(

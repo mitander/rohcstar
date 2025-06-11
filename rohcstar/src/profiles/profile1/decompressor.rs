@@ -148,6 +148,26 @@ fn decompress_as_uo0(
         parsed_uo0.sn_lsb,
         *context.last_reconstructed_rtp_sn_full,
     );
+    // Context desynchronization detection
+    let forward_jump = decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full);
+    let backward_jump = (*context.last_reconstructed_rtp_sn_full).wrapping_sub(decoded_sn);
+
+    // If both jumps are large, we have context desync
+    if forward_jump > 50 && backward_jump > 50 {
+        // Increase CRC failure count to trigger IR
+        context.counters.so_consecutive_failures =
+            context.counters.so_consecutive_failures.saturating_add(3);
+    }
+    debug_assert!(
+        {
+            let sn_delta = decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full);
+            sn_delta <= 15 || sn_delta >= (u16::MAX - 15)
+        },
+        "UO-0 SN decode produced unreasonable jump: {} -> {} (delta={})",
+        context.last_reconstructed_rtp_sn_full,
+        decoded_sn,
+        decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full)
+    );
 
     let decoded_ts = calculate_reconstructed_ts_implicit(context, decoded_sn.into());
 
@@ -162,15 +182,21 @@ fn decompress_as_uo0(
     // Hot path: CRC validation first, then sanity checks
     if calculated_crc3 != parsed_uo0.crc3 {
         // Mark CRC failure for RFC compliance
+        // Adaptive recovery window based on failure count
+        let (forward_window, backward_window) = if context.counters.so_consecutive_failures > 2 {
+            (256u16, 128u16)
+        } else {
+            (8u16, 4u16)
+        };
         context.counters.had_recent_crc_failure = true;
 
         match try_sn_recovery(
             context,
             parsed_uo0.crc3,
             Crc3Uo0,
-            8,    // forward_window: CRC3 ~12.5% collision rate, conservative
-            4,    // backward_window: small for UO-0
-            None, // no LSB constraint for UO-0
+            forward_window, // forward_window: CRC3 ~12.5% collision rate, conservative
+            backward_window, // backward_window: small for UO-0
+            None,           // no LSB constraint for UO-0
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -671,7 +697,7 @@ fn decompress_as_uo1_rtp(
 ///
 /// # Parameters
 /// - `forward_window`: Maximum packets to search forward from current SN
-/// - `backward_window`: Maximum packets to search backward from current SN  
+/// - `backward_window`: Maximum packets to search backward from current SN
 /// - `lsb_constraint`: Optional (lsb_value, num_bits) for LSB validation
 /// - `crc_calculator`: Closure for CRC calculation
 /// - `crc_input_generator`: Closure to generate CRC input
@@ -814,14 +840,16 @@ fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
     decoded_sn: SequenceNumber,
 ) -> Timestamp {
-    if let Some(stride) = context.ts_stride {
+    // Use established stride first, then potential stride to match compressor logic
+    let stride = context.ts_stride.or(context.potential_ts_stride);
+    if let Some(stride_val) = stride {
         let sn_delta = decoded_sn.wrapping_sub(context.last_reconstructed_rtp_sn_full);
         if sn_delta > 0 {
             Timestamp::new(
                 context
                     .last_reconstructed_rtp_ts_full
                     .value()
-                    .wrapping_add(sn_delta as u32 * stride),
+                    .wrapping_add(sn_delta as u32 * stride_val),
             )
         } else {
             context.last_reconstructed_rtp_ts_full // Uses previous TS if delta isn't strictly positive
@@ -839,12 +867,14 @@ fn calculate_reconstructed_ts_implicit(
 fn calculate_reconstructed_ts_implicit_sn_plus_one(
     context: &Profile1DecompressorContext,
 ) -> Timestamp {
-    if let Some(stride) = context.ts_stride {
+    // Use established stride first, then potential stride to match compressor logic
+    let stride = context.ts_stride.or(context.potential_ts_stride);
+    if let Some(stride_val) = stride {
         Timestamp::new(
             context
                 .last_reconstructed_rtp_ts_full
                 .value()
-                .wrapping_add(stride), // SN delta is 1
+                .wrapping_add(stride_val),
         )
     } else {
         context.last_reconstructed_rtp_ts_full
@@ -1208,10 +1238,7 @@ mod tests {
                     distance_from_last
                 );
 
-                println!(
-                    "CRC3 recovery found alternative SN {} (distance: {})",
-                    recovered_sn, distance_from_last
-                );
+                // CRC3 recovery found alternative SN
             }
             Err(RohcError::Parsing(RohcParsingError::CrcMismatch {
                 expected,
@@ -1221,7 +1248,7 @@ mod tests {
                 assert_eq!(expected, &wrong_crc3_in_packet);
                 assert_eq!(calculated, &correct_crc3);
                 assert_eq!(crc_type, &Crc3Uo0);
-                println!("CRC3 recovery correctly failed - no valid alternatives found");
+                // CRC3 recovery correctly failed - no valid alternatives found
             }
             _ => {
                 panic!(
@@ -1398,8 +1425,9 @@ mod tests {
         context.last_reconstructed_rtp_sn_full = 100.into();
         context.last_reconstructed_rtp_ts_full = 1000.into();
         context.infer_ts_stride_from_decompressed_ts(1200.into(), 101.into());
-        assert_eq!(context.ts_stride, Some(200));
-        assert_eq!(context.ts_offset, 1000);
+        assert_eq!(context.ts_stride, None); // Stride not immediately established
+        assert_eq!(context.potential_ts_stride, Some(200)); // Potential stride detected
+        assert_eq!(context.ts_offset, 1000); // Offset updated when potential stride detected
     }
 
     #[test]

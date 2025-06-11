@@ -657,6 +657,73 @@ pub fn create_profile1_decompressor_context(
     handler.create_decompressor_context(cid.into(), Instant::now())
 }
 
+/// Establishes TS stride by sending 3 UO-1-TS packets after IR context for RFC-compliant confirmation.
+///
+/// This helper function sends the minimum number of packets required to establish a timestamp
+/// stride according to RFC 3095, which requires 3 confirmations before the stride is considered
+/// established. This is essential for tests that need stride-dependent packet types like UO-1-SN.
+///
+/// # Parameters
+/// - `engine`: Mutable ROHC engine instance
+/// - `cid`: Context identifier
+/// - `ssrc`: RTP SSRC value
+/// - `base_sn`: Starting sequence number (from IR packet)
+/// - `base_ts_val`: Starting timestamp value (from IR packet)  
+/// - `base_marker`: Starting marker bit value (from IR packet)
+/// - `base_ip_id`: Starting IP identification value (from IR packet)
+/// - `stride_to_establish`: The timestamp stride value to establish
+#[allow(clippy::too_many_arguments)]
+pub fn establish_stride_after_ir(
+    engine: &mut RohcEngine,
+    cid: u16,
+    ssrc: u32,
+    base_sn: u16,
+    base_ts_val: u32,
+    base_marker: bool,
+    base_ip_id: u16,
+    stride_to_establish: u32,
+) {
+    use rohcstar::profiles::profile1::P1_UO_1_TS_DISCRIMINATOR;
+
+    // Send 3 packets to establish stride (RFC-compliant confirmation counting)
+    for i in 1..=3 {
+        let sn_for_stride = base_sn.wrapping_add(i);
+        let ts_for_stride = base_ts_val.wrapping_add(i as u32 * stride_to_establish);
+        let headers_for_stride =
+            create_rtp_headers(sn_for_stride, ts_for_stride, base_marker, ssrc)
+                .with_ip_id(base_ip_id.into());
+
+        let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride);
+        let mut compress_buf_stride = [0u8; 128];
+        let compressed_stride_len = engine
+            .compress(
+                cid.into(),
+                Some(RohcProfile::RtpUdpIp),
+                &generic_for_stride,
+                &mut compress_buf_stride,
+            )
+            .unwrap();
+        let compressed_stride_packet = &compress_buf_stride[..compressed_stride_len];
+
+        assert_eq!(compressed_stride_packet.len(), 4);
+        if !compressed_stride_packet.is_empty() {
+            assert_eq!(compressed_stride_packet[0], P1_UO_1_TS_DISCRIMINATOR);
+        }
+
+        let _ = engine.decompress(compressed_stride_packet).unwrap();
+    }
+
+    // Verify stride is now established after 3 confirmations
+    let comp_ctx = get_compressor_context(engine, cid);
+    assert_eq!(comp_ctx.ts_stride, Some(stride_to_establish));
+    assert_eq!(comp_ctx.last_sent_rtp_sn_full, base_sn.wrapping_add(3));
+    assert_eq!(
+        comp_ctx.last_sent_rtp_ts_full,
+        base_ts_val.wrapping_add(3 * stride_to_establish)
+    );
+    assert_eq!(comp_ctx.last_sent_rtp_marker, base_marker);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

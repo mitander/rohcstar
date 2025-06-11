@@ -544,7 +544,7 @@ fn p1_uo1_rtp_ts_stride_change_forces_ir() {
         "Compressor should exit scaled mode when IR is forced by stride change/misalignment"
     );
     assert_eq!(
-        comp_ctx2.ts_stride,
+        comp_ctx2.potential_ts_stride,
         Some(stride2),
         "Compressor should begin detecting the new stride"
     );

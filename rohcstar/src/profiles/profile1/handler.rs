@@ -16,7 +16,9 @@ use super::discriminator::Profile1PacketType;
 use super::state_machine;
 
 use crate::crc::CrcCalculators;
-use crate::error::{DecompressionError, EngineError, RohcError, RohcParsingError};
+use crate::error::{
+    CompressionError, DecompressionError, EngineError, RohcError, RohcParsingError,
+};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 use crate::types::ContextId;
@@ -157,7 +159,27 @@ impl ProfileHandler for Profile1Handler {
         let len = if compressor::should_force_ir(context, uncompressed_headers) {
             compressor::compress_as_ir(context, uncompressed_headers, &self.crc_calculators, out)?
         } else {
-            compressor::compress_as_uo(context, uncompressed_headers, &self.crc_calculators, out)?
+            match compressor::compress_as_uo(
+                context,
+                uncompressed_headers,
+                &self.crc_calculators,
+                out,
+            ) {
+                Ok(len) => len,
+                Err(RohcError::Compression(CompressionError::ContextInsufficient {
+                    field: crate::error::Field::TsScaled,
+                    ..
+                })) => {
+                    // ts_scaled_mode was newly activated, retry with IR packet
+                    compressor::compress_as_ir(
+                        context,
+                        uncompressed_headers,
+                        &self.crc_calculators,
+                        out,
+                    )?
+                }
+                Err(e) => return Err(e),
+            }
         };
 
         if len > 0 {

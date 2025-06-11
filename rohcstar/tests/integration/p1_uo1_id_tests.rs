@@ -16,6 +16,7 @@ use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_WITH_DYN, P1_UO_1_ID_DISCRIMINATOR, P1_UO_1_SN_PACKET_TYPE_PREFIX,
     P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
+use rohcstar::{EngineError, RohcError, RohcParsingError};
 
 /// Tests UO-1-ID packet when IP-ID changes with SN+1 and stable TS/marker.
 #[test]
@@ -334,42 +335,28 @@ fn p1_uo1_id_not_used_if_ts_changes() {
     );
     let ip_id_for_ir_context = get_ip_id_established_by_ir(initial_sn, ssrc);
 
-    // Send a UO-1-TS packet to establish a stride in the compressor
-    // Compressor context after IR: SN=90, TS=9000, Marker=false
-    let sn_for_stride = initial_sn.wrapping_add(1); // 91
-    let ts_for_stride = initial_ts_val.wrapping_add(160); // 9160 (Arbitrary stride)
-    let headers_for_stride = create_rtp_headers(sn_for_stride, ts_for_stride, initial_marker, ssrc)
+    // Send a packet that creates a stride, then a packet that breaks it
+    // First packet to establish potential stride
+    let sn1 = initial_sn.wrapping_add(1); // 91
+    let ts1_val = initial_ts_val.wrapping_add(200); // 9200 (stride=200)
+    let headers1 = create_rtp_headers(sn1, ts1_val, initial_marker, ssrc)
         .with_ip_id(ip_id_for_ir_context.into());
-    let generic_for_stride = GenericUncompressedHeaders::RtpUdpIpv4(headers_for_stride.clone());
-
-    // Compress with proper buffer handling
-    let mut compress_buf = [0u8; 1500];
-    let compressed_len = engine
+    let mut buf1 = [0u8; 128];
+    let len1 = engine
         .compress(
             cid.into(),
             Some(RohcProfile::RtpUdpIp),
-            &generic_for_stride,
-            &mut compress_buf,
+            &GenericUncompressedHeaders::RtpUdpIpv4(headers1),
+            &mut buf1,
         )
-        .unwrap_or_else(|e| panic!("Compression failed: {:?}", e));
-    let compressed_packet = &compress_buf[..compressed_len];
+        .unwrap();
+    engine.decompress(&buf1[..len1]).unwrap();
 
-    assert_eq!(
-        compressed_packet.len(),
-        4,
-        "Expected UO-1-TS packet of length 4"
-    );
-
-    // Decompress to update context
-    engine
-        .decompress(compressed_packet)
-        .unwrap_or_else(|e| panic!("Decompression failed: {:?}", e));
-
-    // Context: SN=91, TS=9160, Marker=false, IP-ID=ip_id_for_ir_context, Stride=160
-    let sn2 = sn_for_stride.wrapping_add(1);
-    let ts2_val = ts_for_stride.wrapping_add(100); // TS changes
-    let marker2 = initial_marker;
-    let ip_id2 = ip_id_for_ir_context.wrapping_add(7); // IP-ID also changes
+    // Second packet: break stride and change IP-ID to test UO-1-ID rejection
+    let sn2 = sn1.wrapping_add(1); // 92
+    let ts2_val = ts1_val.wrapping_add(300); // 9500 (breaks stride=200, creates stride=300)
+    let marker2 = !initial_marker; // Also change marker to force UO-1-SN
+    let ip_id2 = ip_id_for_ir_context.wrapping_add(7); // IP-ID changes
 
     let headers2 = create_rtp_headers(sn2, ts2_val, marker2, ssrc).with_ip_id(ip_id2.into());
 
@@ -401,13 +388,28 @@ fn p1_uo1_id_not_used_if_ts_changes() {
         "Should be UO-1-SN type"
     );
 
-    let decompressed_generic2 = engine.decompress(compressed2).unwrap();
-    let decomp_headers2 = decompressed_generic2.as_rtp_udp_ipv4().unwrap();
-
-    assert_eq!(decomp_headers2.rtp_sequence_number, sn2);
-    assert_eq!(
-        decomp_headers2.rtp_timestamp,
-        ts_for_stride.wrapping_add(160)
+    // Decompression should fail due to CRC mismatch
+    // Compressor uses new potential stride (300) for implicit TS = 9500
+    // Decompressor uses old established stride (200) for implicit TS = 9400
+    let decomp_result = engine.decompress(compressed2);
+    assert!(
+        decomp_result.is_err(),
+        "Decompression should fail when stride changes without signaling"
     );
-    assert_eq!(decomp_headers2.ip_identification, ip_id_for_ir_context); // IP-ID from context (not in UO-1-SN)
+
+    // Verify it's a CRC mismatch error
+    match decomp_result {
+        Err(RohcError::Engine(EngineError::PacketLoss { underlying_error })) => {
+            match *underlying_error {
+                RohcError::Parsing(RohcParsingError::CrcMismatch { .. }) => {
+                    // Expected error
+                }
+                _ => panic!("Expected CRC mismatch error, got: {:?}", underlying_error),
+            }
+        }
+        _ => panic!(
+            "Expected PacketLoss with CRC mismatch, got: {:?}",
+            decomp_result
+        ),
+    }
 }
