@@ -369,9 +369,7 @@ fn can_use_uo1_rtp(
     current_ts: Timestamp,
 ) -> Option<u8> {
     if context.ts_scaled_mode && sn_delta == 1 && !ip_id_changed {
-        let result = context.calculate_ts_scaled(current_ts);
-
-        result
+        context.calculate_ts_scaled(current_ts)
     } else {
         None
     }

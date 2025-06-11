@@ -43,7 +43,7 @@ macro_rules! assert_performance {
         let start = Instant::now();
         let iterations = 1000;
         for _ in 0..iterations {
-            black_box($op);
+            let _ = black_box($op);
         }
         let elapsed = start.elapsed();
         let per_op_ns = elapsed.as_nanos() / iterations;

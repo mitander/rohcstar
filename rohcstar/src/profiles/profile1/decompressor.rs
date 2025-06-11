@@ -159,10 +159,7 @@ fn decompress_as_uo0(
             context.counters.so_consecutive_failures.saturating_add(3);
     }
     debug_assert!(
-        {
-            let sn_delta = decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full);
-            sn_delta <= 15 || sn_delta >= (u16::MAX - 15)
-        },
+        forward_jump <= 15 || forward_jump >= (u16::MAX - 15),
         "UO-0 SN decode produced unreasonable jump: {} -> {} (delta={})",
         context.last_reconstructed_rtp_sn_full,
         decoded_sn,
@@ -701,6 +698,7 @@ fn decompress_as_uo1_rtp(
 /// - `lsb_constraint`: Optional (lsb_value, num_bits) for LSB validation
 /// - `crc_calculator`: Closure for CRC calculation
 /// - `crc_input_generator`: Closure to generate CRC input
+#[allow(clippy::too_many_arguments)]
 fn try_sn_recovery<F, G>(
     context: &Profile1DecompressorContext,
     received_crc: u8,

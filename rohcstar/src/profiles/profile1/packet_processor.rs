@@ -383,7 +383,7 @@ pub fn serialize_ir(
 
     // Strategic defensive programming: Validate buffer bounds before IP TTL write
     debug_assert!(
-        bytes_written + 1 <= out.len(),
+        bytes_written < out.len(),
         "Buffer overflow: {} + 1 > {}",
         bytes_written,
         out.len()
@@ -1557,7 +1557,7 @@ pub(crate) fn prepare_uo1_id_specific_crc_input_into_buf(
     buf: &mut [u8],
 ) -> usize {
     debug_assert!(
-        buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES + 1,
+        buf.len() > P1_UO_CRC_INPUT_LENGTH_BYTES,
         "Buffer overflow: {} < {}",
         buf.len(),
         P1_UO_CRC_INPUT_LENGTH_BYTES + 1
