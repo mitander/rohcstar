@@ -1484,7 +1484,12 @@ pub(crate) fn prepare_generic_uo_crc_input_into_buf(
     marker_for_crc: bool,
     buf: &mut [u8],
 ) -> usize {
-    debug_assert!(buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES);
+    debug_assert!(
+        buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES,
+        "Buffer overflow: {} < {}",
+        buf.len(),
+        P1_UO_CRC_INPUT_LENGTH_BYTES
+    );
 
     buf[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
     buf[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());
@@ -1551,7 +1556,12 @@ pub(crate) fn prepare_uo1_id_specific_crc_input_into_buf(
     ip_id_lsb_for_crc: u8,
     buf: &mut [u8],
 ) -> usize {
-    debug_assert!(buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES + 1);
+    debug_assert!(
+        buf.len() >= P1_UO_CRC_INPUT_LENGTH_BYTES + 1,
+        "Buffer overflow: {} < {}",
+        buf.len(),
+        P1_UO_CRC_INPUT_LENGTH_BYTES + 1
+    );
 
     buf[0..4].copy_from_slice(&context_ssrc.to_be_bytes());
     buf[4..6].copy_from_slice(&sn_for_crc.0.to_be_bytes());

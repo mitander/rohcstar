@@ -335,18 +335,32 @@ ROHC is fault-tolerant by design - packet loss is expected and handled. Focus as
 
 ### Assert Then Assume
 
+**MANDATORY**: ALL `debug_assert!` calls MUST include descriptive messages.
+
 Assert invariants at boundaries, then rely on them:
 
 ```rust
 pub fn compress_uo0(&mut self, ctx: &Context) -> Result<&[u8], RohcError> {
     // Assert critical invariants at entry
-    debug_assert!(ctx.is_established(), "UO-0 requires established context");
-    debug_assert!(self.buffer.len() >= UO0_MAX_SIZE, "Buffer too small");
-    debug_assert!(ctx.sequence_number.is_some(), "Missing sequence number");
+    debug_assert!(ctx.is_established(), "State violation: UO-0 requires established context");
+    debug_assert!(self.buffer.len() >= UO0_MAX_SIZE, "Buffer overflow: {} < {}", self.buffer.len(), UO0_MAX_SIZE);
+    debug_assert!(ctx.sequence_number.is_some(), "State violation: missing sequence number");
 
     // Now safely assume these hold - no more checks needed
     let sn = ctx.sequence_number.unwrap(); // Safe after assertion
 }
+```
+
+**Never do this**:
+```rust
+debug_assert!(value > 0);          // ❌ BAD: No message
+debug_assert!(buf.len() >= 10);    // ❌ BAD: No message
+```
+
+**Always do this**:
+```rust
+debug_assert!(value > 0, "Invalid value: {} must be positive", value);           // ✅ GOOD
+debug_assert!(buf.len() >= 10, "Buffer overflow: {} < 10", buf.len());          // ✅ GOOD
 ```
 
 ### State Validation (Critical Paths Only)
@@ -374,6 +388,8 @@ fn transition_to_fo(&mut self) -> Result<(), RohcError> {
 
 ### Buffer Safety (Non-Negotiable)
 
+**Standard Message Format**: All buffer assertions MUST use this exact pattern:
+
 ```rust
 fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
     // Buffer overflows are never acceptable
@@ -388,6 +404,24 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
     self.pos += data.len();
     Ok(data.len())
 }
+```
+
+**Message Patterns** (MANDATORY - NO DEVIATIONS):
+```rust
+// Buffer write bounds
+"Buffer overflow: {} + {} > {}"     // For write operations  
+"Buffer overflow: {} < {}"          // For size requirements
+
+// Range violations  
+"Range violation: {} not in {}-{}"  // For value ranges
+"Range violation: {} >= {}"         // For upper bounds
+
+// State violations
+"State violation: description"      // For invalid state combinations
+"Invalid stride: {} must be positive" // For stride validation
+
+// Counter overflows
+"Counter overflow: {} > {}"         // For counter limits
 ```
 
 ## Documentation

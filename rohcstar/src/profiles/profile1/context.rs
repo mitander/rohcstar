@@ -108,38 +108,38 @@ impl Profile1CompressorContext {
     fn debug_validate_invariants(&self) {
         debug_assert!(
             self.ts_stride.is_none_or(|s| s > 0),
-            "TS stride cannot be zero"
+            "Invalid stride: stride must be positive or None"
         );
         debug_assert!(
             !self.ts_scaled_mode || self.ts_stride.is_some(),
-            "Scaled mode requires stride"
+            "State violation: scaled mode requires stride"
         );
         debug_assert!(
             self.fo_packets_sent_since_ir <= self.ir_refresh_interval
                 || self.ir_refresh_interval == 0,
-            "FO count {} exceeded IR refresh limit {}",
+            "Counter overflow: {} > {}",
             self.fo_packets_sent_since_ir,
             self.ir_refresh_interval
         );
         debug_assert!(
             self.consecutive_fo_packets_sent <= self.fo_packets_sent_since_ir,
-            "Consecutive FO count {} cannot exceed total FO count {}",
+            "Counter overflow: {} > {}",
             self.consecutive_fo_packets_sent,
             self.fo_packets_sent_since_ir
         );
         debug_assert!(
             self.current_lsb_sn_width > 0 && self.current_lsb_sn_width <= 16,
-            "SN LSB width {} must be in range 1-16",
+            "Range violation: {} not in 1-16",
             self.current_lsb_sn_width
         );
         debug_assert!(
             self.current_lsb_ts_width > 0 && self.current_lsb_ts_width <= 32,
-            "TS LSB width {} must be in range 1-32",
+            "Range violation: {} not in 1-32",
             self.current_lsb_ts_width
         );
         debug_assert!(
             self.current_lsb_ip_id_width > 0 && self.current_lsb_ip_id_width <= 16,
-            "IP-ID LSB width {} must be in range 1-16",
+            "Range violation: {} not in 1-16",
             self.current_lsb_ip_id_width
         );
     }
@@ -371,7 +371,8 @@ impl Profile1CompressorContext {
             .expect("ts_stride cannot be None if ts_scaled_mode is true");
         debug_assert!(
             stride_val > 0,
-            "Stride value must be positive in scaled mode"
+            "Invalid stride: {} must be positive",
+            stride_val
         );
         if stride_val == 0 {
             return None;
@@ -519,30 +520,30 @@ impl Profile1DecompressorContext {
     fn debug_validate_invariants(&self) {
         debug_assert!(
             self.ts_stride.is_none_or(|s| s > 0),
-            "TS stride cannot be zero"
+            "Invalid stride: stride must be positive or None"
         );
         debug_assert!(
             !self.ts_scaled_mode || self.ts_stride.is_some(),
-            "Scaled mode requires stride"
+            "State violation: scaled mode requires stride"
         );
         debug_assert!(
             self.expected_lsb_sn_width > 0 && self.expected_lsb_sn_width <= 16,
-            "SN LSB width {} must be in range 1-16",
+            "Range violation: {} not in 1-16",
             self.expected_lsb_sn_width
         );
         debug_assert!(
             self.expected_lsb_ts_width > 0 && self.expected_lsb_ts_width <= 32,
-            "TS LSB width {} must be in range 1-32",
+            "Range violation: {} not in 1-32",
             self.expected_lsb_ts_width
         );
         debug_assert!(
             self.expected_lsb_ip_id_width > 0 && self.expected_lsb_ip_id_width <= 16,
-            "IP-ID LSB width {} must be in range 1-16",
+            "Range violation: {} not in 1-16",
             self.expected_lsb_ip_id_width
         );
         debug_assert!(
             self.counters.fc_crc_failures <= 10,
-            "CRC failure count {} exceeds reasonable limit",
+            "Counter overflow: {} > 10",
             self.counters.fc_crc_failures
         );
     }
@@ -655,7 +656,7 @@ impl Profile1DecompressorContext {
         let stride_val = self.ts_stride?;
         debug_assert!(
             stride_val > 0,
-            "Stride value must be positive for scaled TS reconstruction if Some. Stride: {}",
+            "Invalid stride: {} must be positive",
             stride_val
         );
 

@@ -573,7 +573,7 @@ fn build_uo1_sn_packet(
 ) -> Result<usize, RohcError> {
     debug_assert!(
         context.ts_stride.is_some() || context.potential_ts_stride.is_some(),
-        "UO-1-SN build logic called without established or potential TS_STRIDE in context."
+        "State violation: UO-1-SN requires stride"
     );
 
     let sn_lsb_val = encode_lsb(current_sn.as_u64(), P1_UO1_SN_LSB_WIDTH_DEFAULT)? as u16;
@@ -673,7 +673,7 @@ fn build_uo1_rtp_packet(
             field: crate::error::Field::TsScaled,
         })
     })?;
-    debug_assert!(stride > 0, "TS Stride must be positive to build UO-1-RTP.");
+    debug_assert!(stride > 0, "Invalid stride: {} must be positive", stride);
 
     // Reconstruct the full TS value from TS_Offset and TS_SCALED for CRC calculation.
     // current_sn for CRC is the SN of the packet (context.last_sn + 1).

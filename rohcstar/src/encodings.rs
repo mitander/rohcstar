@@ -100,7 +100,11 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
 /// The reconstructed sequence number (always succeeds for valid inputs)
 #[inline]
 pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
-    debug_assert!(received_lsbs < 16, "UO-0 SN LSB must be 4 bits");
+    debug_assert!(
+        received_lsbs < 16,
+        "Range violation: {} >= 16",
+        received_lsbs
+    );
 
     // UO-0 uses 4 bits with p=0, interpretation window is [v_ref, v_ref + 15]
     // Highly optimized for the specific case where k=4, p=0
@@ -156,7 +160,7 @@ pub fn decode_lsb(
     }
 
     let window_size = 1u64 << num_lsb_bits;
-    debug_assert!(window_size > 0);
+    debug_assert!(window_size > 0, "Invalid window: size must be positive");
     let lsb_mask = window_size - 1;
 
     // Validate received_lsbs fit in k bits
