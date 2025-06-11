@@ -1,14 +1,31 @@
 # Rohcstar Style Guide
 
-Production-grade ROHC implementation demands consistency, correctness, and performance. This guide defines our conventions, inspired by TigerBeetle's approach to building bulletproof systems software.
+> **This is CORRECTNESS, not preference.**
+> 
+> Every rule prevents bugs. Every violation introduces technical debt. 
+> This guide is mandatory and must be followed without exception.
 
-## Core Principles
+Production-grade ROHC implementation built on three foundational pillars:
 
-1. **Correctness > Performance > Features**
-2. **Explicit > Implicit**
-3. **Simple > Clever**
-4. **Measure > Assume**
-5. **Static > Dynamic** (no allocations in hot paths)
+## The Three Pillars
+
+### 1. ROBUSTNESS
+Code should be bulletproof like TigerBeetle. Every edge case handled, every invariant enforced.
+
+### 2. CONSISTENCY  
+Patterns must be identical across the codebase. No exceptions, no "this time is different."
+
+### 3. SIMPLICITY
+Obvious code wins. No clever tricks. Future maintainers should understand immediately.
+
+## Core Principles (Non-Negotiable)
+
+1. **Correctness > Performance > Features** - Always
+2. **Explicit > Implicit** - No magic
+3. **Simple > Clever** - Boring code is good code
+4. **Measure > Assume** - Data over opinions
+5. **Static > Dynamic** - Zero allocations in hot paths
+6. **Assert > Hope** - Heavy defensive programming
 
 ## Architecture
 
@@ -299,26 +316,49 @@ fn perf_critical_path() {
 
 ## Defensive Programming
 
+### Strategic Assertion Philosophy
+
+ROHC is fault-tolerant by design - packet loss is expected and handled. Focus assertions on **critical invariants** that prevent undefined behavior, not every calculation.
+
+**Assert These (Critical)**:
+- Entry point parameter validation
+- Array bounds that could cause crashes
+- State machine invariant violations  
+- Context consistency that affects correctness
+- Buffer size guarantees before writes
+
+**Don't Assert These (Acceptable)**:
+- Packet loss scenarios (protocol handles these)
+- Temporary calculation steps
+- Performance-critical inner loops
+- Expected error conditions
+
 ### Assert Then Assume
 
-Assert invariants at entry points, then rely on them:
+Assert invariants at boundaries, then rely on them:
 
 ```rust
 pub fn compress_uo0(&mut self, ctx: &Context) -> Result<&[u8], RohcError> {
-    // Assert invariants once
-    assert!(ctx.is_established(), "UO-0 requires established context");
-    assert!(self.buffer.len() >= UO0_MAX_SIZE);
+    // Assert critical invariants at entry
+    debug_assert!(ctx.is_established(), "UO-0 requires established context");
+    debug_assert!(self.buffer.len() >= UO0_MAX_SIZE, "Buffer too small");
+    debug_assert!(ctx.sequence_number.is_some(), "Missing sequence number");
 
-    // Now safely assume these hold
-    let sn_bits = ctx.sn_bits;  // No redundant checks
+    // Now safely assume these hold - no more checks needed
+    let sn = ctx.sequence_number.unwrap(); // Safe after assertion
 }
 ```
 
-### State Validation
+### State Validation (Critical Paths Only)
 
 ```rust
 fn transition_to_fo(&mut self) -> Result<(), RohcError> {
-    // Always validate transitions
+    // State transitions must be validated - corruption here breaks everything
+    debug_assert!(
+        matches!(self.state, State::IR | State::FO), 
+        "Invalid transition to FO from {:?}", self.state
+    );
+    
     match self.state {
         State::IR => {
             self.state = State::FO;
@@ -329,6 +369,24 @@ fn transition_to_fo(&mut self) -> Result<(), RohcError> {
             to: State::FO
         }),
     }
+}
+```
+
+### Buffer Safety (Non-Negotiable)
+
+```rust
+fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
+    // Buffer overflows are never acceptable
+    debug_assert!(
+        self.pos + data.len() <= self.buffer.len(),
+        "Buffer overflow: {} + {} > {}", 
+        self.pos, data.len(), self.buffer.len()
+    );
+    
+    // Write safely
+    self.buffer[self.pos..self.pos + data.len()].copy_from_slice(data);
+    self.pos += data.len();
+    Ok(data.len())
 }
 ```
 
