@@ -285,18 +285,71 @@ pub fn serialize_ir(
     bytes_written += 1;
 
     // Static chain
+    // Strategic defensive programming: Validate buffer bounds before IP source write
+    debug_assert!(
+        bytes_written + 4 <= out.len(),
+        "Buffer overflow: {} + 4 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_src.octets());
     bytes_written += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before IP destination write
+    debug_assert!(
+        bytes_written + 4 <= out.len(),
+        "Buffer overflow: {} + 4 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_dst.octets());
     bytes_written += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before UDP source port write
+    debug_assert!(
+        bytes_written + 2 <= out.len(),
+        "Buffer overflow: {} + 2 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 2]
         .copy_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
     bytes_written += 2;
+
+    // Strategic defensive programming: Validate buffer bounds before UDP destination port write
+    debug_assert!(
+        bytes_written + 2 <= out.len(),
+        "Buffer overflow: {} + 2 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 2]
         .copy_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
     bytes_written += 2;
+
+    // Strategic defensive programming: Validate buffer bounds before RTP SSRC write
+    debug_assert!(
+        bytes_written + 4 <= out.len(),
+        "Buffer overflow: {} + 4 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
     bytes_written += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before RTP fields batch write
+    debug_assert!(
+        bytes_written + 3 <= out.len(),
+        "Buffer overflow: {} + 3 > {}",
+        bytes_written,
+        out.len()
+    );
+
     // Batch write the 3 new RTP fields for better performance
     out[bytes_written..bytes_written + 3].copy_from_slice(&[
         ir_data.static_rtp_payload_type,
@@ -306,12 +359,47 @@ pub fn serialize_ir(
     bytes_written += 3;
 
     // Dynamic chain
+    // Strategic defensive programming: Validate buffer bounds before RTP sequence number write
+    debug_assert!(
+        bytes_written + 2 <= out.len(),
+        "Buffer overflow: {} + 2 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
     bytes_written += 2;
+
+    // Strategic defensive programming: Validate buffer bounds before RTP timestamp write
+    debug_assert!(
+        bytes_written + 4 <= out.len(),
+        "Buffer overflow: {} + 4 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
     bytes_written += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before IP TTL write
+    debug_assert!(
+        bytes_written + 1 <= out.len(),
+        "Buffer overflow: {} + 1 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written] = ir_data.dyn_ip_ttl;
     bytes_written += 1;
+
+    // Strategic defensive programming: Validate buffer bounds before IP ID write
+    debug_assert!(
+        bytes_written + 2 <= out.len(),
+        "Buffer overflow: {} + 2 > {}",
+        bytes_written,
+        out.len()
+    );
+
     out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_ip_id.to_be_bytes());
     bytes_written += 2;
 
@@ -469,7 +557,7 @@ pub fn deserialize_ir(
     // Strategic defensive programming: Validate buffer bounds before IP source read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
-        "IP source address read would exceed buffer bounds: offset {} + 4 > len {}",
+        "Buffer overflow: {} + 4 > {}",
         current_offset_for_fields,
         core_packet_bytes.len()
     );
@@ -485,7 +573,7 @@ pub fn deserialize_ir(
     // Strategic defensive programming: Validate buffer bounds before IP destination read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
-        "IP destination address read would exceed buffer bounds: offset {} + 4 > len {}",
+        "Buffer overflow: {} + 4 > {}",
         current_offset_for_fields,
         core_packet_bytes.len()
     );
@@ -501,7 +589,7 @@ pub fn deserialize_ir(
     // Strategic defensive programming: Validate buffer bounds before UDP source port read
     debug_assert!(
         current_offset_for_fields + 2 <= core_packet_bytes.len(),
-        "UDP source port read would exceed buffer bounds: offset {} + 2 > len {}",
+        "Buffer overflow: {} + 2 > {}",
         current_offset_for_fields,
         core_packet_bytes.len()
     );
@@ -515,7 +603,7 @@ pub fn deserialize_ir(
     // Strategic defensive programming: Validate buffer bounds before UDP destination port read
     debug_assert!(
         current_offset_for_fields + 2 <= core_packet_bytes.len(),
-        "UDP destination port read would exceed buffer bounds: offset {} + 2 > len {}",
+        "Buffer overflow: {} + 2 > {}",
         current_offset_for_fields,
         core_packet_bytes.len()
     );
@@ -529,7 +617,7 @@ pub fn deserialize_ir(
     // Strategic defensive programming: Validate buffer bounds before RTP SSRC read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
-        "RTP SSRC read would exceed buffer bounds: offset {} + 4 > len {}",
+        "Buffer overflow: {} + 4 > {}",
         current_offset_for_fields,
         core_packet_bytes.len()
     );
