@@ -147,9 +147,12 @@ The co-development of Rohcstar with its fuzzing counterpart, [Drifter](https://g
 *   **Security:** Uncovering memory safety issues, panics, and other potential vulnerabilities.
 *   **Conformance Testing:** (Future) Assisting in validating against known ROHC traces and expected behaviors described in RFCs.
 
-## Design
+## Documentation
 
-For an in-depth understanding of Rohcstar's architecture, components, and roadmap, please refer to the [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md).
+*   **[Design Document](docs/DESIGN_DOCUMENT.md)** - Detailed architecture, components, and roadmap
+*   **[The ROHC Bible](docs/THE_ROHC_BIBLE.md)** - Comprehensive ROHC protocol reference and implementation guide
+*   **[Style Guide](docs/STYLE.md)** - Code conventions and development standards
+*   **[Benchmarks](docs/BENCHMARKS.md)** - Performance analysis and optimization guidance
 
 ## License
 
