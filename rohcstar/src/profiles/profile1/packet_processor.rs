@@ -466,6 +466,14 @@ pub fn deserialize_ir(
     }
     current_offset_for_fields += 1; // Past Profile ID
 
+    // Strategic defensive programming: Validate buffer bounds before IP source read
+    debug_assert!(
+        current_offset_for_fields + 4 <= core_packet_bytes.len(),
+        "IP source address read would exceed buffer bounds: offset {} + 4 > len {}",
+        current_offset_for_fields,
+        core_packet_bytes.len()
+    );
+
     let static_ip_src = Ipv4Addr::new(
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
@@ -473,6 +481,15 @@ pub fn deserialize_ir(
         core_packet_bytes[current_offset_for_fields + 3],
     );
     current_offset_for_fields += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before IP destination read
+    debug_assert!(
+        current_offset_for_fields + 4 <= core_packet_bytes.len(),
+        "IP destination address read would exceed buffer bounds: offset {} + 4 > len {}",
+        current_offset_for_fields,
+        core_packet_bytes.len()
+    );
+
     let static_ip_dst = Ipv4Addr::new(
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
@@ -480,16 +497,43 @@ pub fn deserialize_ir(
         core_packet_bytes[current_offset_for_fields + 3],
     );
     current_offset_for_fields += 4;
+
+    // Strategic defensive programming: Validate buffer bounds before UDP source port read
+    debug_assert!(
+        current_offset_for_fields + 2 <= core_packet_bytes.len(),
+        "UDP source port read would exceed buffer bounds: offset {} + 2 > len {}",
+        current_offset_for_fields,
+        core_packet_bytes.len()
+    );
+
     let static_udp_src_port = u16::from_be_bytes([
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
     ]);
     current_offset_for_fields += 2;
+
+    // Strategic defensive programming: Validate buffer bounds before UDP destination port read
+    debug_assert!(
+        current_offset_for_fields + 2 <= core_packet_bytes.len(),
+        "UDP destination port read would exceed buffer bounds: offset {} + 2 > len {}",
+        current_offset_for_fields,
+        core_packet_bytes.len()
+    );
+
     let static_udp_dst_port = u16::from_be_bytes([
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
     ]);
     current_offset_for_fields += 2;
+
+    // Strategic defensive programming: Validate buffer bounds before RTP SSRC read
+    debug_assert!(
+        current_offset_for_fields + 4 <= core_packet_bytes.len(),
+        "RTP SSRC read would exceed buffer bounds: offset {} + 4 > len {}",
+        current_offset_for_fields,
+        core_packet_bytes.len()
+    );
+
     let static_rtp_ssrc = Ssrc::new(u32::from_be_bytes([
         core_packet_bytes[current_offset_for_fields],
         core_packet_bytes[current_offset_for_fields + 1],
@@ -687,16 +731,23 @@ pub fn deserialize_uo0(
     core_packet_data: &[u8],
     cid_from_engine: Option<ContextId>,
 ) -> Result<Uo0Packet, RohcParsingError> {
-    // Hot path optimization: Assume correct length since UO-0 is pre-discriminated
+    // Strategic defensive programming: Validate critical buffer bounds
+    if core_packet_data.is_empty() {
+        return Err(RohcParsingError::NotEnoughData {
+            needed: 1,
+            got: core_packet_data.len(),
+            context: crate::error::ParseContext::UoPacketTypeDiscriminator,
+        });
+    }
+
     debug_assert_eq!(
         core_packet_data.len(),
         1,
         "UO-0 core packet must be exactly 1 byte"
     );
 
-    // Fast path: Skip runtime length check for hot path performance
-    // Length is guaranteed by packet discrimination at engine level
-    let packet_byte = unsafe { *core_packet_data.get_unchecked(0) };
+    // Safe access: Bounds checked above, no unsafe needed
+    let packet_byte = core_packet_data[0];
 
     // Debug verification of discriminator (removed in release builds)
     debug_assert_eq!(packet_byte & 0x80, 0, "UO-0 discriminator check failed");
