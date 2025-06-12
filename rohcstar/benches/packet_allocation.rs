@@ -1,10 +1,73 @@
 //! Benchmark packet allocation patterns.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use rohcstar::profiles::profile1::Uo0Packet;
-use rohcstar::profiles::profile1::packet_builder::{UO0_MAX_SIZE, build_uo0_packet};
+use rohcstar::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
+use rohcstar::error::{Field, RohcBuildingError};
 use rohcstar::profiles::profile1::serialization::serialize_uo0;
+use rohcstar::profiles::profile1::{P1_UO0_SN_LSB_WIDTH_DEFAULT, Uo0Packet};
 use rohcstar::types::ContextId;
+
+/// Maximum size for UO-0 packets (Add-CID + UO-0 byte).
+const UO0_MAX_SIZE: usize = 2;
+
+/// Zero-allocation UO-0 packet builder for benchmarking.
+///
+/// Returns a fixed-size array and actual length to avoid heap allocation.
+/// This is experimental code used only for performance comparisons.
+fn build_uo0_packet(
+    packet_data: &Uo0Packet,
+) -> Result<([u8; UO0_MAX_SIZE], usize), RohcBuildingError> {
+    debug_assert!(
+        packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
+        "SN LSB value {} too large for {} bits",
+        packet_data.sn_lsb,
+        P1_UO0_SN_LSB_WIDTH_DEFAULT
+    );
+    debug_assert!(
+        packet_data.crc3 <= 0x07,
+        "CRC3 value {} too large",
+        packet_data.crc3
+    );
+
+    if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: Field::SnLsb,
+            value: packet_data.sn_lsb as u32,
+            max_bits: P1_UO0_SN_LSB_WIDTH_DEFAULT,
+        });
+    }
+    if packet_data.crc3 > 0x07 {
+        return Err(RohcBuildingError::InvalidFieldValueForBuild {
+            field: Field::Crc3,
+            value: packet_data.crc3 as u32,
+            max_bits: 3,
+        });
+    }
+
+    let mut buf = [0u8; UO0_MAX_SIZE];
+    let mut pos = 0;
+
+    // Add-CID octet if needed
+    if let Some(cid_val) = packet_data.cid {
+        if cid_val > 0 && cid_val <= 15 {
+            buf[pos] = ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (*cid_val as u8 & ROHC_SMALL_CID_MASK);
+            pos += 1;
+        } else if cid_val > 15 {
+            return Err(RohcBuildingError::InvalidFieldValueForBuild {
+                field: Field::Cid,
+                value: *cid_val as u32,
+                max_bits: 4,
+            });
+        }
+    }
+
+    // Core UO-0 byte: SN(4 bits) + CRC3(3 bits)
+    let core_byte = (packet_data.sn_lsb << 3) | packet_data.crc3;
+    buf[pos] = core_byte;
+    pos += 1;
+
+    Ok((buf, pos))
+}
 
 fn bench_current_uo0_allocation(c: &mut Criterion) {
     let packet = Uo0Packet {

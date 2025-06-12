@@ -105,7 +105,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     ///
     /// # Parameters
     /// - `context`: A mutable reference to a `RohcDecompressorContext`.
-    /// - `packet_bytes`: A slice containing the ROHC packet data to decompress.
+    /// - `packet`: A slice containing the ROHC packet data to decompress.
     ///
     /// # Returns
     /// The reconstructed uncompressed headers.
@@ -115,7 +115,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
     fn decompress(
         &self,
         context: &mut dyn RohcDecompressorContext,
-        packet_bytes: &[u8],
+        packet: &[u8],
     ) -> Result<GenericUncompressedHeaders, RohcError>;
 }
 
@@ -250,23 +250,23 @@ mod tests {
         fn decompress(
             &self,
             _context: &mut dyn RohcDecompressorContext,
-            rohc_packet_data: &[u8],
+            packet: &[u8],
         ) -> Result<GenericUncompressedHeaders, RohcError> {
-            if rohc_packet_data.is_empty() {
+            if packet.is_empty() {
                 return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                     needed: 1,
                     got: 0,
                     context: ParseContext::RohcPacketInput,
                 }));
             }
-            let pf = RohcProfile::from(rohc_packet_data[0]);
+            let pf = RohcProfile::from(packet[0]);
             if pf != self.profile {
                 return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
-                    rohc_packet_data[0],
+                    packet[0],
                 )));
             }
             Ok(GenericUncompressedHeaders::TestRaw(Bytes::copy_from_slice(
-                &rohc_packet_data[1..],
+                &packet[1..],
             )))
         }
     }

@@ -1,4 +1,9 @@
-//! UO-1 packet serialization and deserialization.
+//! UO-1 packet serialization and deserialization for Profile 1.
+//!
+//! This module handles the creation and parsing of UO-1 (Unidirectional Optimistic, Order 1)
+//! packet variants: UO-1-SN, UO-1-TS, UO-1-ID, and UO-1-RTP. Each variant carries different
+//! combinations of sequence number, timestamp, IP-ID, and marker bit information depending
+//! on which fields have changed since the last packet.
 
 use super::super::constants::*;
 use super::super::packet_types::Uo1Packet;
@@ -12,6 +17,14 @@ use crate::types::{SequenceNumber, Ssrc, Timestamp};
 /// UO-1-SN packets compress sequence number changes with marker bit updates when
 /// timestamp remains predictable (following established stride). Provides efficient
 /// compression for RTP streams with consistent timing but changing voice activity.
+///
+/// # Parameters
+/// - `packet_data`: UO-1 packet structure containing SN LSBs, marker bit, and CRC
+/// - `out`: Output buffer to write serialized packet bytes
+///
+/// # Returns
+/// - `Ok(usize)`: Number of bytes written to output buffer
+/// - `Err(RohcBuildingError)`: Invalid field values or insufficient buffer space
 pub(crate) fn serialize_uo1_sn(
     packet_data: &Uo1Packet,
     out: &mut [u8],
@@ -96,6 +109,16 @@ pub(crate) fn serialize_uo1_sn(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-SN packet.
+///
+/// Parses UO-1-SN packet format and extracts sequence number LSBs, marker bit,
+/// and CRC value from the compressed packet structure.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Raw packet bytes excluding any CID encoding
+///
+/// # Returns
+/// - `Ok(Uo1Packet)`: Parsed packet structure with extracted fields
+/// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
 pub(crate) fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_SN_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-SN should be 3 bytes");
@@ -139,6 +162,14 @@ pub(crate) fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, 
 /// UO-1-TS packets compress timestamp changes when sequence number increments by one
 /// and other fields remain static. Handles irregular timestamp patterns that don't
 /// follow established stride, common in adaptive audio codecs.
+///
+/// # Parameters
+/// - `packet_data`: UO-1 packet structure containing TS LSBs and CRC
+/// - `out`: Output buffer to write serialized packet bytes
+///
+/// # Returns
+/// - `Ok(usize)`: Number of bytes written to output buffer
+/// - `Err(RohcBuildingError)`: Invalid field values or insufficient buffer space
 pub(crate) fn serialize_uo1_ts(
     packet_data: &Uo1Packet,
     out: &mut [u8],
@@ -222,6 +253,16 @@ pub(crate) fn serialize_uo1_ts(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-TS packet.
+///
+/// Parses UO-1-TS packet format and extracts timestamp LSBs and CRC value
+/// from the compressed packet structure.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Raw packet bytes excluding any CID encoding
+///
+/// # Returns
+/// - `Ok(Uo1Packet)`: Parsed packet structure with extracted timestamp fields
+/// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
 pub(crate) fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_TS_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 4, "UO-1-TS should be 4 bytes");
@@ -265,6 +306,14 @@ pub(crate) fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, 
 /// UO-1-ID packets compress IP identification field changes when sequence number
 /// increments by one and timestamp follows established stride. Used for streams
 /// where IP fragmentation characteristics change but timing remains predictable.
+///
+/// # Parameters
+/// - `packet_data`: UO-1 packet structure containing IP-ID LSBs and CRC
+/// - `out`: Output buffer to write serialized packet bytes
+///
+/// # Returns
+/// - `Ok(usize)`: Number of bytes written to output buffer
+/// - `Err(RohcBuildingError)`: Invalid field values or insufficient buffer space
 pub(crate) fn serialize_uo1_id(
     packet_data: &Uo1Packet,
     out: &mut [u8],
@@ -355,6 +404,16 @@ pub(crate) fn serialize_uo1_id(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-ID packet.
+///
+/// Parses UO-1-ID packet format and extracts IP identification LSBs and CRC value
+/// from the compressed packet structure.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Raw packet bytes excluding any CID encoding
+///
+/// # Returns
+/// - `Ok(Uo1Packet)`: Parsed packet structure with extracted IP-ID fields
+/// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
 pub(crate) fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_IP_ID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-ID should be 3 bytes");
@@ -506,14 +565,20 @@ pub(crate) fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet,
     })
 }
 
-/// Prepares a generic UO packet CRC input payload on the stack.
+/// Prepares CRC input payload for generic UO packet validation.
 ///
-/// The CRC input consists of:
-/// - SSRC (4 bytes)
-/// - SN (2 bytes)
-/// - TS (4 bytes)
-/// - Marker (1 byte)
-///   Total: 11 bytes
+/// Creates the standardized byte sequence used for CRC calculation in UO-0, UO-1-SN,
+/// UO-1-TS, and UO-1-RTP packets. This payload represents the essential header fields
+/// that must remain consistent between compressor and decompressor.
+///
+/// # Parameters
+/// - `context_ssrc`: RTP SSRC from compressor context
+/// - `sn_for_crc`: Sequence number to include in CRC calculation
+/// - `ts_for_crc`: Timestamp to include in CRC calculation
+/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
+///
+/// # Returns
+/// Fixed-size array containing the CRC input payload (11 bytes)
 #[inline]
 pub fn prepare_generic_uo_crc_input_payload(
     context_ssrc: Ssrc,
@@ -540,6 +605,16 @@ pub fn prepare_generic_uo_crc_input_payload(
 ///
 /// Zero-allocation version that writes directly to the provided buffer.
 /// Returns the number of bytes written.
+///
+/// # Parameters
+/// - `context_ssrc`: RTP SSRC from compressor context
+/// - `sn_for_crc`: Sequence number to include in CRC calculation
+/// - `ts_for_crc`: Timestamp to include in CRC calculation
+/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
+/// - `buf`: Output buffer to write CRC input payload into
+///
+/// # Returns
+/// Number of bytes written to the buffer (always 11)
 #[inline]
 pub fn prepare_generic_uo_crc_input_into_buf(
     context_ssrc: Ssrc,
@@ -565,13 +640,18 @@ pub fn prepare_generic_uo_crc_input_into_buf(
 
 /// Prepares a UO-1-ID specific CRC input payload on the stack.
 ///
-/// The CRC input consists of:
-/// - SSRC (4 bytes)
-/// - SN (2 bytes)
-/// - TS (4 bytes)
-/// - Marker (1 byte)
-/// - IP-ID LSB (1 byte)
-///   Total: 12 bytes
+/// Creates the standardized byte sequence used for CRC calculation in UO-1-ID packets.
+/// This extends the generic UO CRC input with the IP-ID LSB field for UO-1-ID validation.
+///
+/// # Parameters
+/// - `context_ssrc`: RTP SSRC from compressor context
+/// - `sn_for_crc`: Sequence number to include in CRC calculation
+/// - `ts_for_crc`: Timestamp to include in CRC calculation
+/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
+/// - `ip_id_lsb_for_crc`: IP-ID LSB value specific to UO-1-ID packets
+///
+/// # Returns
+/// Fixed-size array containing the CRC input payload (12 bytes)
 #[inline]
 pub fn prepare_uo1_id_specific_crc_input_payload(
     context_ssrc: Ssrc,
@@ -601,6 +681,17 @@ pub fn prepare_uo1_id_specific_crc_input_payload(
 ///
 /// Zero-allocation version that writes directly to the provided buffer.
 /// Returns the number of bytes written.
+///
+/// # Parameters
+/// - `context_ssrc`: RTP SSRC from compressor context
+/// - `sn_for_crc`: Sequence number to include in CRC calculation
+/// - `ts_for_crc`: Timestamp to include in CRC calculation
+/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
+/// - `ip_id_lsb_for_crc`: IP-ID LSB value specific to UO-1-ID packets
+/// - `buf`: Output buffer to write CRC input payload into
+///
+/// # Returns
+/// Number of bytes written to the buffer (always 12)
 #[inline]
 pub fn prepare_uo1_id_specific_crc_input_into_buf(
     context_ssrc: Ssrc,
