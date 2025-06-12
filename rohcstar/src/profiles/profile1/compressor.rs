@@ -1,16 +1,8 @@
-//! ROHC Profile 1 compression logic for RTP/UDP/IP packets.
+//! Profile 1 compression logic.
 //!
-//! This module implements the compression-side packet processing for ROHC Profile 1,
-//! determining optimal packet types (IR, UO-0, UO-1 variants) based on header field
-//! changes and context state. The compressor aims to minimize packet size while
-//! maintaining decompressor synchronization through strategic IR packet transmission
-//! and careful LSB encoding window management.
-//!
-//! Key responsibilities:
-//! - Packet type selection based on field changes and encoding constraints.
-//! - IR packet generation for initialization and resynchronization.
-//! - UO packet generation with appropriate field encodings.
-//! - Context state updates after successful compression.
+//! This module contains functions for making compression decisions and building
+//! ROHC Profile 1 packets. It implements the core compression algorithms for
+//! RTP/UDP/IPv4 header compression as defined in RFC 3095.
 
 use super::constants::*;
 use super::context::{Profile1CompressorContext, Profile1CompressorMode};
@@ -85,7 +77,6 @@ pub(super) fn should_force_ir(
         }
     }
 
-    // Check if field deltas exceed LSB encoding windows
     is_lsb_window_exceeded(context, headers)
 }
 
@@ -177,7 +168,6 @@ pub(super) fn compress_as_ir(
         context.detect_ts_stride(headers.rtp_timestamp, headers.rtp_sequence_number);
     }
 
-    // Update context state after successful IR packet
     context.rtp_ssrc = headers.rtp_ssrc;
     context.last_sent_rtp_sn_full = headers.rtp_sequence_number;
     context.last_sent_rtp_ts_full = headers.rtp_timestamp;
@@ -272,7 +262,6 @@ pub(super) fn compress_as_uo(
     Ok(len)
 }
 
-// Check if field deltas exceed LSB decoding windows, requiring IR refresh
 fn is_lsb_window_exceeded(
     context: &Profile1CompressorContext,
     headers: &RtpUdpIpv4Headers,
@@ -302,12 +291,12 @@ fn is_lsb_window_exceeded(
     }
 
     if headers.ip_identification != context.last_sent_ip_id_full {
-        let ipid_k = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
-        if ipid_k > 0 && ipid_k < 16 {
-            let max_safe_delta: u16 = (1u16 << (ipid_k - 1)).saturating_sub(1);
-            let ipid_delta_abs =
+        let ip_id_k = P1_UO1_IP_ID_LSB_WIDTH_DEFAULT;
+        if ip_id_k > 0 && ip_id_k < 16 {
+            let max_safe_delta: u16 = (1u16 << (ip_id_k - 1)).saturating_sub(1);
+            let ip_id_delta_abs =
                 min_wrapping_distance_u16(headers.ip_identification, context.last_sent_ip_id_full);
-            if ipid_delta_abs > max_safe_delta {
+            if ip_id_delta_abs > max_safe_delta {
                 return true;
             }
         }
@@ -340,7 +329,6 @@ where
     forward.min(backward)
 }
 
-// Calculate implicit RTP timestamp based on SN delta and TS stride
 fn compute_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Option<Timestamp> {
     // Use established stride first, then potential stride for early UO-1-SN usage
     // This allows UO-1-SN during stride detection while maintaining sync
@@ -576,7 +564,6 @@ fn build_uo1_sn_packet(
 
     let sn_lsb_val = encode_lsb(current_sn.as_u64(), P1_UO1_SN_LSB_WIDTH_DEFAULT)? as u16;
 
-    // Calculate implicit timestamp based on stride for CRC
     let sn_delta_for_ts = current_sn.wrapping_sub(context.last_sent_rtp_sn_full);
     let stride_val = context.ts_stride.or(context.potential_ts_stride);
     let implicit_ts_for_crc = if let Some(stride) = stride_val {
@@ -618,7 +605,7 @@ fn build_uo1_id_packet(
     out: &mut [u8],
 ) -> Result<usize, RohcError> {
     let ip_id_lsb_for_packet =
-        encode_lsb(current_ip_id.as_u64(), P1_UO1_IPID_LSB_WIDTH_DEFAULT)? as u8;
+        encode_lsb(current_ip_id.as_u64(), P1_UO1_IP_ID_LSB_WIDTH_DEFAULT)? as u8;
 
     // UO-1-ID implies SN+1 and unchanged TS (or TS follows stride for implicit update if stride known).
     // For CRC, it specifically uses the *last sent TS* from context if no stride,
@@ -649,7 +636,7 @@ fn build_uo1_id_packet(
     let uo1_id_packet_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
         ip_id_lsb: Some(ip_id_lsb_for_packet as u16),
-        num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+        num_ip_id_lsb_bits: Some(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT),
         crc8: calculated_crc8,
         ..Default::default() // Marker is false in type byte, other LSBs None
     };
@@ -877,12 +864,12 @@ mod tests {
 
         // UO-0 should NOT be selected when IP-ID changes
         let mut context2 = create_test_context(1, 100, 1000, false, 10);
-        let headers_ipid_changed = create_test_headers(1, 101, 1000, false, 11); // IP-ID changed
+        let headers_ip_id_changed = create_test_headers(1, 101, 1000, false, 11); // IP-ID changed
 
         let mut packet_buf2 = [0u8; 16];
         let packet_len2 = compress_as_uo(
             &mut context2,
-            &headers_ipid_changed,
+            &headers_ip_id_changed,
             &crc_calculators,
             &mut packet_buf2,
         )

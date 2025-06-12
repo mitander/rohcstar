@@ -1,8 +1,8 @@
 # Rohcstar Style Guide
 
 > **This is CORRECTNESS, not preference.**
-> 
-> Every rule prevents bugs. Every violation introduces technical debt. 
+>
+> Every rule prevents bugs. Every violation introduces technical debt.
 > This guide is mandatory and must be followed without exception.
 
 Production-grade ROHC implementation built on three foundational pillars:
@@ -12,7 +12,7 @@ Production-grade ROHC implementation built on three foundational pillars:
 ### 1. ROBUSTNESS
 Code should be bulletproof like TigerBeetle. Every edge case handled, every invariant enforced.
 
-### 2. CONSISTENCY  
+### 2. CONSISTENCY
 Patterns must be identical across the codebase. No exceptions, no "this time is different."
 
 ### 3. SIMPLICITY
@@ -323,7 +323,7 @@ ROHC is fault-tolerant by design - packet loss is expected and handled. Focus as
 **Assert These (Critical)**:
 - Entry point parameter validation
 - Array bounds that could cause crashes
-- State machine invariant violations  
+- State machine invariant violations
 - Context consistency that affects correctness
 - Buffer size guarantees before writes
 
@@ -369,10 +369,10 @@ debug_assert!(buf.len() >= 10, "Buffer overflow: {} < 10", buf.len());          
 fn transition_to_fo(&mut self) -> Result<(), RohcError> {
     // State transitions must be validated - corruption here breaks everything
     debug_assert!(
-        matches!(self.state, State::IR | State::FO), 
+        matches!(self.state, State::IR | State::FO),
         "Invalid transition to FO from {:?}", self.state
     );
-    
+
     match self.state {
         State::IR => {
             self.state = State::FO;
@@ -395,10 +395,10 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
     // Buffer overflows are never acceptable
     debug_assert!(
         self.pos + data.len() <= self.buffer.len(),
-        "Buffer overflow: {} + {} > {}", 
+        "Buffer overflow: {} + {} > {}",
         self.pos, data.len(), self.buffer.len()
     );
-    
+
     // Write safely
     self.buffer[self.pos..self.pos + data.len()].copy_from_slice(data);
     self.pos += data.len();
@@ -409,10 +409,10 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
 **Message Patterns** (MANDATORY - NO DEVIATIONS):
 ```rust
 // Buffer write bounds
-"Buffer overflow: {} + {} > {}"     // For write operations  
+"Buffer overflow: {} + {} > {}"     // For write operations
 "Buffer overflow: {} < {}"          // For size requirements
 
-// Range violations  
+// Range violations
 "Range violation: {} not in {}-{}"  // For value ranges
 "Range violation: {} >= {}"         // For upper bounds
 
@@ -426,39 +426,22 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
 
 ## Documentation
 
-### Module Level
-```rust
-//! Profile 1 (RTP/UDP/IP) compression implementation.
-//!
-//! Implements RFC 3095 profile 0x0001 for RTP streams.
-```
+Comments explain WHY, not WHAT. Omit obvious comments.
 
-### Invariant Documentation
-```rust
-/// Profile 1 Compressor Context
-///
-/// # Invariants (checked in debug, relied upon in release)
-/// - `stride` is either None or > 0
-/// - `sent_ir_count` <= MAX_IR_RETRIES
-/// - `sequence_number` wraps at u16::MAX
-///
-/// # State Transitions
-/// - IR -> FO: After K successful IR packets
-/// - FO -> SO: After K successful FO packets
-/// - ANY -> IR: On context damage
-```
+### When to Comment
 
-### Public API
+- Complex algorithms not obvious from reading
+- Critical invariants and unsafe code reasoning
+- Public API contracts
+
+### Examples
+
 ```rust
-/// Compresses headers for given Context ID.
-///
-/// # Returns
-/// - `Ok(&[u8])`: Compressed packet data
-/// - `Err(RohcError)`: Specific failure reason
-///
-/// # Performance
-/// ~450ns per packet, zero allocations
-pub fn compress(&mut self, cid: ContextId, headers: &Headers) -> Result<&[u8], RohcError>
+/// Compresses headers using W-LSB encoding.
+pub fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
+
+// Use full window to handle timestamp wraparound
+let ts_window = calculate_lsb_window(ts_bits + 2);
 ```
 
 ## Tools & Automation

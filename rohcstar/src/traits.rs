@@ -25,8 +25,8 @@ pub trait RohcCompressorContext: Send + Sync + Debug {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     /// Returns the `Instant` when this context was last successfully accessed.
     fn last_accessed(&self) -> Instant;
-    /// Sets the last accessed time of this context.
-    fn set_last_accessed(&mut self, now: Instant);
+    /// Updates the last accessed time of this context.
+    fn update_access_time(&mut self, now: Instant);
 }
 
 /// Defines the capabilities of a ROHC decompressor context.
@@ -35,16 +35,16 @@ pub trait RohcDecompressorContext: Send + Sync + Debug {
     fn profile_id(&self) -> RohcProfile;
     /// Returns the Context Identifier (CID) of this decompression flow.
     fn cid(&self) -> ContextId;
-    /// Sets or updates the Context Identifier (CID) for this context.
-    fn set_cid(&mut self, cid: ContextId);
+    /// Assigns a new Context Identifier (CID) for this context.
+    fn assign_cid(&mut self, cid: ContextId);
     /// Provides a reference to the context as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Provides a mutable reference to the context as `&mut dyn Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
     /// Returns the `Instant` when this context was last successfully accessed.
     fn last_accessed(&self) -> Instant;
-    /// Sets the last accessed time of this context.
-    fn set_last_accessed(&mut self, now: Instant);
+    /// Updates the last accessed time of this context.
+    fn update_access_time(&mut self, now: Instant);
 }
 
 /// Defines the interface for a ROHC profile handler.
@@ -149,7 +149,7 @@ mod tests {
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
-        fn set_last_accessed(&mut self, now: Instant) {
+        fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
     }
@@ -168,7 +168,7 @@ mod tests {
         fn cid(&self) -> ContextId {
             self.cid
         }
-        fn set_cid(&mut self, cid: ContextId) {
+        fn assign_cid(&mut self, cid: ContextId) {
             self.cid = cid;
         }
         fn as_any(&self) -> &dyn Any {
@@ -180,7 +180,7 @@ mod tests {
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
-        fn set_last_accessed(&mut self, now: Instant) {
+        fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
     }
@@ -282,7 +282,7 @@ mod tests {
         };
         assert_eq!(compressor_ctx.last_accessed(), now);
         let later = now + Duration::from_secs(1);
-        compressor_ctx.set_last_accessed(later);
+        compressor_ctx.update_access_time(later);
         assert_eq!(compressor_ctx.last_accessed(), later);
 
         let mut decompressor_ctx = MockDecompressorContext {
@@ -291,7 +291,7 @@ mod tests {
             last_accessed: now,
         };
         assert_eq!(decompressor_ctx.last_accessed(), now);
-        decompressor_ctx.set_last_accessed(later);
+        decompressor_ctx.update_access_time(later);
         assert_eq!(decompressor_ctx.last_accessed(), later);
     }
 

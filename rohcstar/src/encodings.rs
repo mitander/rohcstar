@@ -144,7 +144,7 @@ pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
 /// # Errors
 /// - [`RohcParsingError::InvalidLsbOperation`] - Invalid parameters, LSBs too large, or no unique resolution
 pub fn decode_lsb(
-    received_lsbs: u64,
+    received_lsb: u64,
     reference_value: u64,
     num_lsb_bits: u8,
     p_offset: i64,
@@ -164,12 +164,12 @@ pub fn decode_lsb(
     let lsb_mask = window_size - 1;
 
     // Validate received_lsbs fit in k bits
-    if received_lsbs > lsb_mask {
+    if received_lsb > lsb_mask {
         return Err(RohcParsingError::InvalidLsbOperation {
             field: crate::error::Field::ReceivedLsbs,
             description: format!(
                 "Received LSB value {:#x} is too large for {} LSBs (max value {:#x}).",
-                received_lsbs, num_lsb_bits, lsb_mask
+                received_lsb, num_lsb_bits, lsb_mask
             ),
         });
     }
@@ -182,7 +182,7 @@ pub fn decode_lsb(
 
     // RFC 3095 Section 4.5.1: Find v_cand where v_cand % 2^k == received_lsbs
     // and v_cand is in interpretation window
-    let mut candidate_v = (interval_base & !lsb_mask).wrapping_add(received_lsbs);
+    let mut candidate_v = (interval_base & !lsb_mask).wrapping_add(received_lsb);
 
     // Ensure candidate >= interval_base
     if candidate_v < interval_base {
@@ -203,7 +203,7 @@ pub fn decode_lsb(
                 field: crate::error::Field::ReceivedLsbs,
                 description: format!(
                     "Cannot be uniquely resolved to a value in the interpretation window. LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
-                    received_lsbs,
+                    received_lsb,
                     reference_value,
                     num_lsb_bits,
                     p_offset,

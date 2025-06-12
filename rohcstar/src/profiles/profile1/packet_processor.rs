@@ -1,11 +1,8 @@
-//! ROHC (Robust Header Compression) Profile 1 specific packet serialization and deserialization functions.
+//! Profile 1 packet serialization and deserialization.
 //!
-//! This module provides the low-level utilities to:
-//! 1. Deserialize raw byte arrays representing ROHC Profile 1 packets (IR, UO-0, UO-1-SN, etc.)
-//!    into their corresponding structured Rust types (`IrPacket`, `Uo0Packet`, `Uo1Packet`).
-//! 2. Serialize these Profile 1 packet structs into raw byte arrays for transmission.
-//! 3. Parse uncompressed RTP/UDP/IPv4 headers from a raw byte stream into the
-//!    `RtpUdpIpv4Headers` struct.
+//! This module provides functions for parsing and building ROHC Profile 1 packets,
+//! including IR, UO-0, and various UO-1 packet types. It handles the low-level
+//! packet format details according to RFC 3095, Section 5.7.
 
 use std::net::Ipv4Addr;
 
@@ -22,21 +19,7 @@ use crate::error::{RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
 
-/// Deserializes raw bytes representing an RTP/UDP/IPv4 packet into `RtpUdpIpv4Headers`.
-///
-/// This function assumes the input `data` starts with the IPv4 header. It performs
-/// basic validation of header lengths and protocol types.
-///
-/// # Parameters
-/// - `data`: A byte slice starting with the IPv4 header.
-///
-/// # Returns
-/// The parsed RTP/UDP/IPv4 headers.
-///
-/// # Errors
-/// - [`RohcParsingError::NotEnoughData`] - Insufficient data for header parsing
-/// - [`RohcParsingError::InvalidIpVersion`] - Non-IPv4 packet
-/// - [`RohcParsingError::UnsupportedProtocol`] - Non-UDP protocol in IP header
+/// Deserializes RTP/UDP/IPv4 packet headers with validation.
 pub fn deserialize_rtp_udp_ipv4_headers(
     data: &[u8],
 ) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
@@ -238,14 +221,21 @@ pub fn serialize_ir(
 
     let mut bytes_written = 0;
 
-    // Calculate required size
-    let required_size = 1 // Packet type
-        + 1 // Profile ID
+    let required_size = 1
+        + 1
         + P1_STATIC_CHAIN_LENGTH_BYTES
         + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES
-        + 1 // CRC8
-        + if ir_data.cid > 0 && ir_data.cid <= 15 { 1 } else { 0 } // Add-CID
-        + if ir_data.ts_stride.is_some() { P1_TS_STRIDE_EXTENSION_LENGTH_BYTES } else { 0 }; // TS_STRIDE extension
+        + 1
+        + if ir_data.cid > 0 && ir_data.cid <= 15 {
+            1
+        } else {
+            0
+        }
+        + if ir_data.ts_stride.is_some() {
+            P1_TS_STRIDE_EXTENSION_LENGTH_BYTES
+        } else {
+            0
+        };
 
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
@@ -255,7 +245,6 @@ pub fn serialize_ir(
         });
     }
 
-    // Add-CID octet if needed
     if ir_data.cid > 0 && ir_data.cid <= 15 {
         out[bytes_written] =
             ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE | (ir_data.cid.0 as u8 & ROHC_SMALL_CID_MASK);
@@ -268,24 +257,20 @@ pub fn serialize_ir(
         });
     }
 
-    // Packet type octet
-    out[bytes_written] = P1_ROHC_IR_PACKET_TYPE_WITH_DYN; // D-bit is always 1 if dynamic chain is present
+    out[bytes_written] = P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
     bytes_written += 1;
 
-    // Profile ID
-    let profile_u8: u8 = ir_data.profile_id.into();
-    if profile_u8 != u8::from(RohcProfile::RtpUdpIp) {
+    let profile_id: u8 = ir_data.profile_id.into();
+    if profile_id != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field: crate::error::Field::ProfileId,
-            value: profile_u8 as u32,
+            value: profile_id as u32,
             max_bits: 8, // Expected value is u8::from(RohcProfile::RtpUdpIp)
         });
     }
-    out[bytes_written] = profile_u8;
+    out[bytes_written] = profile_id;
     bytes_written += 1;
 
-    // Static chain
-    // Strategic defensive programming: Validate buffer bounds before IP source write
     debug_assert!(
         bytes_written + 4 <= out.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -296,7 +281,6 @@ pub fn serialize_ir(
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_src.octets());
     bytes_written += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before IP destination write
     debug_assert!(
         bytes_written + 4 <= out.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -307,7 +291,6 @@ pub fn serialize_ir(
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_ip_dst.octets());
     bytes_written += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before UDP source port write
     debug_assert!(
         bytes_written + 2 <= out.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -319,7 +302,6 @@ pub fn serialize_ir(
         .copy_from_slice(&ir_data.static_udp_src_port.to_be_bytes());
     bytes_written += 2;
 
-    // Strategic defensive programming: Validate buffer bounds before UDP destination port write
     debug_assert!(
         bytes_written + 2 <= out.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -331,7 +313,6 @@ pub fn serialize_ir(
         .copy_from_slice(&ir_data.static_udp_dst_port.to_be_bytes());
     bytes_written += 2;
 
-    // Strategic defensive programming: Validate buffer bounds before RTP SSRC write
     debug_assert!(
         bytes_written + 4 <= out.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -342,7 +323,7 @@ pub fn serialize_ir(
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.static_rtp_ssrc.to_be_bytes());
     bytes_written += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before RTP fields batch write
+    // Validate buffer bounds before RTP fields batch write
     debug_assert!(
         bytes_written + 3 <= out.len(),
         "Buffer overflow: {} + 3 > {}",
@@ -359,7 +340,7 @@ pub fn serialize_ir(
     bytes_written += 3;
 
     // Dynamic chain
-    // Strategic defensive programming: Validate buffer bounds before RTP sequence number write
+    // Validate buffer bounds before RTP sequence number write
     debug_assert!(
         bytes_written + 2 <= out.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -370,7 +351,7 @@ pub fn serialize_ir(
     out[bytes_written..bytes_written + 2].copy_from_slice(&ir_data.dyn_rtp_sn.to_be_bytes());
     bytes_written += 2;
 
-    // Strategic defensive programming: Validate buffer bounds before RTP timestamp write
+    // Validate buffer bounds before RTP timestamp write
     debug_assert!(
         bytes_written + 4 <= out.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -381,7 +362,7 @@ pub fn serialize_ir(
     out[bytes_written..bytes_written + 4].copy_from_slice(&ir_data.dyn_rtp_timestamp.to_be_bytes());
     bytes_written += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before IP TTL write
+    // Validate buffer bounds before IP TTL write
     debug_assert!(
         bytes_written < out.len(),
         "Buffer overflow: {} + 1 > {}",
@@ -392,7 +373,7 @@ pub fn serialize_ir(
     out[bytes_written] = ir_data.dyn_ip_ttl;
     bytes_written += 1;
 
-    // Strategic defensive programming: Validate buffer bounds before IP ID write
+    // Validate buffer bounds before IP ID write
     debug_assert!(
         bytes_written + 2 <= out.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -554,7 +535,7 @@ pub fn deserialize_ir(
     }
     current_offset_for_fields += 1; // Past Profile ID
 
-    // Strategic defensive programming: Validate buffer bounds before IP source read
+    // Validate buffer bounds before IP source read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -570,7 +551,7 @@ pub fn deserialize_ir(
     );
     current_offset_for_fields += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before IP destination read
+    // Validate buffer bounds before IP destination read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -586,7 +567,7 @@ pub fn deserialize_ir(
     );
     current_offset_for_fields += 4;
 
-    // Strategic defensive programming: Validate buffer bounds before UDP source port read
+    // Validate buffer bounds before UDP source port read
     debug_assert!(
         current_offset_for_fields + 2 <= core_packet_bytes.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -600,7 +581,7 @@ pub fn deserialize_ir(
     ]);
     current_offset_for_fields += 2;
 
-    // Strategic defensive programming: Validate buffer bounds before UDP destination port read
+    // Validate buffer bounds before UDP destination port read
     debug_assert!(
         current_offset_for_fields + 2 <= core_packet_bytes.len(),
         "Buffer overflow: {} + 2 > {}",
@@ -614,7 +595,7 @@ pub fn deserialize_ir(
     ]);
     current_offset_for_fields += 2;
 
-    // Strategic defensive programming: Validate buffer bounds before RTP SSRC read
+    // Validate buffer bounds before RTP SSRC read
     debug_assert!(
         current_offset_for_fields + 4 <= core_packet_bytes.len(),
         "Buffer overflow: {} + 4 > {}",
@@ -1181,9 +1162,9 @@ pub fn serialize_uo1_id(
             })?;
 
     debug_assert_eq!(
-        num_ip_id_bits, P1_UO1_IPID_LSB_WIDTH_DEFAULT,
+        num_ip_id_bits, P1_UO1_IP_ID_LSB_WIDTH_DEFAULT,
         "UO-1-ID requires {} LSB bits, got {}",
-        P1_UO1_IPID_LSB_WIDTH_DEFAULT, num_ip_id_bits
+        P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, num_ip_id_bits
     );
     debug_assert!(
         ip_id_lsb <= 0xFF,
@@ -1191,11 +1172,11 @@ pub fn serialize_uo1_id(
         ip_id_lsb
     );
 
-    if num_ip_id_bits != P1_UO1_IPID_LSB_WIDTH_DEFAULT {
+    if num_ip_id_bits != P1_UO1_IP_ID_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
             field: crate::error::Field::NumIpIdLsbBits,
             value: num_ip_id_bits as u32,
-            max_bits: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
+            max_bits: P1_UO1_IP_ID_LSB_WIDTH_DEFAULT,
         });
     }
     if ip_id_lsb > 0xFF {
@@ -1264,7 +1245,7 @@ pub fn serialize_uo1_id(
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data or invalid packet type
 pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
-    let expected_len = 1 + (P1_UO1_IPID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
+    let expected_len = 1 + (P1_UO1_IP_ID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-ID should be 3 bytes");
 
     if core_packet_bytes.len() < expected_len {
@@ -1294,7 +1275,7 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         ts_lsb: None,
         num_ts_lsb_bits: None,
         ip_id_lsb: Some(ip_id_lsb_val as u16),
-        num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+        num_ip_id_lsb_bits: Some(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT),
         ts_scaled: None,
         crc8: received_crc8,
     })
@@ -1864,7 +1845,7 @@ mod tests {
     fn build_and_parse_uo1_id_packet_cid0() {
         let uo1_id_data = Uo1Packet {
             cid: None,
-            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            num_ip_id_lsb_bits: Some(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT),
             ip_id_lsb: Some(0x78),
             marker: false,
             crc8: 0x9A,

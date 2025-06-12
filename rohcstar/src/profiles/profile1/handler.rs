@@ -183,7 +183,7 @@ impl ProfileHandler for Profile1Handler {
         };
 
         if len > 0 {
-            context.set_last_accessed(Instant::now());
+            context.update_access_time(Instant::now());
         }
         Ok(len)
     }
@@ -292,7 +292,7 @@ impl ProfileHandler for Profile1Handler {
         };
 
         if result.is_ok() {
-            context.set_last_accessed(Instant::now());
+            context.update_access_time(Instant::now());
         }
         result
     }

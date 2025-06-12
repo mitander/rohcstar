@@ -13,7 +13,7 @@ use rohcstar::encodings::{decode_lsb, encode_lsb, is_value_in_lsb_interval};
 /// For any value within the W-LSB interpretation window, encoding followed by decoding
 /// must reconstruct the original value exactly.
 #[qc_quickcheck]
-fn lsb_encoding_roundtrip_property(value: u16, reference: u16) -> TestResult {
+fn p1_lsb_encoding_roundtrip_preserves_values(value: u16, reference: u16) -> TestResult {
     let k = 8; // Start with fixed k=8 for broader window
     let p_offset = 0; // Standard case with p=0
 
@@ -38,7 +38,7 @@ fn lsb_encoding_roundtrip_property(value: u16, reference: u16) -> TestResult {
 
 /// Property: LSB encoding always produces values that fit in k bits.
 #[qc_quickcheck]
-fn lsb_encode_bounded_output_property(value: u64, k: u8) -> TestResult {
+fn p1_lsb_encoding_output_fits_k_bits(value: u64, k: u8) -> TestResult {
     if k == 0 || k > 64 {
         return TestResult::discard(); // Invalid k values
     }
@@ -55,7 +55,7 @@ fn lsb_encode_bounded_output_property(value: u64, k: u8) -> TestResult {
 
 /// Property: LSB decoding is deterministic for valid inputs.
 #[qc_quickcheck]
-fn lsb_decode_deterministic_property(received_lsbs: u8, reference: u16, k: u8) -> TestResult {
+fn p1_lsb_decoding_deterministic_results(received_lsbs: u8, reference: u16, k: u8) -> TestResult {
     if k == 0 || k >= 64 {
         return TestResult::discard(); // Invalid k values
     }
@@ -77,7 +77,7 @@ fn lsb_decode_deterministic_property(received_lsbs: u8, reference: u16, k: u8) -
 /// If a value is reported as being in the interpretation window,
 /// then decoding its LSBs should reconstruct that value.
 #[qc_quickcheck]
-fn lsb_window_consistency_property(value: u16, reference: u16, k: u8) -> TestResult {
+fn p1_lsb_window_interpretation_consistent(value: u16, reference: u16, k: u8) -> TestResult {
     if k == 0 || k >= 64 {
         return TestResult::discard();
     }
@@ -104,7 +104,7 @@ fn lsb_window_consistency_property(value: u16, reference: u16, k: u8) -> TestRes
 
 /// Property: CRC3 computation is deterministic and bounded.
 #[qc_quickcheck]
-fn crc3_deterministic_property(data: Vec<u8>) -> TestResult {
+fn p1_crc3_computation_deterministic_bounded(data: Vec<u8>) -> TestResult {
     if data.len() > 1000 {
         return TestResult::discard(); // Limit test data size
     }
@@ -123,7 +123,7 @@ fn crc3_deterministic_property(data: Vec<u8>) -> TestResult {
 
 /// Property: CRC8 computation is deterministic and bounded.
 #[qc_quickcheck]
-fn crc8_deterministic_property(data: Vec<u8>) -> TestResult {
+fn p1_crc8_computation_deterministic_bounded(data: Vec<u8>) -> TestResult {
     if data.len() > 1000 {
         return TestResult::discard(); // Limit test data size
     }
@@ -142,7 +142,7 @@ fn crc8_deterministic_property(data: Vec<u8>) -> TestResult {
 
 /// Property: CRC changes when data changes.
 #[qc_quickcheck]
-fn crc_sensitivity_property(mut data: Vec<u8>) -> TestResult {
+fn p1_crc_computation_changes_with_data(mut data: Vec<u8>) -> TestResult {
     if data.is_empty() || data.len() > 100 {
         return TestResult::discard();
     }
@@ -163,7 +163,7 @@ fn crc_sensitivity_property(mut data: Vec<u8>) -> TestResult {
 
 /// Property: P-offset shifts the interpretation window as expected.
 #[qc_quickcheck]
-fn lsb_p_offset_window_shift_property(reference: u16, k: u8, p_offset: i8) -> TestResult {
+fn p1_lsb_p_offset_shifts_window_correctly(reference: u16, k: u8, p_offset: i8) -> TestResult {
     if k == 0 || k >= 64 {
         return TestResult::discard();
     }
@@ -195,7 +195,7 @@ fn lsb_p_offset_window_shift_property(reference: u16, k: u8, p_offset: i8) -> Te
 
 /// Property: Multiple k values produce consistent hierarchical encoding.
 #[qc_quickcheck]
-fn lsb_hierarchical_consistency_property(value: u32, k1: u8, k2: u8) -> TestResult {
+fn p1_lsb_hierarchical_encoding_consistent(value: u32, k1: u8, k2: u8) -> TestResult {
     if k1 == 0 || k1 >= 32 || k2 == 0 || k2 >= 32 || k1 >= k2 {
         return TestResult::discard(); // k1 should be smaller than k2
     }
@@ -243,7 +243,7 @@ mod manual_property_tests {
 
     /// Manual execution of property tests for deterministic testing.
     #[test]
-    fn run_lsb_roundtrip_properties() {
+    fn p1_lsb_encoding_manual_roundtrip_cases() {
         // Test specific edge cases manually
         assert!(
             test_lsb_roundtrip(100, 100),
@@ -260,7 +260,7 @@ mod manual_property_tests {
     }
 
     #[test]
-    fn run_lsb_bounded_output_properties() {
+    fn p1_lsb_encoding_manual_bounded_output_cases() {
         // Test encoding bounds manually
         let test_cases = [(0xFFFF_u64, 8_u8), (42, 4), (0, 1), (255, 8)];
 
@@ -281,7 +281,7 @@ mod manual_property_tests {
     }
 
     #[test]
-    fn run_crc_properties() {
+    fn p1_crc_computation_manual_determinism_cases() {
         // Test CRC determinism and bounds manually
         let test_data = vec![
             vec![1, 2, 3, 4, 5],
@@ -304,7 +304,7 @@ mod manual_property_tests {
     }
 
     #[test]
-    fn run_window_properties() {
+    fn p1_lsb_window_manual_consistency_cases() {
         // Test window properties manually
         let test_cases = [(105_u16, 100_u16, 8_u8), (10, 10, 4), (255, 200, 6)];
 

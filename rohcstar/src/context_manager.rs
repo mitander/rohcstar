@@ -274,7 +274,7 @@ mod tests {
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
-        fn set_last_accessed(&mut self, now: Instant) {
+        fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
     }
@@ -293,7 +293,7 @@ mod tests {
         fn cid(&self) -> ContextId {
             self.cid
         }
-        fn set_cid(&mut self, new_cid: ContextId) {
+        fn assign_cid(&mut self, new_cid: ContextId) {
             self.cid = new_cid;
         }
         fn as_any(&self) -> &dyn Any {
@@ -305,7 +305,7 @@ mod tests {
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
-        fn set_last_accessed(&mut self, now: Instant) {
+        fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
     }
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(retrieved_ctx1_mut.last_accessed(), initial_time);
 
         // Simulate access
-        retrieved_ctx1_mut.set_last_accessed(Instant::now());
+        retrieved_ctx1_mut.update_access_time(Instant::now());
         let time_after_update = retrieved_ctx1_mut.last_accessed();
         assert!(time_after_update > initial_time);
 
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(retrieved_ctx1_mut.cid(), cid1);
         assert_eq!(retrieved_ctx1_mut.last_accessed(), initial_time);
 
-        retrieved_ctx1_mut.set_last_accessed(Instant::now());
+        retrieved_ctx1_mut.update_access_time(Instant::now());
         let time_after_update = retrieved_ctx1_mut.last_accessed();
         assert!(time_after_update > initial_time);
 

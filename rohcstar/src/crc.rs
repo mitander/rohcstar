@@ -41,25 +41,25 @@ impl CrcCalculators {
     /// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) using the pre-initialized instance.
     ///
     /// # Parameters
-    /// - `data`: A slice of bytes over which the CRC will be calculated.
+    /// - `input`: A slice of bytes over which the CRC will be calculated.
     ///
     /// # Returns
     /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
     #[inline]
-    pub fn crc3(&self, data: &[u8]) -> u8 {
-        self.crc3_calculator.checksum(data)
+    pub fn crc3(&self, input: &[u8]) -> u8 {
+        self.crc3_calculator.checksum(input)
     }
 
     /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) using the pre-initialized instance.
     ///
     /// # Parameters
-    /// - `data`: A slice of bytes over which the CRC will be calculated.
+    /// - `input`: A slice of bytes over which the CRC will be calculated.
     ///
     /// # Returns
     /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
     #[inline]
-    pub fn crc8(&self, data: &[u8]) -> u8 {
-        self.crc8_calculator.checksum(data)
+    pub fn crc8(&self, input: &[u8]) -> u8 {
+        self.crc8_calculator.checksum(input)
     }
 }
 
@@ -83,13 +83,13 @@ impl Default for CrcCalculators {
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// - `data`: A slice of bytes over which the CRC will be calculated.
+/// - `input`: A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
 /// The calculated 8-bit CRC value (0x00 to 0xFF).
-pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
+pub fn calculate_rohc_crc8(input: &[u8]) -> u8 {
     let crc_calc: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
-    crc_calc.checksum(data)
+    crc_calc.checksum(input)
 }
 
 /// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) directly.
@@ -104,13 +104,13 @@ pub fn calculate_rohc_crc8(data: &[u8]) -> u8 {
 /// - XOR Output: `0x00`
 ///
 /// # Parameters
-/// - `data`: A slice of bytes over which the CRC will be calculated.
+/// - `input`: A slice of bytes over which the CRC will be calculated.
 ///
 /// # Returns
 /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
-pub fn calculate_rohc_crc3(data: &[u8]) -> u8 {
+pub fn calculate_rohc_crc3(input: &[u8]) -> u8 {
     let crc_calc: Crc<u8> = Crc::<u8>::new(&CRC_3_ROHC);
-    crc_calc.checksum(data)
+    crc_calc.checksum(input)
 }
 
 #[cfg(test)]

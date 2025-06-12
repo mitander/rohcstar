@@ -163,7 +163,7 @@ rohc_newtype!(
 
 rohc_newtype!(
     /// IP identification field for IPv4 headers.
-    IpId(u16) => "IPID"
+    IpId(u16) => "IP_ID"
 );
 
 rohc_newtype!(

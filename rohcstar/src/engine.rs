@@ -146,7 +146,7 @@ impl RohcEngine {
                 let result = handler.compress(context_box.as_mut(), headers, out);
 
                 if result.is_ok() {
-                    context_box.set_last_accessed(self.clock.now());
+                    context_box.update_access_time(self.clock.now());
                 }
                 result
             }
@@ -168,7 +168,7 @@ impl RohcEngine {
                 );
                 let result = handler.compress(new_context.as_mut(), headers, out);
                 if result.is_ok() {
-                    new_context.set_last_accessed(self.clock.now());
+                    new_context.update_access_time(self.clock.now());
                 }
                 self.context_manager
                     .add_compressor_context(cid, new_context);
@@ -227,7 +227,7 @@ impl RohcEngine {
 
                 match handler.decompress(context_box.as_mut(), core_packet_slice) {
                     Ok(headers) => {
-                        context_box.set_last_accessed(self.clock.now());
+                        context_box.update_access_time(self.clock.now());
                         Ok(headers)
                     }
                     Err(e) => Err(e),
@@ -245,7 +245,7 @@ impl RohcEngine {
                             handler.create_decompressor_context(cid, self.clock.now());
                         match handler.decompress(new_context.as_mut(), core_packet_slice) {
                             Ok(headers) => {
-                                new_context.set_last_accessed(self.clock.now());
+                                new_context.update_access_time(self.clock.now());
                                 self.context_manager
                                     .add_decompressor_context(cid, new_context);
                                 Ok(headers)
@@ -320,7 +320,7 @@ impl RohcEngine {
 
                 match handler.decompress(context_box.as_mut(), core_packet_slice) {
                     Ok(headers) => {
-                        context_box.set_last_accessed(self.clock.now());
+                        context_box.update_access_time(self.clock.now());
                         Ok(headers)
                     }
                     Err(e) => Err(e),
@@ -338,7 +338,7 @@ impl RohcEngine {
                             handler.create_decompressor_context(cid, self.clock.now());
                         match handler.decompress(new_context.as_mut(), core_packet_slice) {
                             Ok(headers) => {
-                                new_context.set_last_accessed(self.clock.now());
+                                new_context.update_access_time(self.clock.now());
                                 self.context_manager
                                     .add_decompressor_context(cid, new_context);
                                 Ok(headers)

@@ -43,7 +43,7 @@ fn create_test_headers() -> RtpUdpIpv4Headers {
 }
 
 #[test]
-fn debug_cid_0_compression() {
+fn p1_engine_context_cid_zero_compression() {
     let mut engine = create_test_engine();
     let headers = create_test_headers();
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
@@ -67,7 +67,7 @@ fn debug_cid_0_compression() {
 }
 
 #[test]
-fn debug_cid_1_compression() {
+fn p1_engine_context_cid_one_compression() {
     let mut engine = create_test_engine();
     let headers = create_test_headers();
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);
@@ -95,7 +95,7 @@ fn debug_cid_1_compression() {
 }
 
 #[test]
-fn debug_cid_1_follow_up_compression() {
+fn p1_engine_context_cid_one_sequential_packets() {
     let mut engine = create_test_engine();
     let headers = create_test_headers();
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers.clone());
@@ -140,7 +140,7 @@ fn debug_cid_1_follow_up_compression() {
 }
 
 #[test]
-fn debug_compliance_test_scenario() {
+fn p1_engine_context_multiple_cid_independence() {
     let mut engine = create_test_engine();
 
     let cid1 = ContextId::new(1);

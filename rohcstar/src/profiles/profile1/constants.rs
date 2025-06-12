@@ -57,7 +57,7 @@ pub const P1_MAX_SN_RECOVERY_WINDOW_UO1: u16 = 256;
 /// SN recovery search window for UO-0 packets (CRC3 protection).
 pub const P1_MAX_SN_RECOVERY_WINDOW_UO0: u16 = 32;
 /// Default LSBs for IP-ID in UO-1-ID packets (8 bits).
-pub const P1_UO1_IPID_LSB_WIDTH_DEFAULT: u8 = 8;
+pub const P1_UO1_IP_ID_LSB_WIDTH_DEFAULT: u8 = 8;
 /// Maximum allowed SN jump distance to prevent extreme reconstructions.
 pub const P1_MAX_SN_JUMP_DISTANCE: u16 = 64;
 
@@ -97,7 +97,7 @@ pub const P1_DEFAULT_P_SN_OFFSET: i64 = 0;
 /// Default `p` offset for W-LSB decoding of RTP TS.
 pub const P1_DEFAULT_P_TS_OFFSET: i64 = 0;
 /// Default `p` offset for W-LSB decoding of IP-ID.
-pub const P1_DEFAULT_P_IPID_OFFSET: i64 = 0;
+pub const P1_DEFAULT_P_IP_ID_OFFSET: i64 = 0;
 
 // --- Profile 1 Chain Lengths (RFC 3095, Sec 5.8) ---
 /// Static chain length (IP_Src/Dst, UDP_Src/Dst, RTP_SSRC, RTP_PayloadType, RTP_Extension,
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(P1_UO0_SN_LSB_WIDTH_DEFAULT, 4);
         assert_eq!(P1_UO1_SN_LSB_WIDTH_DEFAULT, 8);
         assert_eq!(P1_UO1_TS_LSB_WIDTH_DEFAULT, 16);
-        assert_eq!(P1_UO1_IPID_LSB_WIDTH_DEFAULT, 8);
+        assert_eq!(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, 8);
     }
 
     #[test]

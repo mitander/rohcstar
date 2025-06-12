@@ -59,7 +59,6 @@ pub(super) fn decompress_as_ir(
 
     context.initialize_from_ir_packet(&parsed_ir);
 
-    // IP-ID uses context value (not carried in IR dynamic part)
     Ok(reconstruct_headers_from_context(
         context,
         parsed_ir.dyn_rtp_sn,
@@ -143,18 +142,14 @@ fn decompress_as_uo0(
     };
     let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
 
-    // Hot path optimization: Use specialized UO-0 LSB decode
     let decoded_sn = crate::encodings::decode_lsb_uo0_sn(
         parsed_uo0.sn_lsb,
         *context.last_reconstructed_rtp_sn_full,
     );
-    // Context desynchronization detection
     let forward_jump = decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full);
     let backward_jump = (*context.last_reconstructed_rtp_sn_full).wrapping_sub(decoded_sn);
 
-    // If both jumps are large, we have context desync
     if forward_jump > 50 && backward_jump > 50 {
-        // Increase CRC failure count to trigger IR
         context.counters.so_consecutive_failures =
             context.counters.so_consecutive_failures.saturating_add(3);
     }
@@ -176,10 +171,7 @@ fn decompress_as_uo0(
     );
     let calculated_crc3 = crc_calculators.crc3(&crc_input_bytes);
 
-    // Hot path: CRC validation first, then sanity checks
     if calculated_crc3 != parsed_uo0.crc3 {
-        // Mark CRC failure for RFC compliance
-        // Adaptive recovery window based on failure count
         let (forward_window, backward_window) = if context.counters.so_consecutive_failures > 2 {
             (256u16, 128u16)
         } else {
@@ -191,9 +183,9 @@ fn decompress_as_uo0(
             context,
             parsed_uo0.crc3,
             Crc3Uo0,
-            forward_window, // forward_window: CRC3 ~12.5% collision rate, conservative
-            backward_window, // backward_window: small for UO-0
-            None,           // no LSB constraint for UO-0
+            forward_window,
+            backward_window,
+            None,
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -238,16 +230,15 @@ fn decompress_as_uo0(
     if sn_diff_forward > P1_MAX_REASONABLE_UO0_SN_JUMP
         && sn_diff_backward > P1_MAX_REASONABLE_UO0_SN_JUMP
     {
-        // Mark CRC failure for RFC compliance
         context.counters.had_recent_crc_failure = true;
 
         let recovery_sn = try_sn_recovery(
             context,
             parsed_uo0.crc3,
             Crc3Uo0,
-            8,    // forward_window
-            4,    // backward_window
-            None, // no LSB constraint
+            8,
+            4,
+            None,
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -318,15 +309,14 @@ fn decompress_as_uo1_sn(
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
-    // Hot path: CRC validation first, then sanity checks
     if calculated_crc8 != parsed_uo1.crc8 {
         match try_sn_recovery(
             context,
             parsed_uo1.crc8,
             Crc8Uo1Sn,
-            32, // forward_window: larger for 8-bit CRC
-            8,  // backward_window
-            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)), // LSB constraint
+            32,
+            8,
+            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
             |input| crc_calculators.crc8(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -370,13 +360,12 @@ fn decompress_as_uo1_sn(
     let sn_diff_backward = expected_sn_range_start.value().wrapping_sub(decoded_sn);
 
     if sn_diff_forward > P1_MAX_REASONABLE_SN_JUMP && sn_diff_backward > P1_MAX_REASONABLE_SN_JUMP {
-        // Use recovery for extreme jumps even if CRC passed (false positive protection)
         match try_sn_recovery(
             context,
             parsed_uo1.crc8,
             Crc8Uo1Sn,
-            32, // forward_window
-            8,  // backward_window
+            32,
+            8,
             Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
             |input| crc_calculators.crc8(input),
             |candidate_sn, candidate_ts, buf| {
@@ -405,10 +394,7 @@ fn decompress_as_uo1_sn(
                     context.last_reconstructed_ip_id_full,
                 ));
             }
-            Err(_) => {
-                // Recovery failed, but CRC passed - use original decode
-                // This handles edge case where extreme jump is actually valid
-            }
+            Err(_) => {}
         }
     }
 
@@ -442,13 +428,13 @@ fn decompress_as_uo1_ts(
 
     let parsed_uo1_ts = deserialize_uo1_ts(packet)?;
 
-    let ts_lsb_from_packet = parsed_uo1_ts.ts_lsb.ok_or({
+    let ts_lsb = parsed_uo1_ts.ts_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field: TsLsb,
             structure: Uo1TsPacket,
         })
     })?;
-    let num_ts_lsb_bits = parsed_uo1_ts.num_ts_lsb_bits.ok_or({
+    let ts_lsb_bits = parsed_uo1_ts.num_ts_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field: NumTsLsbBits,
             structure: Uo1TsPacket,
@@ -456,9 +442,9 @@ fn decompress_as_uo1_ts(
     })?;
 
     let decoded_ts_value = decode_lsb(
-        ts_lsb_from_packet as u64,
+        ts_lsb as u64,
         context.last_reconstructed_rtp_ts_full.value() as u64,
-        num_ts_lsb_bits,
+        ts_lsb_bits,
         context.p_ts,
     )? as u32;
     let decoded_ts = Timestamp::new(decoded_ts_value);
@@ -478,9 +464,9 @@ fn decompress_as_uo1_ts(
             context,
             parsed_uo1_ts.crc8,
             Crc8Uo1Sn,
-            32,   // forward_window
-            8,    // backward_window
-            None, // no LSB constraint for UO-1-TS
+            32,
+            8,
+            None,
             |input| crc_calculators.crc8(input),
             |candidate_sn, _, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -522,13 +508,13 @@ fn decompress_as_uo1_id(
 
     let parsed_uo1_id = deserialize_uo1_id(packet)?;
 
-    let ip_id_lsb_from_packet = parsed_uo1_id.ip_id_lsb.ok_or({
+    let ip_id_lsb = parsed_uo1_id.ip_id_lsb.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field: IpIdLsb,
             structure: Uo1IdPacket,
         })
     })?;
-    let num_ip_id_lsb_bits = parsed_uo1_id.num_ip_id_lsb_bits.ok_or({
+    let ip_id_lsb_bits = parsed_uo1_id.num_ip_id_lsb_bits.ok_or({
         RohcError::Parsing(RohcParsingError::MandatoryFieldMissing {
             field: NumIpIdLsbBits,
             structure: Uo1IdPacket,
@@ -536,9 +522,9 @@ fn decompress_as_uo1_id(
     })?;
 
     let _decoded_ip_id = decode_lsb(
-        ip_id_lsb_from_packet as u64,
+        ip_id_lsb as u64,
         context.last_reconstructed_ip_id_full.as_u64(),
-        num_ip_id_lsb_bits,
+        ip_id_lsb_bits,
         context.p_ip_id,
     )? as u16;
     let expected_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
@@ -548,7 +534,7 @@ fn decompress_as_uo1_id(
         expected_sn,
         expected_ts,
         context.last_reconstructed_rtp_marker,
-        ip_id_lsb_from_packet as u8,
+        ip_id_lsb as u8,
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
@@ -562,9 +548,9 @@ fn decompress_as_uo1_id(
             context,
             parsed_uo1_id.crc8,
             Crc8Uo1Sn,
-            32,   // forward_window
-            8,    // backward_window
-            None, // no LSB constraint for UO-1-ID
+            32,
+            8,
+            None,
             |input| crc_calculators.crc8(input),
             |candidate_sn, _, buf| {
                 prepare_uo1_id_specific_crc_input_into_buf(
@@ -580,9 +566,9 @@ fn decompress_as_uo1_id(
     };
     let decoded_ts = expected_ts;
     let decoded_ip_id_full = IpId::new(decode_lsb(
-        ip_id_lsb_from_packet as u64,
+        ip_id_lsb as u64,
         context.last_reconstructed_ip_id_full.as_u64(),
-        num_ip_id_lsb_bits,
+        ip_id_lsb_bits,
         context.p_ip_id,
     )? as u16);
 
@@ -634,7 +620,6 @@ fn decompress_as_uo1_rtp(
             })
         })?;
 
-    // Try the expected SN first, then attempt recovery if CRC fails
     let expected_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
@@ -651,9 +636,9 @@ fn decompress_as_uo1_rtp(
             context,
             parsed_uo1_rtp.crc8,
             Crc8Uo1Sn,
-            32,   // forward_window
-            8,    // backward_window
-            None, // no LSB constraint for UO-1-RTP
+            32,
+            8,
+            None,
             |input| crc_calculators.crc8(input),
             |candidate_sn, _, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -850,7 +835,7 @@ fn calculate_reconstructed_ts_implicit(
                     .wrapping_add(sn_delta as u32 * stride_val),
             )
         } else {
-            context.last_reconstructed_rtp_ts_full // Uses previous TS if delta isn't strictly positive
+            context.last_reconstructed_rtp_ts_full
         }
     } else {
         context.last_reconstructed_rtp_ts_full
@@ -1083,7 +1068,7 @@ mod tests {
         let ssrc = 0x33333333;
         let ts_stride = 160;
         let mut context = create_context_with_stride(300, 4000, ts_stride, ssrc);
-        context.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
+        context.expected_lsb_ip_id_width = P1_UO1_IP_ID_LSB_WIDTH_DEFAULT;
 
         // SN 300 → 301 (delta=1), TS should be 4000 + 160 = 4160
         let target_sn = 301;
@@ -1091,7 +1076,7 @@ mod tests {
         let expected_ts: Timestamp = expected_ts_val.into();
         let target_ip_id = 35;
         let ip_id_lsb =
-            encode_lsb(target_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT).unwrap() as u8;
+            encode_lsb(target_ip_id as u64, P1_UO1_IP_ID_LSB_WIDTH_DEFAULT).unwrap() as u8;
 
         let crc_input = prepare_uo1_id_specific_crc_input_payload(
             ssrc.into(),
@@ -1104,7 +1089,7 @@ mod tests {
 
         let uo1_packet = Uo1Packet {
             ip_id_lsb: Some(ip_id_lsb as u16),
-            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            num_ip_id_lsb_bits: Some(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT),
             crc8,
             ..Default::default()
         };
@@ -1624,7 +1609,7 @@ mod tests {
         let ssrc = 0x11223344;
         let ts_stride = 160;
         let mut context = create_context_with_stride(300, 4000, ts_stride, ssrc);
-        context.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
+        context.expected_lsb_ip_id_width = P1_UO1_IP_ID_LSB_WIDTH_DEFAULT;
 
         let target_ip_id = 300;
         context.last_reconstructed_ip_id_full = 291.into();
@@ -1632,7 +1617,7 @@ mod tests {
         let expected_ts_val = 4160;
         let expected_ts: Timestamp = expected_ts_val.into();
         let ip_id_lsb =
-            encode_lsb(target_ip_id as u64, P1_UO1_IPID_LSB_WIDTH_DEFAULT).unwrap() as u8;
+            encode_lsb(target_ip_id as u64, P1_UO1_IP_ID_LSB_WIDTH_DEFAULT).unwrap() as u8;
 
         let crc_input = prepare_uo1_id_specific_crc_input_payload(
             ssrc.into(),
@@ -1645,7 +1630,7 @@ mod tests {
 
         let uo1_packet = Uo1Packet {
             ip_id_lsb: Some(ip_id_lsb as u16),
-            num_ip_id_lsb_bits: Some(P1_UO1_IPID_LSB_WIDTH_DEFAULT),
+            num_ip_id_lsb_bits: Some(P1_UO1_IP_ID_LSB_WIDTH_DEFAULT),
             crc8,
             ..Default::default()
         };

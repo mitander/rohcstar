@@ -63,7 +63,10 @@ fn p1_uo0_sequence_number_encoding() {
 
         let sn_bits = (buf[0] >> 3) & 0x0F;
         let expected_sn_lsb = (100 + sn_increment) & 0x0F;
-        assert_eq!(sn_bits as u16, expected_sn_lsb, "SN encoding mismatch");
+        assert_eq!(
+            sn_bits as u16, expected_sn_lsb,
+            "SN LSB encoding should match expected value"
+        );
     }
 }
 
@@ -87,8 +90,12 @@ fn p1_uo0_with_add_cid() {
     assert_eq!(len, 2, "UO-0 with Add-CID should be 2 bytes");
 
     // Verify Add-CID octet
-    assert_eq!(compressed[0] >> 4, 0b1110, "Add-CID prefix incorrect");
-    assert_eq!(compressed[0] & 0x0F, 5, "CID value in Add-CID incorrect");
+    assert_eq!(compressed[0] >> 4, 0b1110, "Add-CID prefix should be 1110");
+    assert_eq!(
+        compressed[0] & 0x0F,
+        5,
+        "CID value in Add-CID should match expected"
+    );
 
     // Verify UO-0 packet follows
     assert_eq!(
@@ -151,7 +158,10 @@ fn p1_uo1_marker_bit_encoding() {
 
     match decompressed {
         GenericUncompressedHeaders::RtpUdpIpv4(h) => {
-            assert!(h.rtp_marker, "Marker bit not preserved");
+            assert!(
+                h.rtp_marker,
+                "Marker bit should be preserved after compression/decompression"
+            );
         }
         _ => panic!("Decompressed headers type mismatch"),
     }
@@ -198,7 +208,7 @@ fn p1_uo_packets_preserve_crc_integrity() {
         .compress(cid, None, &generic, &mut buf)
         .expect("UO-0 compression should succeed");
 
-    assert_eq!(len, 1, "Should be UO-0 packet");
+    assert_eq!(len, 1, "CRC test packet should be UO-0 format");
 
     // Corrupt the CRC bits (last 3 bits)
     let mut corrupted = buf[..len].to_vec();
@@ -206,7 +216,10 @@ fn p1_uo_packets_preserve_crc_integrity() {
 
     // Decompression should fail
     let result = engine.decompress(&corrupted);
-    assert!(result.is_err(), "Should reject packet with corrupted CRC");
+    assert!(
+        result.is_err(),
+        "Decompression should fail for corrupted CRC"
+    );
 }
 
 #[test]
@@ -273,7 +286,7 @@ fn p1_uo_optimal_packet_selection() {
     let len_uo0 = engine
         .compress(cid, None, &generic_uo0, &mut buf)
         .expect("UO-0 case should compress");
-    assert_eq!(len_uo0, 1, "Should select UO-0 for minimal change");
+    assert_eq!(len_uo0, 1, "Minimal SN change should produce UO-0 packet");
 
     // Case 2: Timestamp change -> UO-1 or larger
     let headers_ts = create_headers_with_sn_ts(102, 2000);
@@ -282,7 +295,10 @@ fn p1_uo_optimal_packet_selection() {
     let len_ts = engine
         .compress(cid, None, &generic_ts, &mut buf)
         .expect("TS change case should compress");
-    assert!(len_ts > 1, "Should select larger format for TS change");
+    assert!(
+        len_ts > 1,
+        "Timestamp change should require larger packet format"
+    );
 
     // Case 3: Large SN jump -> Extended format
     let headers_jump = create_headers_with_sn(1000);
@@ -293,6 +309,6 @@ fn p1_uo_optimal_packet_selection() {
         .expect("Large jump case should compress");
     assert!(
         len_jump >= 3,
-        "Should select extended format for large jump"
+        "Large SN jump should require extended packet format"
     );
 }

@@ -9,9 +9,9 @@ use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use super::constants::{
-    P1_DEFAULT_P_IPID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
+    P1_DEFAULT_P_IP_ID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
     P1_TS_SCALED_MAX_VALUE, P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, P1_UO0_SN_LSB_WIDTH_DEFAULT,
-    P1_UO1_IPID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
+    P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
 };
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
@@ -176,8 +176,8 @@ impl Profile1CompressorContext {
             current_lsb_sn_width: P1_UO0_SN_LSB_WIDTH_DEFAULT,
             current_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
             last_sent_ip_id_full: IpId::default(),
-            p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
-            current_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
+            p_ip_id: P1_DEFAULT_P_IP_ID_OFFSET,
+            current_lsb_ip_id_width: P1_UO1_IP_ID_LSB_WIDTH_DEFAULT,
             fo_packets_sent_since_ir: 0,
             ir_refresh_interval,
             consecutive_fo_packets_sent: 0,
@@ -426,7 +426,7 @@ impl RohcCompressorContext for Profile1CompressorContext {
     fn last_accessed(&self) -> Instant {
         self.last_accessed
     }
-    fn set_last_accessed(&mut self, now: Instant) {
+    fn update_access_time(&mut self, now: Instant) {
         self.last_accessed = now;
     }
 }
@@ -580,8 +580,8 @@ impl Profile1DecompressorContext {
             p_ts: P1_DEFAULT_P_TS_OFFSET,
             expected_lsb_ts_width: P1_UO1_TS_LSB_WIDTH_DEFAULT,
             last_reconstructed_ip_id_full: IpId::new(0),
-            expected_lsb_ip_id_width: P1_UO1_IPID_LSB_WIDTH_DEFAULT,
-            p_ip_id: P1_DEFAULT_P_IPID_OFFSET,
+            expected_lsb_ip_id_width: P1_UO1_IP_ID_LSB_WIDTH_DEFAULT,
+            p_ip_id: P1_DEFAULT_P_IP_ID_OFFSET,
             counters: StateCounters::default(),
             last_accessed: Instant::now(),
             ts_stride: None,
@@ -631,8 +631,8 @@ impl Profile1DecompressorContext {
         self.p_sn = P1_DEFAULT_P_SN_OFFSET;
         self.expected_lsb_ts_width = P1_UO1_TS_LSB_WIDTH_DEFAULT;
         self.p_ts = P1_DEFAULT_P_TS_OFFSET;
-        self.expected_lsb_ip_id_width = P1_UO1_IPID_LSB_WIDTH_DEFAULT;
-        self.p_ip_id = P1_DEFAULT_P_IPID_OFFSET;
+        self.expected_lsb_ip_id_width = P1_UO1_IP_ID_LSB_WIDTH_DEFAULT;
+        self.p_ip_id = P1_DEFAULT_P_IP_ID_OFFSET;
 
         self.ts_stride = ir_packet.ts_stride;
         self.ts_offset = ir_packet.dyn_rtp_timestamp;
@@ -709,7 +709,6 @@ impl Profile1DecompressorContext {
         new_ts: Timestamp,
         new_sn: SequenceNumber,
     ) {
-        // Update potential stride for consecutive packets
         self.update_potential_stride_consecutive(new_ts, new_sn);
 
         if self.rtp_ssrc == 0 || (self.ts_scaled_mode && self.ts_stride.is_some()) {
@@ -778,7 +777,7 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
     fn cid(&self) -> ContextId {
         self.cid
     }
-    fn set_cid(&mut self, cid: ContextId) {
+    fn assign_cid(&mut self, cid: ContextId) {
         self.cid = cid;
     }
     fn as_any(&self) -> &dyn Any {
@@ -790,7 +789,7 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
     fn last_accessed(&self) -> Instant {
         self.last_accessed
     }
-    fn set_last_accessed(&mut self, now: Instant) {
+    fn update_access_time(&mut self, now: Instant) {
         self.last_accessed = now;
     }
 }
@@ -801,9 +800,9 @@ mod tests {
     use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
     use crate::packet_defs::RohcProfile;
     use crate::profiles::profile1::constants::{
-        P1_DEFAULT_P_IPID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
+        P1_DEFAULT_P_IP_ID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
         P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, P1_UO0_SN_LSB_WIDTH_DEFAULT,
-        P1_UO1_IPID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
+        P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
     };
     use crate::profiles::profile1::packet_types::IrPacket;
     use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
@@ -824,10 +823,10 @@ mod tests {
         assert_eq!(comp_ctx.current_lsb_sn_width, P1_UO0_SN_LSB_WIDTH_DEFAULT);
         assert_eq!(comp_ctx.p_ts, P1_DEFAULT_P_TS_OFFSET);
         assert_eq!(comp_ctx.current_lsb_ts_width, P1_UO1_TS_LSB_WIDTH_DEFAULT);
-        assert_eq!(comp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
+        assert_eq!(comp_ctx.p_ip_id, P1_DEFAULT_P_IP_ID_OFFSET);
         assert_eq!(
             comp_ctx.current_lsb_ip_id_width,
-            P1_UO1_IPID_LSB_WIDTH_DEFAULT
+            P1_UO1_IP_ID_LSB_WIDTH_DEFAULT
         );
         // TS Stride fields
         assert_eq!(comp_ctx.ts_stride, None);
@@ -1155,10 +1154,10 @@ mod tests {
             decomp_ctx.expected_lsb_ts_width,
             P1_UO1_TS_LSB_WIDTH_DEFAULT
         );
-        assert_eq!(decomp_ctx.p_ip_id, P1_DEFAULT_P_IPID_OFFSET);
+        assert_eq!(decomp_ctx.p_ip_id, P1_DEFAULT_P_IP_ID_OFFSET);
         assert_eq!(
             decomp_ctx.expected_lsb_ip_id_width,
-            P1_UO1_IPID_LSB_WIDTH_DEFAULT
+            P1_UO1_IP_ID_LSB_WIDTH_DEFAULT
         );
         assert_eq!(decomp_ctx.ts_stride, None);
         assert_eq!(decomp_ctx.ts_offset, 0);
@@ -1275,7 +1274,7 @@ mod tests {
     fn context_trait_downcasting_decompressor() {
         let mut decomp_ctx_dyn: Box<dyn RohcDecompressorContext> =
             Box::new(Profile1DecompressorContext::new(2.into()));
-        decomp_ctx_dyn.set_cid(3.into());
+        decomp_ctx_dyn.assign_cid(3.into());
 
         let specific_ctx_mut = decomp_ctx_dyn
             .as_any_mut()

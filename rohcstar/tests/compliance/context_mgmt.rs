@@ -195,10 +195,18 @@ fn engine_context_independent_state() {
                 GenericUncompressedHeaders::RtpUdpIpv4(h1),
                 GenericUncompressedHeaders::RtpUdpIpv4(h2),
             ) => {
-                assert_eq!(h1.udp_src_port, 1111);
-                assert_eq!(h2.udp_src_port, 2222);
-                assert_eq!(*h1.rtp_sequence_number, 100 + i);
-                assert_eq!(*h2.rtp_sequence_number, 100 + i * 2);
+                assert_eq!(h1.udp_src_port, 1111, "CID1 port should be preserved");
+                assert_eq!(h2.udp_src_port, 2222, "CID2 port should be preserved");
+                assert_eq!(
+                    *h1.rtp_sequence_number,
+                    100 + i,
+                    "CID1 sequence number should match expected"
+                );
+                assert_eq!(
+                    *h2.rtp_sequence_number,
+                    100 + i * 2,
+                    "CID2 sequence number should match expected"
+                );
             }
             _ => panic!("Decompressed headers type mismatch"),
         }

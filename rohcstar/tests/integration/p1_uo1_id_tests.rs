@@ -20,7 +20,7 @@ use rohcstar::{EngineError, RohcError, RohcParsingError};
 
 /// Tests UO-1-ID packet when IP-ID changes with SN+1 and stable TS/marker.
 #[test]
-fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
+fn p1_uo1_id_basic_ip_id_change_sn_plus_one() {
     let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
@@ -101,7 +101,7 @@ fn p1_uo1_id_basic_ipid_change_sn_plus_one() {
 
 /// Tests that large IP-ID jumps beyond UO-1-ID LSB range force IR packets.
 #[test]
-fn p1_uo1_id_large_ipid_jump_forces_ir() {
+fn p1_uo1_id_large_ip_id_jump_forces_ir() {
     let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
@@ -151,7 +151,7 @@ fn p1_uo1_id_large_ipid_jump_forces_ir() {
 
 /// Tests UO-1-ID with IP-ID wraparound and LSB reconstruction.
 #[test]
-fn p1_uo1_id_ipid_lsb_wraparound_reconstruction() {
+fn p1_uo1_id_ip_id_lsb_wraparound_reconstruction() {
     let mut engine = create_test_engine_with_system_clock(100);
     engine
         .register_profile_handler(Box::new(Profile1Handler::new()))
