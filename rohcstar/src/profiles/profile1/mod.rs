@@ -11,7 +11,7 @@
 //! - `state_machine`: Handles decompressor state transitions for Profile 1.
 //! - `context`: Defines `Profile1CompressorContext` and `Profile1DecompressorContext`.
 //! - `discriminator`: Defines `Profile1PacketType` for structured packet type identification.
-//! - `packet_processor`: Contains functions for parsing and building Profile 1 ROHC packets.
+//! - `serialization`: Focused packet serialization modules (IR, UO-0, UO-1 variants).
 //! - `packet_types`: Defines Profile 1 specific ROHC packet representations (IR, UO-0, UO-1).
 //! - `protocol_types`: Defines `RtpUdpIpv4Headers`.
 //! - `constants`: Holds constants specific to Profile 1 operations.
@@ -22,9 +22,10 @@ pub mod context;
 pub mod decompressor;
 pub mod discriminator;
 pub mod handler;
-pub mod packet_processor;
+pub mod packet_builder;
 pub mod packet_types;
 pub mod protocol_types;
+pub mod serialization;
 pub mod state_machine;
 mod state_transitions;
 mod state_types;

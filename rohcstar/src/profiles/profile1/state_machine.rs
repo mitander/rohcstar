@@ -318,10 +318,9 @@ mod tests {
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
-    use crate::profiles::profile1::packet_processor::{
-        prepare_generic_uo_crc_input_payload, serialize_ir, serialize_uo0, serialize_uo1_sn,
-    };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
+    use crate::profiles::profile1::serialization::uo1_packets::prepare_generic_uo_crc_input_payload;
+    use crate::profiles::profile1::serialization::{serialize_ir, serialize_uo0, serialize_uo1_sn};
     use crate::types::{ContextId, SequenceNumber, Timestamp};
 
     // Helper to create a basic decompressor context in a given mode

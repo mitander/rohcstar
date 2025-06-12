@@ -90,6 +90,7 @@ pub mod engine;
 pub mod error;
 pub mod packet_defs;
 pub mod profiles;
+pub mod serialization;
 pub mod time;
 pub mod traits;
 pub mod types;

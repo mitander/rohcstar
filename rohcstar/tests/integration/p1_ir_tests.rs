@@ -22,7 +22,7 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
-use rohcstar::profiles::profile1::packet_processor::serialize_ir;
+use rohcstar::profiles::profile1::serialization::serialize_ir;
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
     P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler,

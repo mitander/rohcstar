@@ -6,13 +6,15 @@
 use super::constants::{P1_MAX_REASONABLE_SN_JUMP, P1_MAX_REASONABLE_UO0_SN_JUMP};
 use super::context::Profile1DecompressorContext;
 use super::discriminator::Profile1PacketType;
-use super::packet_processor::{
-    deserialize_ir, deserialize_uo0, deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn,
-    deserialize_uo1_ts, prepare_generic_uo_crc_input_into_buf,
-    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_into_buf,
-    prepare_uo1_id_specific_crc_input_payload,
-};
 use super::protocol_types::RtpUdpIpv4Headers;
+use super::serialization::uo1_packets::{
+    prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
+    prepare_uo1_id_specific_crc_input_into_buf, prepare_uo1_id_specific_crc_input_payload,
+};
+use super::serialization::{
+    deserialize_ir, deserialize_uo0, deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn,
+    deserialize_uo1_ts,
+};
 
 use crate::CrcType::{self, Crc3Uo0, Crc8Uo1Sn};
 use crate::Field::{self, IpIdLsb, NumIpIdLsbBits, NumTsLsbBits, TsLsb, TsScaled};
@@ -873,10 +875,10 @@ mod tests {
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
-    use crate::profiles::profile1::packet_processor::{
+    use crate::profiles::profile1::packet_types::{Uo0Packet, Uo1Packet};
+    use crate::profiles::profile1::serialization::{
         serialize_uo0, serialize_uo1_id, serialize_uo1_sn,
     };
-    use crate::profiles::profile1::packet_types::{Uo0Packet, Uo1Packet};
     use crate::profiles::profile1::*;
 
     fn create_test_context(

@@ -306,6 +306,7 @@ mod tests {
     use crate::profiles::profile1::context::Profile1CompressorMode;
     use crate::profiles::profile1::packet_types::IrPacket;
     use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
+    use crate::profiles::profile1::serialization::serialize_ir;
 
     #[test]
     fn handler_calls_compressor_for_ir() {
@@ -361,12 +362,8 @@ mod tests {
             crc8: 0,
         };
         let mut ir_buf = [0u8; 64];
-        let ir_len = super::super::packet_processor::serialize_ir(
-            &ir_data_content,
-            &handler.crc_calculators,
-            &mut ir_buf,
-        )
-        .expect("Test IR packet build failed");
+        let ir_len = serialize_ir(&ir_data_content, &handler.crc_calculators, &mut ir_buf)
+            .expect("Test IR packet build failed");
         let ir_packet_bytes = &ir_buf[..ir_len];
 
         let result = handler.decompress(decomp_ctx_dyn.as_mut(), ir_packet_bytes);

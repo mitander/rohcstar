@@ -4,9 +4,8 @@ use rohcstar::{
     encodings::{decode_lsb, encode_lsb},
     engine::RohcEngine,
     packet_defs::{GenericUncompressedHeaders, RohcProfile},
-    profiles::profile1::{
-        Profile1Handler, RtpUdpIpv4Headers, packet_processor::deserialize_rtp_udp_ipv4_headers,
-    },
+    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers},
+    serialization::deserialize_rtp_udp_ipv4_headers,
     time::SystemClock,
     types::{IpId, SequenceNumber, Timestamp},
 };

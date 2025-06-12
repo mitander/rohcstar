@@ -6,12 +6,15 @@
 
 use super::constants::*;
 use super::context::{Profile1CompressorContext, Profile1CompressorMode};
-use super::packet_processor::{
-    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload, serialize_ir,
-    serialize_uo0, serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn, serialize_uo1_ts,
-};
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::RtpUdpIpv4Headers;
+use super::serialization::uo1_packets::{
+    prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
+};
+use super::serialization::{
+    serialize_ir, serialize_uo0, serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn,
+    serialize_uo1_ts,
+};
 
 use crate::crc::CrcCalculators;
 use crate::encodings::encode_lsb;
