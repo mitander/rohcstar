@@ -5,10 +5,6 @@
 //! - Replay: Re-run a simulation with a specific seed and configuration.
 //! - Stress: (Placeholder) Long-duration stress testing.
 
-use clap::Parser;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng, random};
-use rohcstar_sim::{RohcSimulator, SimConfig, SimError};
 use std::collections::HashSet;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -18,8 +14,13 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use clap::Parser;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng, random};
+
+use rohcstar_sim::{RohcSimulator, SimConfig, SimError};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Rohcstar Deterministic Simulator", long_about = None)]

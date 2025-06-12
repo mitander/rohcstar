@@ -1,15 +1,16 @@
+use std::{sync::Arc, time::Duration};
+
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+
 use rohcstar::{
     crc::CrcCalculators,
     encodings::{decode_lsb, encode_lsb},
     engine::RohcEngine,
     packet_defs::{GenericUncompressedHeaders, RohcProfile},
-    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers},
-    serialization::deserialize_rtp_udp_ipv4_headers,
+    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers, deserialize_rtp_udp_ipv4_headers},
     time::SystemClock,
     types::{IpId, SequenceNumber, Timestamp},
 };
-use std::{sync::Arc, time::Duration};
 
 const BENCH_COMPRESS_BUF_SIZE: usize = 256;
 
