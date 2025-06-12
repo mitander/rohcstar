@@ -424,25 +424,271 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
 "Counter overflow: {} > {}"         // For counter limits
 ```
 
-## Documentation
+## Documentation Standards
 
-Comments explain WHY, not WHAT. Omit obvious comments.
+All documentation must be consistent, complete, and production-ready. No exceptions.
 
-### When to Comment
+### Module Documentation (`//!`)
 
-- Complex algorithms not obvious from reading
-- Critical invariants and unsafe code reasoning
-- Public API contracts
+Every module MUST have module-level documentation explaining its purpose:
+
+```rust
+//! ROHC Profile 1 decompression for RTP/UDP/IP packets.
+//!
+//! Implements RFC 3095 profile 0x0001 decompression with robust CRC recovery
+//! and conservative false positive prevention.
+```
+
+**Structure**:
+- First line: Brief summary ending with period
+- Empty line
+- Detailed explanation (2-4 lines max)
+- Reference RFC sections when applicable
+
+### Function Documentation
+
+#### Public Functions (`pub fn`, `pub(crate) fn`, `pub(super) fn`)
+
+**MANDATORY**: All public functions MUST have complete documentation:
+
+```rust
+/// Compresses headers using W-LSB encoding for Profile 1 packets.
+///
+/// Analyzes header changes and selects optimal packet type based on RFC 3095 rules.
+/// Updates compressor context state including timestamp stride detection.
+///
+/// # Parameters
+/// - `context`: Mutable compressor context containing state and configuration
+/// - `headers`: Uncompressed headers of the current packet to compress
+/// - `out`: Output buffer to write the compressed packet into
+///
+/// # Returns
+/// The number of bytes written to the output buffer.
+///
+/// # Errors
+/// - [`RohcError::Building`] - No suitable packet type available
+/// - [`RohcError::Internal`] - Internal logic error
+pub fn compress(&mut self, context: &mut Context, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
+```
+
+**Required Sections**:
+1. **Summary**: One line describing what the function does
+2. **Details**: 1-3 lines explaining the approach (optional if obvious)
+3. **`# Parameters`**: Every parameter with brief description
+4. **`# Returns`**: What is returned and what it means
+5. **`# Errors`** (if function returns Result): Each error variant that can occur
+
+#### Private Functions (`fn`)
+
+**RULE**: Private functions should NOT use `///` documentation. Use brief `//` comments only when the function is complex or non-obvious:
+
+```rust
+// Calculates minimum wrapping distance between two sequence numbers
+fn min_wrapping_distance_u16<T, U>(a: T, b: U) -> u16
+where
+    T: Into<u16>,
+    U: Into<u16>,
+{
+    let a_val = a.into();
+    let b_val = b.into();
+    let forward = a_val.wrapping_sub(b_val);
+    let backward = b_val.wrapping_sub(a_val);
+    forward.min(backward)
+}
+
+// Simple helper functions need no comments
+fn can_use_uo0(marker_changed: bool, sn_delta: u16) -> bool {
+    !marker_changed && sn_delta > 0 && sn_delta < 16
+}
+```
+
+### Inline Comments
+
+#### Keep These Comments (Valuable)
+
+Comments that explain **WHY** a value is set or **business logic**:
+
+```rust
+RtpUdpIpv4Headers {
+    ip_total_length: 0,     // Typically set by higher layers or network stack
+    ip_dont_fragment: true, // Common assumption for ROHC Profile 1
+    ip_checksum: 0,         // Recalculated by network stack
+    udp_checksum: 0,        // May be 0 if not used, or recalculated
+    rtp_padding: context.rtp_padding, // Assumed false unless payload indicates otherwise
+    rtp_csrc_count: 0,      // Assumed 0 for Profile 1
+}
+
+// Use full window to handle timestamp wraparound at boundaries
+let ts_window = calculate_lsb_window(ts_bits + 2);
+
+// Profile 1 mandates specific CRC input format per RFC 3095 Section 5.7.7.4
+let crc_input = prepare_generic_uo_crc_input_payload(ssrc, sn, ts, marker);
+```
+
+#### Remove These Comments (Noise)
+
+Comments that restate the code or add no value:
+
+```rust
+// BAD - Remove these
+let result = compress_packet();  // Compress the packet
+counter += 1;                    // Increment counter
+return Ok(headers);              // Return success
+
+// BAD - Obvious state updates
+self.state = State::Active;      // Set state to active
+```
+
+#### Comment Maintenance Rules
+
+1. **Update comments with code changes** - Stale comments are worse than no comments
+2. **Remove TODO comments** - Fix immediately or create GitHub issue
+3. **No debugging comments** - Remove `println!`, `dbg!`, etc.
+4. **No commented-out code** - Delete it; use git history if needed
+
+### Import Organization
+
+**MANDATORY**: All imports must follow this exact order with blank lines between groups:
+
+```rust
+// 1. Standard library
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
+use std::time::Instant;
+
+// 2. External dependencies (alphabetical by crate name)
+use criterion::{Criterion, black_box};
+use thiserror::Error;
+
+// 3. Crate-local imports (alphabetical, grouped by module)
+use crate::constants::{IP_PROTOCOL_UDP, RTP_VERSION};
+use crate::error::{RohcError, RohcParsingError};
+use crate::types::{ContextId, SequenceNumber};
+
+// 4. Relative imports (super, self)
+use super::constants::P1_UO0_SN_LSB_WIDTH_DEFAULT;
+use super::packet_types::Uo0Packet;
+```
+
+**FORBIDDEN**: Inline imports in function bodies:
+
+```rust
+// ❌ NEVER do this
+fn compress() {
+    use crate::types::SequenceNumber;
+    let sn = SequenceNumber::new(42);
+}
+
+// ✅ Always import at module level
+use crate::types::SequenceNumber;
+
+fn compress() {
+    let sn = SequenceNumber::new(42);
+}
+```
+
+### Documentation Examples
+
+#### Good Module Documentation
+
+```rust
+//! UO-1 packet serialization and deserialization for Profile 1.
+//!
+//! This module handles the creation and parsing of UO-1 (Unidirectional Optimistic, Order 1)
+//! packet variants: UO-1-SN, UO-1-TS, UO-1-ID, and UO-1-RTP. Each variant carries different
+//! combinations of sequence number, timestamp, IP-ID, and marker bit information depending
+//! on which fields have changed since the last packet.
+```
+
+#### Good Function Documentation
+
+```rust
+/// Prepares CRC input payload for UO-1-ID packet validation.
+///
+/// Creates the standardized byte sequence used for CRC calculation in UO-1-ID packets.
+/// This extends the generic UO CRC input with the IP-ID LSB field for UO-1-ID validation.
+///
+/// # Parameters
+/// - `context_ssrc`: RTP SSRC from compressor context
+/// - `sn_for_crc`: Sequence number to include in CRC calculation
+/// - `ts_for_crc`: Timestamp to include in CRC calculation
+/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
+/// - `ip_id_lsb_for_crc`: IP-ID LSB value specific to UO-1-ID packets
+///
+/// # Returns
+/// Fixed-size array containing the CRC input payload (12 bytes)
+pub fn prepare_uo1_id_specific_crc_input_payload(
+    context_ssrc: Ssrc,
+    sn_for_crc: SequenceNumber,
+    ts_for_crc: Timestamp,
+    marker_for_crc: bool,
+    ip_id_lsb_for_crc: u8,
+) -> [u8; 12]
+```
+
+## Commit Style
+
+All commits must follow these strict formatting rules to maintain clean git history:
+
+### Commit Message Format
+
+```
+type(scope): brief description
+
+Optional longer explanation if needed
+- Bullet points for multiple changes
+- Keep each line under 72 characters
+```
+
+### Type Categories
+
+- **feat**: New feature or significant enhancement
+- **fix**: Bug fix or correction
+- **refactor**: Code restructuring without behavior change  
+- **style**: Formatting, naming, organization (no logic change)
+- **docs**: Documentation additions or improvements
+- **test**: Adding or improving tests
+- **chore**: Tooling, dependencies, or maintenance
+
+### Scope Guidelines
+
+- **profile1**: Changes to Profile 1 implementation
+- **engine**: RohcEngine modifications
+- **style**: Style guide or formatting changes
+- **crc**: CRC calculation improvements
+- **buffer-safety**: Buffer bounds and safety improvements
 
 ### Examples
 
-```rust
-/// Compresses headers using W-LSB encoding.
-pub fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
+```bash
+# Good commits
+feat(profile1): add UO-1-RTP packet support with TS_SCALED encoding
+fix(buffer-safety): add bounds checking to IR deserialization  
+refactor(profile1): break down packet_processor into focused modules
+style(defensive): standardize debug_assert! patterns across codebase
+docs(profile1): add complete Parameter/Returns sections to UO-1 functions
 
-// Use full window to handle timestamp wraparound
-let ts_window = calculate_lsb_window(ts_bits + 2);
+# Bad commits  
+Update stuff           # No type or scope
+Fix bug in thing       # Too vague
+Added new feature      # Wrong tense, no scope
 ```
+
+### Rules
+
+1. **Present tense**: "add feature" not "added feature"
+2. **Lowercase**: Never capitalize the description
+3. **No period**: End descriptions without punctuation
+4. **Specific scope**: Use module names, not generic terms
+5. **Descriptive**: Explain WHAT and WHY, not HOW
+6. **Atomic**: Each commit should be a single logical change
+
+### Pre-commit Requirements
+
+Every commit MUST pass:
+- `cargo fmt --check` - Code formatting
+- `cargo clippy -- -D warnings` - Linting
+- `cargo test` - All tests pass
 
 ## Tools & Automation
 

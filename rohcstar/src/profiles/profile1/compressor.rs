@@ -66,10 +66,6 @@ pub(super) fn should_force_ir(
         return true;
     }
 
-    // Note: We don't force IR just because stride is established.
-    // UO-1-SN can work with established stride even without ts_scaled_mode.
-    // The compressor will signal stride in the next natural IR packet.
-
     if context.ts_scaled_mode {
         if context.ts_stride.is_none() {
             // TS_SCALED requires known stride
@@ -131,8 +127,6 @@ pub(super) fn compress_as_ir(
     } else if context.ts_stride.is_some()
         && context.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
     {
-        // Stride established, signal for future use
-
         context.ts_stride
     } else {
         None
@@ -353,7 +347,6 @@ fn compute_implicit_ts(context: &Profile1CompressorContext, sn_delta: u16) -> Op
 
 // Packet selection helper methods for clarity and testability
 
-/// Checks if UO-1-RTP can be used and returns TS_SCALED value if available.
 fn can_use_uo1_rtp(
     context: &Profile1CompressorContext,
     sn_delta: u16,
@@ -367,12 +360,10 @@ fn can_use_uo1_rtp(
     }
 }
 
-/// Checks if UO-0 packet can be used (minimal changes, static fields).
 fn can_use_uo0(marker_changed: bool, sn_delta: u16, ip_id_changed: bool, ts_changed: bool) -> bool {
     !marker_changed && sn_delta > 0 && sn_delta < 16 && !ip_id_changed && !ts_changed
 }
 
-/// Checks if UO-1-ID packet can be used.
 fn can_use_uo1_id(
     marker_changed: bool,
     ip_id_changed: bool,
@@ -383,7 +374,6 @@ fn can_use_uo1_id(
     !marker_changed && ip_id_changed && sn_delta == 1 && current_ts == expected_ts
 }
 
-/// Checks if UO-1-SN packet can be used as fallback.
 fn can_use_uo1_sn(context: &Profile1CompressorContext) -> bool {
     // UO-1-SN can be used with established or potential stride
     // This enables early usage during stride detection phase
@@ -406,7 +396,6 @@ fn select_and_build_uo_packet(
     crc_calculators: &CrcCalculators,
     out: &mut [u8],
 ) -> Result<(usize, Timestamp), RohcError> {
-    // Try UO-1-RTP for TS_SCALED mode
     if let Some(ts_scaled_val) = can_use_uo1_rtp(context, sn_delta, ip_id_changed, current_ts) {
         let len = build_uo1_rtp_packet(
             context,
@@ -418,11 +407,8 @@ fn select_and_build_uo_packet(
         )?;
         return Ok((len, current_ts));
     } else if context.ts_scaled_mode {
-        // TS_SCALED mode active but failed - try fallback
-        // Defensive check: ts_scaled_mode should never be true without stride
         if context.ts_stride.is_none() {
             context.ts_scaled_mode = false;
-            // Fall through to other packet types
         } else {
             let implicit_ts_for_fallback = implicit_ts
                 .expect("Stride exists with positive sn_delta, implicit_ts should be Some.");
@@ -432,21 +418,16 @@ fn select_and_build_uo_packet(
         }
     }
 
-    // Try UO-0 for minimal changes: requires static timestamp and IP-ID
-
     if can_use_uo0(marker_changed, sn_delta, ip_id_changed, ts_changed) {
         let len = build_uo0_packet(context, current_sn, current_ts, crc_calculators, out)?;
         return Ok((len, current_ts));
     }
-
-    // Try UO-1-TS - Allow IP ID changes but not during stride detection
 
     if !marker_changed && ts_changed && sn_delta == 1 && !ip_id_changed {
         let len = build_uo1_ts_packet(context, current_sn, current_ts, crc_calculators, out)?;
         return Ok((len, current_ts));
     }
 
-    // Try UO-1-ID
     let ts_for_uo1_id_check = implicit_ts.unwrap_or(context.last_sent_rtp_ts_full);
 
     if can_use_uo1_id(
@@ -459,8 +440,6 @@ fn select_and_build_uo_packet(
         let len = build_uo1_id_packet(context, current_sn, current_ip_id, crc_calculators, out)?;
         return Ok((len, ts_for_uo1_id_check));
     }
-
-    // Use UO-1-SN as fallback
 
     if can_use_uo1_sn(context) {
         let implicit_ts_for_sn_fallback = match implicit_ts {
@@ -482,8 +461,6 @@ fn select_and_build_uo_packet(
         let len = build_uo1_sn_packet(context, current_sn, current_marker, crc_calculators, out)?;
         return Ok((len, implicit_ts_for_sn_fallback));
     }
-
-    // If no suitable UO packet type is found and no stride is established for UO-1-SN fallback.
 
     Err(RohcError::Compression(
         CompressionError::ContextInsufficient {
@@ -526,6 +503,14 @@ fn build_uo0_packet(
     };
     serialize_uo0(&uo0_data, out).map_err(RohcError::Building)
 }
+
+// UO-1 Packet Builders
+// Note: The following build helpers have different signatures to reflect
+// the specific fields carried by each UO-1 packet variant:
+// - UO-1-SN: Explicitly carries the marker bit
+// - UO-1-TS: Carries the full timestamp; infers marker from context
+// - UO-1-ID: Carries the IP-ID LSBs; infers marker from context
+// - UO-1-RTP: Explicitly carries the marker bit along with TS_SCALED
 
 fn build_uo1_ts_packet(
     context: &mut Profile1CompressorContext,
