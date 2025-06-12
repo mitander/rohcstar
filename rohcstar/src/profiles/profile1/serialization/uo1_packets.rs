@@ -456,6 +456,14 @@ pub(crate) fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, 
 /// UO-1-RTP packets use scaled timestamp encoding for efficient compression when
 /// timestamp changes follow established stride patterns. Contains TS_SCALED field
 /// representing timestamp delta as a multiple of stride for optimal compression.
+///
+/// # Parameters
+/// - `packet_data`: UO-1 packet structure containing TS_SCALED, marker bit, and CRC
+/// - `out`: Output buffer to write serialized packet bytes
+///
+/// # Returns
+/// - `Ok(usize)`: Number of bytes written to output buffer
+/// - `Err(RohcBuildingError)`: Invalid field values or insufficient buffer space
 pub(crate) fn serialize_uo1_rtp(
     packet_data: &Uo1Packet,
     out: &mut [u8],
@@ -526,6 +534,16 @@ pub(crate) fn serialize_uo1_rtp(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-RTP packet.
+///
+/// Parses UO-1-RTP packet format and extracts scaled timestamp, marker bit,
+/// and CRC value from the compressed packet structure.
+///
+/// # Parameters
+/// - `core_packet_bytes`: Raw packet bytes excluding any CID encoding
+///
+/// # Returns
+/// - `Ok(Uo1Packet)`: Parsed packet structure with extracted TS_SCALED fields
+/// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
 pub(crate) fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 3;
     debug_assert_eq!(expected_len, 3, "UO-1-RTP should be 3 bytes");

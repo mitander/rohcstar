@@ -1,4 +1,8 @@
-//! UO-0 packet serialization and deserialization.
+//! UO-0 packet serialization and deserialization for Profile 1.
+//!
+//! This module handles the creation and parsing of UO-0 (Unidirectional Optimistic, Order 0)
+//! packets, which are the most compressed packet type in ROHC Profile 1. UO-0 packets
+//! carry only sequence number LSBs and CRC when no other fields have changed.
 
 use super::super::constants::*;
 use super::super::packet_types::Uo0Packet;

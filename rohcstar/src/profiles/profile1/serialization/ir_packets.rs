@@ -1,4 +1,8 @@
-//! IR (Initialization/Refresh) packet serialization and deserialization.
+//! IR (Initialization/Refresh) packet serialization and deserialization for Profile 1.
+//!
+//! This module handles the creation and parsing of IR packets, which carry static
+//! and dynamic chain information for context initialization or refresh operations.
+//! IR packets are used when establishing new contexts or recovering from errors.
 
 use std::net::Ipv4Addr;
 
