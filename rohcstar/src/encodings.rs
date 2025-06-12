@@ -5,7 +5,7 @@
 //! in RFC 3095, Section 4.5 and Section 5.3.1. These utilities are designed to be
 //! generic and usable by various ROHC profiles.
 
-use crate::error::RohcParsingError;
+use crate::error::{Field, RohcParsingError};
 
 /// Checks if a value falls within the W-LSB interpretation window.
 ///
@@ -65,13 +65,13 @@ pub fn is_value_in_lsb_interval(
 pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field: crate::error::Field::NumLsbBits,
+            field: Field::NumLsbBits,
             description: "Number of LSBs (k) cannot be 0 for encoding.".to_string(),
         });
     }
     if num_lsb_bits > 64 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field: crate::error::Field::NumLsbBits,
+            field: Field::NumLsbBits,
             description: format!(
                 "Number of LSBs (k) cannot exceed 64 for u64 LSB encoding, got {}.",
                 num_lsb_bits
@@ -151,7 +151,7 @@ pub fn decode_lsb(
 ) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 || num_lsb_bits >= 64 {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field: crate::error::Field::NumLsbBits,
+            field: Field::NumLsbBits,
             description: format!(
                 "Number of LSBs (k) must be between 1 and 63 for W-LSB decoding, got {}.",
                 num_lsb_bits
@@ -166,7 +166,7 @@ pub fn decode_lsb(
     // Validate received_lsbs fit in k bits
     if received_lsb > lsb_mask {
         return Err(RohcParsingError::InvalidLsbOperation {
-            field: crate::error::Field::ReceivedLsbs,
+            field: Field::ReceivedLsbs,
             description: format!(
                 "Received LSB value {:#x} is too large for {} LSBs (max value {:#x}).",
                 received_lsb, num_lsb_bits, lsb_mask
@@ -200,7 +200,7 @@ pub fn decode_lsb(
         } else {
             // LSB value cannot be resolved - context drift or synchronization issue
             Err(RohcParsingError::InvalidLsbOperation {
-                field: crate::error::Field::ReceivedLsbs,
+                field: Field::ReceivedLsbs,
                 description: format!(
                     "Cannot be uniquely resolved to a value in the interpretation window. LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
                     received_lsb,

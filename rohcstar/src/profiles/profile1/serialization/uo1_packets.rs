@@ -3,7 +3,7 @@
 use super::super::constants::*;
 use super::super::packet_types::Uo1Packet;
 use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
-use crate::error::{RohcBuildingError, RohcParsingError};
+use crate::error::{Field, ParseContext, RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::types::{SequenceNumber, Ssrc, Timestamp};
 
@@ -12,7 +12,7 @@ use crate::types::{SequenceNumber, Ssrc, Timestamp};
 /// UO-1-SN packets compress sequence number changes with marker bit updates when
 /// timestamp remains predictable (following established stride). Provides efficient
 /// compression for RTP streams with consistent timing but changing voice activity.
-pub fn serialize_uo1_sn(
+pub(crate) fn serialize_uo1_sn(
     packet_data: &Uo1Packet,
     out: &mut [u8],
 ) -> Result<usize, RohcBuildingError> {
@@ -29,14 +29,14 @@ pub fn serialize_uo1_sn(
 
     if packet_data.num_sn_lsb_bits != P1_UO1_SN_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::NumSnLsbBits,
+            field: Field::NumSnLsbBits,
             value: packet_data.num_sn_lsb_bits as u32,
             max_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
         });
     }
     if packet_data.sn_lsb > 0xFF {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::SnLsb,
+            field: Field::SnLsb,
             value: packet_data.sn_lsb as u32,
             max_bits: 8,
         });
@@ -49,7 +49,7 @@ pub fn serialize_uo1_sn(
     };
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -64,7 +64,7 @@ pub fn serialize_uo1_sn(
             bytes_written += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -96,7 +96,7 @@ pub fn serialize_uo1_sn(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-SN packet.
-pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
+pub(crate) fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_SN_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-SN should be 3 bytes");
 
@@ -104,7 +104,7 @@ pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: crate::error::ParseContext::Uo1SnPacketCore,
+            context: ParseContext::Uo1SnPacketCore,
         });
     }
 
@@ -139,20 +139,20 @@ pub fn deserialize_uo1_sn(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// UO-1-TS packets compress timestamp changes when sequence number increments by one
 /// and other fields remain static. Handles irregular timestamp patterns that don't
 /// follow established stride, common in adaptive audio codecs.
-pub fn serialize_uo1_ts(
+pub(crate) fn serialize_uo1_ts(
     packet_data: &Uo1Packet,
     out: &mut [u8],
 ) -> Result<usize, RohcBuildingError> {
     let ts_lsb = packet_data
         .ts_lsb
         .ok_or(RohcBuildingError::ContextInsufficient {
-            field: crate::error::Field::TsLsb,
+            field: Field::TsLsb,
         })?;
     let num_ts_bits =
         packet_data
             .num_ts_lsb_bits
             .ok_or(RohcBuildingError::ContextInsufficient {
-                field: crate::error::Field::NumTsLsbBits,
+                field: Field::NumTsLsbBits,
             })?;
 
     debug_assert_eq!(
@@ -163,7 +163,7 @@ pub fn serialize_uo1_ts(
 
     if num_ts_bits != P1_UO1_TS_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::NumTsLsbBits,
+            field: Field::NumTsLsbBits,
             value: num_ts_bits as u32,
             max_bits: P1_UO1_TS_LSB_WIDTH_DEFAULT,
         });
@@ -176,7 +176,7 @@ pub fn serialize_uo1_ts(
     };
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -191,7 +191,7 @@ pub fn serialize_uo1_ts(
             bytes_written += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -222,7 +222,7 @@ pub fn serialize_uo1_ts(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-TS packet.
-pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
+pub(crate) fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_TS_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 4, "UO-1-TS should be 4 bytes");
 
@@ -230,7 +230,7 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: crate::error::ParseContext::Uo1TsPacketCore,
+            context: ParseContext::Uo1TsPacketCore,
         });
     }
 
@@ -265,20 +265,20 @@ pub fn deserialize_uo1_ts(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// UO-1-ID packets compress IP identification field changes when sequence number
 /// increments by one and timestamp follows established stride. Used for streams
 /// where IP fragmentation characteristics change but timing remains predictable.
-pub fn serialize_uo1_id(
+pub(crate) fn serialize_uo1_id(
     packet_data: &Uo1Packet,
     out: &mut [u8],
 ) -> Result<usize, RohcBuildingError> {
     let ip_id_lsb = packet_data
         .ip_id_lsb
         .ok_or(RohcBuildingError::ContextInsufficient {
-            field: crate::error::Field::IpIdLsb,
+            field: Field::IpIdLsb,
         })?;
     let num_ip_id_bits =
         packet_data
             .num_ip_id_lsb_bits
             .ok_or(RohcBuildingError::ContextInsufficient {
-                field: crate::error::Field::NumIpIdLsbBits,
+                field: Field::NumIpIdLsbBits,
             })?;
 
     debug_assert_eq!(
@@ -294,14 +294,14 @@ pub fn serialize_uo1_id(
 
     if num_ip_id_bits != P1_UO1_IP_ID_LSB_WIDTH_DEFAULT {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::NumIpIdLsbBits,
+            field: Field::NumIpIdLsbBits,
             value: num_ip_id_bits as u32,
             max_bits: P1_UO1_IP_ID_LSB_WIDTH_DEFAULT,
         });
     }
     if ip_id_lsb > 0xFF {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::IpIdLsb,
+            field: Field::IpIdLsb,
             value: ip_id_lsb as u32,
             max_bits: 8,
         });
@@ -314,7 +314,7 @@ pub fn serialize_uo1_id(
     };
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -329,7 +329,7 @@ pub fn serialize_uo1_id(
             bytes_written += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -355,7 +355,7 @@ pub fn serialize_uo1_id(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-ID packet.
-pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
+pub(crate) fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 1 + (P1_UO1_IP_ID_LSB_WIDTH_DEFAULT / 8) as usize + 1;
     debug_assert_eq!(expected_len, 3, "UO-1-ID should be 3 bytes");
 
@@ -363,7 +363,7 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: crate::error::ParseContext::Uo1IdPacketCore,
+            context: ParseContext::Uo1IdPacketCore,
         });
     }
 
@@ -397,14 +397,14 @@ pub fn deserialize_uo1_id(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPar
 /// UO-1-RTP packets use scaled timestamp encoding for efficient compression when
 /// timestamp changes follow established stride patterns. Contains TS_SCALED field
 /// representing timestamp delta as a multiple of stride for optimal compression.
-pub fn serialize_uo1_rtp(
+pub(crate) fn serialize_uo1_rtp(
     packet_data: &Uo1Packet,
     out: &mut [u8],
 ) -> Result<usize, RohcBuildingError> {
     let ts_scaled_val = packet_data
         .ts_scaled
         .ok_or(RohcBuildingError::ContextInsufficient {
-            field: crate::error::Field::TsScaled,
+            field: Field::TsScaled,
         })?;
 
     debug_assert!(
@@ -420,7 +420,7 @@ pub fn serialize_uo1_rtp(
     };
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -435,7 +435,7 @@ pub fn serialize_uo1_rtp(
             bytes_written += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -467,7 +467,7 @@ pub fn serialize_uo1_rtp(
 }
 
 /// Deserializes a ROHC Profile 1 UO-1-RTP packet.
-pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
+pub(crate) fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcParsingError> {
     let expected_len = 3;
     debug_assert_eq!(expected_len, 3, "UO-1-RTP should be 3 bytes");
 
@@ -475,7 +475,7 @@ pub fn deserialize_uo1_rtp(core_packet_bytes: &[u8]) -> Result<Uo1Packet, RohcPa
         return Err(RohcParsingError::NotEnoughData {
             needed: expected_len,
             got: core_packet_bytes.len(),
-            context: crate::error::ParseContext::Uo1RtpPacketCore,
+            context: ParseContext::Uo1RtpPacketCore,
         });
     }
 

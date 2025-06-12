@@ -17,7 +17,8 @@ use super::state_machine;
 
 use crate::crc::CrcCalculators;
 use crate::error::{
-    CompressionError, DecompressionError, EngineError, RohcError, RohcParsingError,
+    CompressionError, DecompressionError, EngineError, Field, ParseContext, RohcError,
+    RohcParsingError,
 };
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
@@ -167,7 +168,7 @@ impl ProfileHandler for Profile1Handler {
             ) {
                 Ok(len) => len,
                 Err(RohcError::Compression(CompressionError::ContextInsufficient {
-                    field: crate::error::Field::TsScaled,
+                    field: Field::TsScaled,
                     ..
                 })) => {
                     // ts_scaled_mode was newly activated, retry with IR packet
@@ -223,7 +224,7 @@ impl ProfileHandler for Profile1Handler {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::RohcPacketInput,
+                context: ParseContext::RohcPacketInput,
             }));
         }
 
@@ -306,7 +307,7 @@ mod tests {
     use crate::profiles::profile1::context::Profile1CompressorMode;
     use crate::profiles::profile1::packet_types::IrPacket;
     use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
-    use crate::profiles::profile1::serialization::serialize_ir;
+    use crate::profiles::profile1::serialization::ir_packets::serialize_ir;
 
     #[test]
     fn handler_calls_compressor_for_ir() {

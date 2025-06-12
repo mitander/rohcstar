@@ -16,17 +16,17 @@
 //! - `protocol_types`: Defines `RtpUdpIpv4Headers`.
 //! - `constants`: Holds constants specific to Profile 1 operations.
 
-pub mod compressor;
+mod compressor;
 pub mod constants;
 pub mod context;
-pub mod decompressor;
+mod decompressor;
 pub mod discriminator;
 pub mod handler;
-pub mod packet_builder;
+mod packet_builder;
 pub mod packet_types;
 pub mod protocol_types;
-pub mod serialization;
-pub mod state_machine;
+mod serialization;
+mod state_machine;
 mod state_transitions;
 mod state_types;
 
@@ -36,3 +36,4 @@ pub use self::discriminator::Profile1PacketType;
 pub use self::handler::Profile1Handler;
 pub use self::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 pub use self::protocol_types::RtpUdpIpv4Headers;
+pub use self::serialization::ir_packets::serialize_ir;

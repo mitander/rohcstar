@@ -4,9 +4,10 @@
 //! RTP/UDP/IPv4 headers, which are the target for compression and the result
 //! of decompression for Profile 1.
 
+use std::net::Ipv4Addr;
+
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
-use std::net::Ipv4Addr;
 
 use crate::constants::{
     DEFAULT_IPV4_TTL, IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_MAX_CSRC_COUNT, RTP_VERSION,

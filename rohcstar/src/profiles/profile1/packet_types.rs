@@ -5,10 +5,13 @@
 //! These structures are used by the Profile 1 packet processor for parsing
 //! incoming ROHC packets and for building outgoing ROHC packets.
 
+use std::net::Ipv4Addr;
+
+use serde::{Deserialize, Serialize};
+
+use crate::constants::DEFAULT_IPV4_TTL;
 use crate::packet_defs::RohcProfile;
 use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
-use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
 
 /// Represents the data contained within a ROHC Profile 1 IR (Initialization/Refresh) packet.
 ///
@@ -74,7 +77,7 @@ impl Default for IrPacket {
             dyn_rtp_sn: SequenceNumber::new(0),
             dyn_rtp_timestamp: Timestamp::new(0),
             dyn_rtp_marker: false,
-            dyn_ip_ttl: crate::constants::DEFAULT_IPV4_TTL,
+            dyn_ip_ttl: DEFAULT_IPV4_TTL,
             dyn_ip_id: 0.into(),
             ts_stride: None,
         }

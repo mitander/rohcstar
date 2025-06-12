@@ -2,13 +2,14 @@
 
 use std::net::Ipv4Addr;
 
-use super::super::constants::*;
-use super::super::packet_types::IrPacket;
 use crate::constants::{DEFAULT_IPV4_TTL, ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
 use crate::crc::CrcCalculators;
-use crate::error::{RohcBuildingError, RohcParsingError};
+use crate::error::{CrcType, Field, ParseContext, RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
+
+use super::super::constants::*;
+use super::super::packet_types::IrPacket;
 
 /// Serializes a ROHC Profile 1 IR (Initialization/Refresh) packet into provided buffer.
 ///
@@ -59,7 +60,7 @@ pub fn serialize_ir(
 
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -71,7 +72,7 @@ pub fn serialize_ir(
         bytes_written += 1;
     } else if ir_data.cid > 15 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::Cid,
+            field: Field::Cid,
             value: ir_data.cid.0 as u32,
             max_bits: 4,
         });
@@ -83,7 +84,7 @@ pub fn serialize_ir(
     let profile_id: u8 = ir_data.profile_id.into();
     if profile_id != u8::from(RohcProfile::RtpUdpIp) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::ProfileId,
+            field: Field::ProfileId,
             value: profile_id as u32,
             max_bits: 8,
         });
@@ -253,7 +254,7 @@ pub fn serialize_ir(
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Not enough data, invalid type, or CRC mismatch
-pub fn deserialize_ir(
+pub(crate) fn deserialize_ir(
     core_packet_bytes: &[u8],
     cid_from_engine: ContextId,
     crc_calculators: &CrcCalculators,
@@ -266,7 +267,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::NotEnoughData {
             needed: 1,
             got: 0,
-            context: crate::error::ParseContext::IrPacketTypeOctet,
+            context: ParseContext::IrPacketTypeOctet,
         });
     }
     let packet_type_octet = core_packet_bytes[current_offset_for_fields];
@@ -303,7 +304,7 @@ pub fn deserialize_ir(
             return Err(RohcParsingError::NotEnoughData {
                 needed: RTP_FLAGS_IDX_IN_CORE + 1,
                 got: core_packet_bytes.len(),
-                context: crate::error::ParseContext::IrPacketRtpFlags,
+                context: ParseContext::IrPacketRtpFlags,
             });
         }
     }
@@ -317,7 +318,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::NotEnoughData {
             needed: crc_octet_index_in_core + 1,
             got: core_packet_bytes.len(),
-            context: crate::error::ParseContext::IrPacketCrcAndPayload,
+            context: ParseContext::IrPacketCrcAndPayload,
         });
     }
 
@@ -330,7 +331,7 @@ pub fn deserialize_ir(
         return Err(RohcParsingError::CrcMismatch {
             expected: received_crc8,
             calculated: calculated_crc8,
-            crc_type: crate::error::CrcType::Rohc8,
+            crc_type: CrcType::Rohc8,
         });
     }
 
@@ -456,7 +457,7 @@ pub fn deserialize_ir(
                 return Err(RohcParsingError::NotEnoughData {
                     needed: current_offset_for_fields + P1_TS_STRIDE_EXTENSION_LENGTH_BYTES,
                     got: core_packet_bytes.len(),
-                    context: crate::error::ParseContext::IrPacketTsStrideExtension,
+                    context: ParseContext::IrPacketTsStrideExtension,
                 });
             }
             temp_ts_stride = Some(u32::from_be_bytes([

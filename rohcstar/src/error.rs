@@ -6,6 +6,7 @@
 
 use thiserror::Error;
 
+use crate::packet_defs::RohcProfile;
 use crate::types::ContextId;
 
 /// Context types for parsing operations.
@@ -361,15 +362,11 @@ pub enum DecompressionError {
 pub enum EngineError {
     /// Profile handler not registered.
     #[error("Profile handler for {profile:?} not registered")]
-    ProfileHandlerNotRegistered {
-        profile: crate::packet_defs::RohcProfile,
-    },
+    ProfileHandlerNotRegistered { profile: RohcProfile },
 
     /// Profile handler already registered.
     #[error("Profile handler for {profile:?} already registered")]
-    ProfileHandlerAlreadyRegistered {
-        profile: crate::packet_defs::RohcProfile,
-    },
+    ProfileHandlerAlreadyRegistered { profile: RohcProfile },
 
     /// Compression operation failed.
     #[error("Compression failed: {0}")]

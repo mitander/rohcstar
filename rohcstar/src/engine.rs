@@ -14,7 +14,7 @@ use crate::constants::{
     ROHC_SMALL_CID_MASK,
 };
 use crate::context_manager::ContextManager;
-use crate::error::{EngineError, RohcError, RohcParsingError};
+use crate::error::{EngineError, ParseContext, RohcError, RohcParsingError};
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::time::{Clock, SystemClock};
 use crate::traits::ProfileHandler;
@@ -203,7 +203,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::RohcPacketInput,
+                context: ParseContext::RohcPacketInput,
             }));
         }
 
@@ -212,7 +212,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::CorePacketAfterCid,
+                context: ParseContext::CorePacketAfterCid,
             }));
         }
 
@@ -296,7 +296,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::RohcPacketInput,
+                context: ParseContext::RohcPacketInput,
             }));
         }
 
@@ -305,7 +305,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::CorePacketAfterCid,
+                context: ParseContext::CorePacketAfterCid,
             }));
         }
 
@@ -373,7 +373,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 1,
                 got: 0,
-                context: crate::error::ParseContext::CidParsing,
+                context: ParseContext::CidParsing,
             }));
         }
         let first_byte = packet[0];
@@ -408,7 +408,7 @@ impl RohcEngine {
             return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
                 needed: 2,
                 got: core_packet_slice.len(),
-                context: crate::error::ParseContext::ProfileIdPeek,
+                context: ParseContext::ProfileIdPeek,
             }));
         }
         let packet_type_octet = core_packet_slice[0];
@@ -689,7 +689,7 @@ mod tests {
             matches!(
                 result,
                 Err(RohcError::Parsing(RohcParsingError::NotEnoughData { needed: 2, got: 1, context}))
-                if context == crate::error::ParseContext::ProfileIdPeek
+                if context == ParseContext::ProfileIdPeek
             ),
             "Expected NotEnoughData from peek_profile_from_core_packet for 1-byte UO-0, got {:?}",
             result_clone_for_assert_msg

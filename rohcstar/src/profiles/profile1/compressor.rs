@@ -4,24 +4,25 @@
 //! ROHC Profile 1 packets. It implements the core compression algorithms for
 //! RTP/UDP/IPv4 header compression as defined in RFC 3095.
 
+use crate::crc::CrcCalculators;
+use crate::encodings::encode_lsb;
+use crate::error::{CompressionError, Field, RohcError};
+use crate::packet_defs::RohcProfile;
+use crate::traits::RohcCompressorContext;
+use crate::types::{IpId, SequenceNumber, Timestamp};
+
 use super::constants::*;
 use super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
 use super::protocol_types::RtpUdpIpv4Headers;
+use super::serialization::ir_packets::serialize_ir;
+use super::serialization::uo0_packets::serialize_uo0;
 use super::serialization::uo1_packets::{
     prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
 };
-use super::serialization::{
-    serialize_ir, serialize_uo0, serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn,
-    serialize_uo1_ts,
+use super::serialization::uo1_packets::{
+    serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn, serialize_uo1_ts,
 };
-
-use crate::crc::CrcCalculators;
-use crate::encodings::encode_lsb;
-use crate::error::{CompressionError, RohcError};
-use crate::packet_defs::RohcProfile;
-use crate::traits::RohcCompressorContext;
-use crate::types::{IpId, SequenceNumber, Timestamp};
 
 /// Determines if an IR packet must be sent by the compressor.
 ///
@@ -487,7 +488,7 @@ fn select_and_build_uo_packet(
     Err(RohcError::Compression(
         CompressionError::ContextInsufficient {
             cid: context.cid(),
-            field: crate::error::Field::TsScaled,
+            field: Field::TsScaled,
         },
     ))
 }
@@ -658,7 +659,7 @@ fn build_uo1_rtp_packet(
     let stride = context.ts_stride.ok_or_else(|| {
         RohcError::Compression(CompressionError::ContextInsufficient {
             cid: context.cid(),
-            field: crate::error::Field::TsScaled,
+            field: Field::TsScaled,
         })
     })?;
     debug_assert!(stride > 0, "Invalid stride: {} must be positive", stride);

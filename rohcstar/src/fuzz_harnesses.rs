@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crate::crc::CrcCalculators;
 use crate::packet_defs::RohcProfile;
-use crate::profiles::profile1::serialization::serialize_ir;
+use crate::profiles::profile1::serialize_ir;
 use crate::profiles::profile1::{IrPacket, Profile1Handler};
 use crate::traits::ProfileHandler;
 

@@ -313,14 +313,17 @@ pub(super) fn process_packet_in_so_mode(
 mod tests {
     use super::*;
     use crate::crc::CrcCalculators;
+    use crate::encodings::encode_lsb;
     use crate::packet_defs::RohcProfile;
     use crate::profiles::profile1::constants::*;
     use crate::profiles::profile1::context::{
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
+    use crate::profiles::profile1::serialization::ir_packets::serialize_ir;
+    use crate::profiles::profile1::serialization::uo0_packets::serialize_uo0;
     use crate::profiles::profile1::serialization::uo1_packets::prepare_generic_uo_crc_input_payload;
-    use crate::profiles::profile1::serialization::{serialize_ir, serialize_uo0, serialize_uo1_sn};
+    use crate::profiles::profile1::serialization::uo1_packets::serialize_uo1_sn;
     use crate::types::{ContextId, SequenceNumber, Timestamp};
 
     // Helper to create a basic decompressor context in a given mode
@@ -484,8 +487,7 @@ mod tests {
 
         let target_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
         let uo1_sn_data_good = Uo1Packet {
-            sn_lsb: crate::encodings::encode_lsb(target_sn.as_u64(), P1_UO1_SN_LSB_WIDTH_DEFAULT)
-                .unwrap() as u16,
+            sn_lsb: encode_lsb(target_sn.as_u64(), P1_UO1_SN_LSB_WIDTH_DEFAULT).unwrap() as u16,
             num_sn_lsb_bits: P1_UO1_SN_LSB_WIDTH_DEFAULT,
             marker: false,
             ..Default::default()

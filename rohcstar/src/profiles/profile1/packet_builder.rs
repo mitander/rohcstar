@@ -7,7 +7,7 @@
 use super::constants::*;
 use super::packet_types::{Uo0Packet, Uo1Packet};
 use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
-use crate::error::RohcBuildingError;
+use crate::error::{Field, RohcBuildingError};
 
 /// Maximum size for UO-0 packets (Add-CID + UO-0 byte).
 pub const UO0_MAX_SIZE: usize = 2;
@@ -22,7 +22,7 @@ pub const UO1_MAX_SIZE: usize = 5;
 ///
 /// # Returns
 /// Tuple of (packet_data, actual_length)
-pub fn build_uo0_packet(
+pub(crate) fn build_uo0_packet(
     packet_data: &Uo0Packet,
 ) -> Result<([u8; UO0_MAX_SIZE], usize), RohcBuildingError> {
     debug_assert!(
@@ -39,14 +39,14 @@ pub fn build_uo0_packet(
 
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::SnLsb,
+            field: Field::SnLsb,
             value: packet_data.sn_lsb as u32,
             max_bits: P1_UO0_SN_LSB_WIDTH_DEFAULT,
         });
     }
     if packet_data.crc3 > 0x07 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::Crc3,
+            field: Field::Crc3,
             value: packet_data.crc3 as u32,
             max_bits: 3,
         });
@@ -62,7 +62,7 @@ pub fn build_uo0_packet(
             pos += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -80,7 +80,7 @@ pub fn build_uo0_packet(
 /// Zero-allocation UO-1-SN packet builder.
 ///
 /// Returns a fixed-size array and actual length to avoid heap allocation.
-pub fn build_uo1_sn_packet(
+pub(crate) fn build_uo1_sn_packet(
     packet_data: &Uo1Packet,
 ) -> Result<([u8; UO1_MAX_SIZE], usize), RohcBuildingError> {
     let mut buf = [0u8; UO1_MAX_SIZE];
@@ -93,7 +93,7 @@ pub fn build_uo1_sn_packet(
             pos += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });

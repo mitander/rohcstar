@@ -3,31 +3,29 @@
 //! Implements RFC 3095 profile 0x0001 decompression with robust CRC recovery
 //! and conservative false positive prevention.
 
-use super::constants::{P1_MAX_REASONABLE_SN_JUMP, P1_MAX_REASONABLE_UO0_SN_JUMP};
-use super::context::Profile1DecompressorContext;
-use super::discriminator::Profile1PacketType;
-use super::protocol_types::RtpUdpIpv4Headers;
-use super::serialization::uo1_packets::{
-    prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
-    prepare_uo1_id_specific_crc_input_into_buf, prepare_uo1_id_specific_crc_input_payload,
-};
-use super::serialization::{
-    deserialize_ir, deserialize_uo0, deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn,
-    deserialize_uo1_ts,
-};
-
 use crate::CrcType::{self, Crc3Uo0, Crc8Uo1Sn};
 use crate::Field::{self, IpIdLsb, NumIpIdLsbBits, NumTsLsbBits, TsLsb, TsScaled};
 use crate::ParseContext::UoPacketTypeDiscriminator;
 use crate::StructureType::{Uo1IdPacket, Uo1RtpPacket, Uo1TsPacket};
 use crate::constants::{IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::crc::CrcCalculators;
-use crate::encodings::decode_lsb;
+use crate::encodings::{decode_lsb, decode_lsb_uo0_sn};
 use crate::error::{DecompressionError, RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
-
 use crate::traits::RohcDecompressorContext;
 use crate::types::{IpId, SequenceNumber, Timestamp};
+
+use super::constants::{P1_MAX_REASONABLE_SN_JUMP, P1_MAX_REASONABLE_UO0_SN_JUMP};
+use super::context::Profile1DecompressorContext;
+use super::discriminator::Profile1PacketType;
+use super::protocol_types::RtpUdpIpv4Headers;
+use super::serialization::ir_packets::deserialize_ir;
+use super::serialization::uo0_packets::deserialize_uo0;
+use super::serialization::uo1_packets::{
+    deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn, deserialize_uo1_ts,
+    prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
+    prepare_uo1_id_specific_crc_input_into_buf, prepare_uo1_id_specific_crc_input_payload,
+};
 
 /// Decompresses IR packet and reconstructs headers.
 /// static chain information (IP addresses, ports, SSRC) and dynamic chain elements
@@ -144,10 +142,7 @@ fn decompress_as_uo0(
     };
     let parsed_uo0 = deserialize_uo0(packet, cid_for_parse)?;
 
-    let decoded_sn = crate::encodings::decode_lsb_uo0_sn(
-        parsed_uo0.sn_lsb,
-        *context.last_reconstructed_rtp_sn_full,
-    );
+    let decoded_sn = decode_lsb_uo0_sn(parsed_uo0.sn_lsb, *context.last_reconstructed_rtp_sn_full);
     let forward_jump = decoded_sn.wrapping_sub(*context.last_reconstructed_rtp_sn_full);
     let backward_jump = (*context.last_reconstructed_rtp_sn_full).wrapping_sub(decoded_sn);
 
@@ -876,8 +871,9 @@ mod tests {
         Profile1DecompressorContext, Profile1DecompressorMode,
     };
     use crate::profiles::profile1::packet_types::{Uo0Packet, Uo1Packet};
-    use crate::profiles::profile1::serialization::{
-        serialize_uo0, serialize_uo1_id, serialize_uo1_sn,
+    use crate::profiles::profile1::serialization::uo0_packets::serialize_uo0;
+    use crate::profiles::profile1::serialization::uo1_packets::{
+        serialize_uo1_id, serialize_uo1_sn,
     };
     use crate::profiles::profile1::*;
 

@@ -6,7 +6,7 @@ use crate::constants::{
     IP_PROTOCOL_UDP, IPV4_MIN_HEADER_LENGTH_BYTES, IPV4_STANDARD_IHL, RTP_MIN_HEADER_LENGTH_BYTES,
     RTP_VERSION, UDP_HEADER_LENGTH_BYTES,
 };
-use crate::error::RohcParsingError;
+use crate::error::{Field, NetworkLayer, ParseContext, RohcParsingError, StructureType};
 use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
 use crate::types::Ssrc;
 
@@ -18,7 +18,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: IPV4_MIN_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: crate::error::ParseContext::Ipv4HeaderMin,
+            context: ParseContext::Ipv4HeaderMin,
         });
     }
 
@@ -34,8 +34,8 @@ pub fn deserialize_rtp_udp_ipv4_headers(
     let ip_ihl_words = ip_version_ihl & 0x0F;
     if ip_ihl_words < IPV4_STANDARD_IHL {
         return Err(RohcParsingError::InvalidFieldValue {
-            field: crate::error::Field::IpIhl,
-            structure: crate::error::StructureType::Ipv4Header,
+            field: Field::IpIhl,
+            structure: StructureType::Ipv4Header,
             expected: IPV4_STANDARD_IHL as u32,
             got: ip_ihl_words as u32,
         });
@@ -45,7 +45,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: ip_header_length_bytes,
             got: data.len(),
-            context: crate::error::ParseContext::Ipv4HeaderCalculated,
+            context: ParseContext::Ipv4HeaderCalculated,
         });
     }
 
@@ -62,7 +62,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
     if ip_protocol_id != IP_PROTOCOL_UDP {
         return Err(RohcParsingError::UnsupportedProtocol {
             protocol_id: ip_protocol_id,
-            layer: crate::error::NetworkLayer::Ip,
+            layer: NetworkLayer::Ip,
         });
     }
     let ip_checksum = u16::from_be_bytes([data[10], data[11]]);
@@ -74,7 +74,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: udp_start_offset + UDP_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: crate::error::ParseContext::UdpHeader,
+            context: ParseContext::UdpHeader,
         });
     }
     let udp_src_port = u16::from_be_bytes([data[udp_start_offset], data[udp_start_offset + 1]]);
@@ -88,15 +88,15 @@ pub fn deserialize_rtp_udp_ipv4_headers(
         return Err(RohcParsingError::NotEnoughData {
             needed: rtp_start_offset + RTP_MIN_HEADER_LENGTH_BYTES,
             got: data.len(),
-            context: crate::error::ParseContext::RtpHeaderMin,
+            context: ParseContext::RtpHeaderMin,
         });
     }
     let rtp_first_byte = data[rtp_start_offset];
     let rtp_version_val = rtp_first_byte >> 6;
     if rtp_version_val != RTP_VERSION {
         return Err(RohcParsingError::InvalidFieldValue {
-            field: crate::error::Field::RtpVersion,
-            structure: crate::error::StructureType::RtpHeader,
+            field: Field::RtpVersion,
+            structure: StructureType::RtpHeader,
             expected: RTP_VERSION as u32,
             got: rtp_version_val as u32,
         });
@@ -129,7 +129,7 @@ pub fn deserialize_rtp_udp_ipv4_headers(
             return Err(RohcParsingError::NotEnoughData {
                 needed: current_csrc_offset + 4,
                 got: data.len(),
-                context: crate::error::ParseContext::RtpHeaderMin,
+                context: ParseContext::RtpHeaderMin,
             });
         }
         rtp_csrc_list_val.push(u32::from_be_bytes([
@@ -143,8 +143,8 @@ pub fn deserialize_rtp_udp_ipv4_headers(
 
     if rtp_csrc_count_val as usize != rtp_csrc_list_val.len() {
         return Err(RohcParsingError::InvalidFieldValue {
-            field: crate::error::Field::RtpCsrcCount,
-            structure: crate::error::StructureType::RtpHeader,
+            field: Field::RtpCsrcCount,
+            structure: StructureType::RtpHeader,
             expected: rtp_csrc_count_val as u32,
             got: rtp_csrc_list_val.len() as u32,
         });

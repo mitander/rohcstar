@@ -8,6 +8,11 @@ use std::fmt::Debug;
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
+use crate::constants::{DEFAULT_IPV4_TTL, DEFAULT_IR_REFRESH_INTERVAL};
+use crate::packet_defs::RohcProfile;
+use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
+
 use super::constants::{
     P1_DEFAULT_P_IP_ID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
     P1_TS_SCALED_MAX_VALUE, P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, P1_UO0_SN_LSB_WIDTH_DEFAULT,
@@ -16,10 +21,6 @@ use super::constants::{
 use super::packet_types::IrPacket;
 use super::protocol_types::RtpUdpIpv4Headers;
 use super::state_types::StateCounters;
-use crate::constants::{DEFAULT_IPV4_TTL, DEFAULT_IR_REFRESH_INTERVAL};
-use crate::packet_defs::RohcProfile;
-use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
-use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
 
 /// Operational modes for the ROHC Profile 1 compressor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

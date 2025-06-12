@@ -5,13 +5,13 @@
 //! enable a generic ROHC engine to operate with various compression profiles
 //! in a pluggable manner.
 
-use crate::error::RohcError;
-use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
-use crate::types::ContextId;
-
 use std::any::Any;
 use std::fmt::Debug;
 use std::time::Instant;
+
+use crate::error::RohcError;
+use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
+use crate::types::ContextId;
 
 /// Defines the capabilities of a ROHC compressor context.
 pub trait RohcCompressorContext: Send + Sync + Debug {
@@ -122,6 +122,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{Field, ParseContext, RohcBuildingError, RohcError, RohcParsingError};
     use crate::packet_defs::RohcProfile;
     use bytes::Bytes;
     use std::time::{Duration, Instant};
@@ -228,8 +229,8 @@ mod tests {
                     let bytes_needed = 1 + std::cmp::min(data.len(), 2);
                     if out.len() < bytes_needed {
                         return Err(RohcError::Building(
-                            crate::error::RohcBuildingError::InvalidFieldValueForBuild {
-                                field: crate::error::Field::BufferSize,
+                            RohcBuildingError::InvalidFieldValueForBuild {
+                                field: Field::BufferSize,
                                 value: out.len() as u32,
                                 max_bits: bytes_needed as u8,
                             },
@@ -252,19 +253,17 @@ mod tests {
             rohc_packet_data: &[u8],
         ) -> Result<GenericUncompressedHeaders, RohcError> {
             if rohc_packet_data.is_empty() {
-                return Err(RohcError::Parsing(
-                    crate::error::RohcParsingError::NotEnoughData {
-                        needed: 1,
-                        got: 0,
-                        context: crate::error::ParseContext::RohcPacketInput,
-                    },
-                ));
+                return Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
+                    needed: 1,
+                    got: 0,
+                    context: ParseContext::RohcPacketInput,
+                }));
             }
             let pf = RohcProfile::from(rohc_packet_data[0]);
             if pf != self.profile {
-                return Err(RohcError::Parsing(
-                    crate::error::RohcParsingError::InvalidProfileId(rohc_packet_data[0]),
-                ));
+                return Err(RohcError::Parsing(RohcParsingError::InvalidProfileId(
+                    rohc_packet_data[0],
+                )));
             }
             Ok(GenericUncompressedHeaders::TestRaw(Bytes::copy_from_slice(
                 &rohc_packet_data[1..],

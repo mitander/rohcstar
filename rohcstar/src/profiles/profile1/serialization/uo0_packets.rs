@@ -3,7 +3,7 @@
 use super::super::constants::*;
 use super::super::packet_types::Uo0Packet;
 use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
-use crate::error::{RohcBuildingError, RohcParsingError};
+use crate::error::{Field, ParseContext, RohcBuildingError, RohcParsingError};
 use crate::types::ContextId;
 
 /// Serializes a ROHC Profile 1 UO-0 packet into provided buffer.
@@ -21,7 +21,10 @@ use crate::types::ContextId;
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-0 packet
-pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, RohcBuildingError> {
+pub(crate) fn serialize_uo0(
+    packet_data: &Uo0Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     debug_assert!(
         packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
         "SN LSB value {} too large for {} bits",
@@ -36,14 +39,14 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
 
     if packet_data.sn_lsb >= (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT) {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::SnLsb,
+            field: Field::SnLsb,
             value: packet_data.sn_lsb as u32,
             max_bits: P1_UO0_SN_LSB_WIDTH_DEFAULT,
         });
     }
     if packet_data.crc3 > 0x07 {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::Crc3,
+            field: Field::Crc3,
             value: packet_data.crc3 as u32,
             max_bits: 3,
         });
@@ -56,7 +59,7 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
     };
     if out.len() < required_size {
         return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: crate::error::Field::BufferSize,
+            field: Field::BufferSize,
             value: out.len() as u32,
             max_bits: required_size as u8,
         });
@@ -71,7 +74,7 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
             bytes_written += 1;
         } else if cid_val > 15 {
             return Err(RohcBuildingError::InvalidFieldValueForBuild {
-                field: crate::error::Field::Cid,
+                field: Field::Cid,
                 value: *cid_val as u32,
                 max_bits: 4,
             });
@@ -103,7 +106,7 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Incorrect length or invalid packet type
-pub fn deserialize_uo0(
+pub(crate) fn deserialize_uo0(
     core_packet_data: &[u8],
     cid_from_engine: Option<ContextId>,
 ) -> Result<Uo0Packet, RohcParsingError> {
@@ -111,7 +114,7 @@ pub fn deserialize_uo0(
         return Err(RohcParsingError::NotEnoughData {
             needed: 1,
             got: core_packet_data.len(),
-            context: crate::error::ParseContext::UoPacketTypeDiscriminator,
+            context: ParseContext::UoPacketTypeDiscriminator,
         });
     }
 
