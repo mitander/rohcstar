@@ -9,48 +9,58 @@
 > This ROHC implementation is in early development phase.
 > The API is unstable, features are incomplete, and breaking changes should be expected.
 
-## Vision & Philosophy
+## Overview
 
-*   **RFC Adherence & Robustness:** Faithfully implement ROHC standards, focusing on robust context synchronization and recovery mechanisms under packet loss and reordering, critical for wireless network performance.
-*   **Memory Safety & Security:** Leverage Rust's strengths to create a secure ROHC solution suitable for critical telecom infrastructure like 5G PDCP layers.
-*   **Performance & Efficiency:** Target high compression/decompression throughput and low CPU overhead, making it suitable for embedded systems and high-volume data flows.
-*   **Modularity & Testability:** Employ a clean, modular architecture for easy maintenance, extension with new ROHC profiles (e.g., ROHCv2, ROHC-TCP), and comprehensive validation.
-*   **Fuzz-Driven Development:** Utilize Drifter extensively from day one to continuously test for correctness, security vulnerabilities, and protocol conformance.
-*   **Simplicity**: Clean, testable architecture. No clever abstractions - obvious code wins.
+Rohcstar implements RFC 3095 to compress IP/UDP/RTP headers from 40-60 bytes down to 1-3 bytes. Built for real-world use with focus on correctness, performance, and maintainability.
 
-## Current Status
+**Current Status:**
+- Profile 0x0001 (RTP/UDP/IP) Unidirectional Mode: Complete
+- All packet types implemented (IR, IR-DYN, UO-0, UO-1 variants)
+- Robust state machines with proper error recovery
+- Comprehensive test coverage
 
-*   **Profile 0x0001 (RTP/UDP/IP) Unidirectional Mode:**
-    *   [✓] Full compression and decompression support for all packet types:
-        *   IR (Initialization and Refresh)
-        *   IR-DYN (Dynamic chain, including TS_STRIDE signaling)
-        *   UO-0 (Smallest UO packet)
-        *   UO-1-SN (Sequence Number)
-        *   UO-1-TS (Timestamp)
-        *   UO-1-ID (IP Identification)
-        *   UO-1-RTP (Scaled Timestamp)
-    *   [✓] Robust decompressor state machine (NC, SC, FC, SO transitions).
-    *   [✓] TS_STRIDE detection and handling for efficient timestamp compression.
-    *   [✓] Context management with CID handling and activity-based timeouts.
-    *   [✓] Comprehensive test suite covering core functionality and edge cases.
-    *   [✓] Basic fuzzing harness integrated for robustness testing.
+**Coming Next:**
+- Additional profiles (UDP/IP, ESP/IP)
+- Bidirectional modes (O-mode, R-mode)
+- Performance optimizations
 
-## Core Features
+## Usage
 
-*   **ROHC Profiles:**
-    *   **Implemented (U-mode):** Profile 0x0001 (RTP/UDP/IP).
-    *   **Planned:** Profile 0x0002 (UDP/IP), Profile 0x0003 (IP-only), Profile 0x0000 (Uncompressed).
-*   **Compression Modes:**
-    *   **Implemented:** Unidirectional (U-mode) for Profile 1.
-    *   **Planned:** Bidirectional Optimistic (O-mode), Bidirectional Reliable (R-mode).
-*   **Context Management:** Robust handling of compression/decompression contexts, CID management, and state synchronization according to RFC 3095.
-*   **Packet Processing:** Efficient and RFC-compliant parsing and building of ROHC packets and relevant L3/L4 headers.
-*   **State Machine Implementation:** Clear and correct implementation of ROHC operational states (IR, FO, SO and NC, SC, FC, SO) and transitions.
+```rust
+use rohcstar::{RohcEngine, RohcProfile};
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+use std::time::Duration;
 
-## Performance Benchmarking
+let mut engine = RohcEngine::new(16, Duration::from_secs(300));
+engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
 
-Rohcstar includes a comprehensive benchmark suite to measure and monitor performance of critical ROHC operations:
+// Compress
+let headers = RtpUdpIpv4Headers {
+    ip_src: "192.168.1.10".parse()?,
+    ip_dst: "192.168.1.20".parse()?,
+    udp_src_port: 5004,
+    udp_dst_port: 5006,
+    rtp_ssrc: 0x12345678.into(),
+    rtp_sequence_number: 100.into(),
+    rtp_timestamp: 8000.into(),
+    ..Default::default()
+};
 
+let mut buffer = [0u8; 128];
+let compressed_len = engine.compress(
+    0.into(),
+    Some(RohcProfile::RtpUdpIp),
+    &headers.into(),
+    &mut buffer,
+)?;
+
+// Decompress
+let decompressed = engine.decompress(&buffer[..compressed_len])?;
+```
+
+## Performance
+
+Rohcstar includes a benchmark suite to measure and monitor performance of critical ROHC operations:
 *   **Packet Parsing**: Raw parsing performance of RTP/UDP/IPv4 headers (>3 GiB/s)
 *   **LSB Operations**: Core W-LSB encoding/decoding algorithms (<5 ns per operation)
 *   **CRC Operations**: CRC-3 and CRC-8 calculations for packet validation (>800 MiB/s)
@@ -77,66 +87,39 @@ cd rohcstar && cargo bench --bench rohc_benchmarks
 
 See [BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance analysis, optimization guidance, benchmark descriptions, and CI/CD integration.
 
-## Usage
+## Development
 
-```rust
-use rohcstar::packet_defs::GenericUncompressedHeaders;
-use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
-use rohcstar::time::SystemClock;
-use rohcstar::{RohcEngine, RohcProfile};
-use std::sync::Arc;
-use std::time::Duration;
+### Building
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut engine = RohcEngine::new(
-        20,
-        Duration::from_secs(300),
-        Arc::new(SystemClock),
-    );
-    engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
-
-    let headers = RtpUdpIpv4Headers {
-        ip_src: "192.168.1.10".parse()?,
-        ip_dst: "192.168.1.20".parse()?,
-        udp_src_port: 5004,
-        udp_dst_port: 5006,
-        rtp_ssrc: 0x12345678.into(),
-        rtp_sequence_number: 100.into(),
-        rtp_timestamp: 8000.into(),
-        ..Default::default()
-    };
-
-    let mut buf = [0u8; 128];
-    let len = engine.compress(
-        0.into(),
-        Some(RohcProfile::RtpUdpIp),
-        &GenericUncompressedHeaders::RtpUdpIpv4(headers),
-        &mut buf,
-    )?;
-
-    let decompressed = engine.decompress(&buf[..len])?;
-    println!("Roundtrip successful: {} -> {} bytes", 28, len);
-
-    Ok(())
-}
+```bash
+cargo build --release
+cargo test
+cargo bench
 ```
 
-## Integration with Drifter Fuzzer
+### Style
 
-The co-development of Rohcstar with its fuzzing counterpart, [Drifter](https://github.com/mitander/drifter), is a core principle and will be instrumental in:
-*   **Decompressor Validation:** Sending malformed, unexpected, and state-conflicting ROHC packet sequences.
-*   **Compressor Validation:** Feeding diverse and edge-case uncompressed packet streams.
-*   **State Machine Integrity:** Generating sequences to explore and validate ROHC state transitions and context synchronization logic rigorously.
-*   **Security:** Uncovering memory safety issues, panics, and other potential vulnerabilities.
-*   **Conformance Testing:** (Future) Assisting in validating against known ROHC traces and expected behaviors described in RFCs.
+See [STYLE.md](docs/STYLE.md) and [NAMING_CONVENTIONS.md](docs/NAMING_CONVENTIONS.md).
+
+Key points:
+- Correctness over performance
+- Measure everything
+- No premature abstractions
+- Comprehensive tests required
+
+### Contributing
+
+1. Follow style guide strictly
+2. Add tests for new features
+3. Benchmark performance changes
+4. Update documentation
 
 ## Documentation
 
-*   **[Design Document](docs/DESIGN_DOCUMENT.md)** - Detailed architecture, components, and roadmap
-*   **[The ROHC Bible](docs/THE_ROHC_BIBLE.md)** - Comprehensive ROHC protocol reference and implementation guide
-*   **[Style Guide](docs/STYLE.md)** - Code conventions and development standards
-*   **[Naming Conventions](docs/NAMING_CONVENTIONS.md)** - Consistent naming patterns
-*   **[Benchmarks](docs/BENCHMARKS.md)** - Performance analysis and optimization guidance
+- [Design](docs/DESIGN.md) - Architecture and implementation
+- [Style Guide](docs/STYLE.md) - Code conventions
+- [ROHC Bible](docs/THE_ROHC_BIBLE.md) - RFC reference
+- [Benchmarks](docs/BENCHMARKS.md) - Performance analysis
 
 ## License
 

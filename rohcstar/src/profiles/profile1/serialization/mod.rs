@@ -7,4 +7,4 @@ pub mod ir_packets;
 pub mod uo0_packets;
 pub mod uo1_packets;
 
-pub use self::ir_packets::serialize_ir;
+// Functions are directly accessible through their modules for internal profile1 use

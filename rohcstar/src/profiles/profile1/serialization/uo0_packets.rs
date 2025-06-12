@@ -25,7 +25,10 @@ use crate::types::ContextId;
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-0 packet
-pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, RohcBuildingError> {
+pub(crate) fn serialize_uo0(
+    packet_data: &Uo0Packet,
+    out: &mut [u8],
+) -> Result<usize, RohcBuildingError> {
     debug_assert!(
         packet_data.sn_lsb < (1 << P1_UO0_SN_LSB_WIDTH_DEFAULT),
         "SN LSB value {} too large for {} bits",

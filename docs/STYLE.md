@@ -1,746 +1,248 @@
 # Rohcstar Style Guide
 
-> **This is CORRECTNESS, not preference.**
->
-> Every rule prevents bugs. Every violation introduces technical debt.
-> This guide is mandatory and must be followed without exception.
+## Core Philosophy
 
-Production-grade ROHC implementation built on three foundational pillars:
+Write code that works, performs well, and doesn't make future-you hate current-you.
 
-## The Three Pillars
-
-### 1. ROBUSTNESS
-
-Code should be bulletproof like TigerBeetle. Every edge case handled, every invariant enforced.
-
-### 2. CONSISTENCY
-
-Patterns must be identical across the codebase. No exceptions, no "this time is different."
-
-### 3. SIMPLICITY
-
-Obvious code wins. No clever tricks. Future maintainers should understand immediately.
-
-## Core Principles (Non-Negotiable)
-
-1. **Correctness > Performance > Features** - Always
-2. **Explicit > Implicit** - No magic
-3. **Simple > Clever** - Boring code is good code
-4. **Measure > Assume** - Data over opinions
-5. **Static > Dynamic** - Zero allocations in hot paths
-6. **Assert > Hope** - Heavy defensive programming
+Three things matter:
+1. **Correctness** - It should do what the RFC says
+2. **Performance** - It should be fast (and we can prove it)
+3. **Simplicity** - It should be obvious what's happening
 
 ## Architecture
 
 ### Module Organization
+
+Modules are focused and small. No utils.rs, no grab bags.
 
 ```
 src/
   profiles/
     profile1/
       mod.rs              // Public API only
-      compressor.rs       // Compression logic
-      decompressor.rs     // Decompression logic
-      state.rs            // State machines
-      packets.rs          // Packet structures
-      constants.rs        // Profile1-specific constants
+      compression.rs      // Compression logic
+      decompression.rs    // Decompression logic
+      state_machine.rs    // State transitions
+      packet_types.rs     // Packet definitions
 ```
 
-**Size Limits**
+**Limits:**
+- Module: <500 lines
+- Function: <50 lines
+- No deeply nested code (>3 levels)
 
-- Modules: <500 lines
-- Functions: <50 lines (exception: state machines)
-- Structs: <10 fields
+### Type Safety
 
-**Code Proximity Rule**
-
-- Related code lives together (no "utils" modules)
-- Tests next to implementation (in same file for private functions)
-- Constants defined where used, not in separate files
-
-## Naming Conventions
-
-See [NAMING_CONVENTIONS.md](NAMING_CONVENTIONS.md) for full rules and examples. All code, documentation, and tests must follow these conventions.
-
-### Functions
+Use newtypes where mixing parameters would be catastrophic:
 
 ```rust
-// Action - Mutates state or has side effects
-compress_packet()
-update_context()
-initialize_engine()
-
-// Query - Read-only, no side effects
-is_valid()
-has_context()
-context_count()
-
-// Conversion - Type transformations
-as_bytes()        // Borrowing (&T -> &U)
-into_packet()     // Consuming (T -> U)
-
-// Fallible - Returns Result<T, E>
-try_compress()
-parse_packet()
-
-// Optional - Returns Option<T>
-find_context()
-get_profile()
-```
-
-### Types
-
-```rust
-// Domain objects
-RohcEngine
-Profile1Handler      // Not Profile1ProfileHandler
-IrPacket            // Not IRPacket
-RtpHeaders          // Not RTPHeaders
-
-// Contexts with clear ownership
-Profile1CompressorContext    // Not P1CompressorCtx
-
-// State enums
-enum CompressorMode {
-    Unidirectional,  // Not UNIDIRECTIONAL
-    Optimistic,
-}
-```
-
-### Constants
-
-```rust
-// Profile-specific: P<num>_<COMPONENT>_<DETAIL>
-P1_IR_PACKET_TYPE
-P1_UO0_SN_BITS
-
-// Generic ROHC: ROHC_<COMPONENT>_<DETAIL>
-ROHC_CID_MAX
-ROHC_VERSION
-
-// Module-level: <COMPONENT>_<DETAIL>
-DEFAULT_TIMEOUT
-MAX_CONTEXTS
-```
-
-### Tests
-
-Pattern: `p<profile>_<component>_<scenario>`
-
-```rust
-#[test]
-fn p1_ir_packet_handles_zero_stride() { }
-
-#[test]
-fn engine_context_timeout_removes_stale() { }
-```
-
-## Type Safety
-
-### Newtype Pattern
-
-Zero-cost type safety for domain values:
-
-```rust
-// Definition (use macro for consistency)
+// YES - Easy to mix up positional u16 parameters
 rohc_newtype!(ContextId, u16);
 rohc_newtype!(SequenceNumber, u16);
 
-// Production code: ALWAYS use ::new()
-let cid = ContextId::new(5);
-
-// Test code: .into() allowed for brevity
-let cid: ContextId = 5.into();
+// NO - Over-engineering for clear types
+struct BufferSize(usize);  // Just use usize
 ```
 
-### No Nullable Fields
+## Defensive Programming
+
+### Assertion Strategy
+
+Assert critical invariants that would corrupt state or cause undefined behavior. ROHC is designed for lossy networks - packet loss and corruption are expected conditions, not bugs.
 
 ```rust
-// Bad: Nullable fields that are "usually" present
-struct Context {
-    stride: Option<u32>,  // Only None before first calculation
-}
+// YES: Prevents memory corruption
+debug_assert!(index < buffer.len(), "Buffer overflow: {} >= {}", index, buffer.len());
 
-// Good: Explicit states
-enum ContextState {
-    Initializing { packets_seen: u8 },
-    Established { stride: NonZeroU32 },
-}
-```
+// YES: Catches state machine violation
+debug_assert!(self.mode != Mode::NoContext, "Invalid state: UO-0 requires context");
 
-## Memory Management
-
-### Static Allocation
-
-**No malloc in hot paths**. Preallocate everything at initialization:
-
-```rust
-pub struct RohcEngine {
-    // Static allocation
-    packet_buffer: [u8; MAX_PACKET_SIZE],
-    context_pool: [CompressorContext; MAX_CONTEXTS],
-    crc_tables: CrcTables,  // Computed once at startup
-}
-
-// Bad: Dynamic allocation per packet
-fn compress(&mut self) -> Vec<u8>
-
-// Good: Write into provided buffer
-fn compress(&mut self, out: &mut [u8]) -> Result<usize, RohcError>
-```
-
-### Zero-Copy Patterns
-
-```rust
-// Borrow when possible
-pub fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
-
-// Return Cow for conditional ownership
-pub fn get_packet(&self) -> Cow<'_, [u8]>
-
-// Never allocate unnecessarily
-pub fn get_cid(&self) -> ContextId  // Not Vec<u8>!
-```
-
-## Error Handling
-
-### Result vs Panic
-
-```rust
-// Recoverable error: Return Result
+// NO: Expected network condition
 if packet.len() < MIN_SIZE {
     return Err(RohcError::PacketTooSmall { size: packet.len() });
 }
 
-// Debug invariant: debug_assert (free in release)
-debug_assert!(self.state.is_valid());
-
-// Critical safety: assert (rare)
-assert!(index < self.buffer.len(), "buffer overflow");
-```
-
-### Error Naming
-
-Be explicit about WHERE and WHY:
-
-```rust
-pub enum RohcError {
-    // Specific location and context
-    CompressorContextNotFound { cid: ContextId },
-    Profile1IrPacketTooSmall { size: usize, minimum: usize },
-    DecompressorCrcMismatch { expected: u8, actual: u8 },
-
-    // Not just "InvalidPacket" or "Error"
+// NO: Normal ROHC operation
+if crc_calculated != crc_received {
+    self.handle_crc_failure();
 }
 ```
 
-## Testing Strategy
-
-### Deterministic Simulation
-
-Test entire sessions deterministically:
+### Error Handling
 
 ```rust
-pub struct DeterministicSimulator {
-    clock: MockClock,
-    rng: StdRng,
-    packet_loss: Vec<bool>,      // Predetermined loss pattern
-    network_delay: Vec<Duration>, // Predetermined delays
+// Recoverable: Return Result
+pub fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
+
+// Invariant violation: debug_assert with message
+debug_assert!(self.contexts.len() <= MAX_CONTEXTS, "Context overflow: {} > {}",
+             self.contexts.len(), MAX_CONTEXTS);
+
+// Critical safety: assert (rare, documented why)
+assert!(ptr.is_aligned(), "Unaligned pointer would cause UB on this platform");
+```
+
+## Memory Management
+
+### Zero Allocation Principle
+
+Packet processing paths must not allocate.
+
+```rust
+pub struct RohcEngine {
+    // Pre-allocated at init
+    packet_buffer: [u8; MAX_PACKET_SIZE],
+    crc_calculator: CrcCalculator,  // Reused, not created per packet
 }
 
-#[test]
-fn simulate_10k_packet_session() {
-    let sim = DeterministicSimulator::from_seed(0xDEADBEEF);
-    // Verify correctness under all network conditions
-}
+// Good: Write into provided buffer
+fn compress(&mut self, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
+
+// Bad: Allocates per call
+fn compress(&mut self, headers: &Headers) -> Result<Vec<u8>, RohcError>
 ```
 
-### Test Categories
+## Documentation
+
+### Module Documentation
+
+Every module has a purpose statement:
 
 ```rust
-// Unit: Single component
-#[test]
-fn lsb_encode_handles_wraparound() { }
-
-// Property: Invariants via quickcheck
-#[quickcheck]
-fn compression_decompression_roundtrip(headers: Headers) -> bool {
-    compress_then_decompress(headers) == headers
-}
-
-// Conformance: RFC test vectors
-#[test]
-fn p1_ir_packet_matches_rfc_example_1() { }
-
-// Performance: Regression tests
-#[test]
-fn perf_compress_uo0_under_500ns() {
-    assert_duration!(compress_uo0(&headers), < 500ns);
-}
-```
-
-### Coverage Requirements
-
-- Unit tests: 90% line coverage
-- State machines: 100% transition coverage
-- Public API: Every path tested
-
-## Performance
-
-### Benchmark-Driven Development
-
-**No performance changes without data:**
-
-1. Write benchmark FIRST
-2. Measure baseline
-3. Make change
-4. Measure again
-5. Keep only if >10% improvement
-
-```rust
-// Required for optimization PRs:
-// BENCHMARK RESULTS:
-// Before: 487ns per packet
-// After:  423ns per packet
-// Improvement: 13.1%
-```
-
-### Performance Assertions
-
-```rust
-// Assert performance characteristics in tests
-#[test]
-fn perf_critical_path() {
-    assert_no_allocations!(engine.compress_uo0(&headers));
-    assert_cpu_cycles!(engine.decompress(&packet), < 1000);
-}
-```
-
-### Hot Path Rules
-
-1. **No allocations** in packet processing
-2. **Reuse resources** (CRC tables, buffers)
-3. **Profile first** - no guessing
-4. **Inline carefully** - measure impact
-
-## Defensive Programming
-
-### Strategic Assertion Philosophy
-
-ROHC is fault-tolerant by design - packet loss is expected and handled. Focus assertions on **critical invariants** that prevent undefined behavior, not every calculation.
-
-**Assert These (Critical)**:
-
-- Entry point parameter validation
-- Array bounds that could cause crashes
-- State machine invariant violations
-- Context consistency that affects correctness
-- Buffer size guarantees before writes
-
-**Don't Assert These (Acceptable)**:
-
-- Packet loss scenarios (protocol handles these)
-- Temporary calculation steps
-- Performance-critical inner loops
-- Expected error conditions
-
-### Assert Then Assume
-
-**MANDATORY**: ALL `debug_assert!` calls MUST include descriptive messages.
-
-Assert invariants at boundaries, then rely on them:
-
-```rust
-pub fn compress_uo0(&mut self, ctx: &Context) -> Result<&[u8], RohcError> {
-    // Assert critical invariants at entry
-    debug_assert!(ctx.is_established(), "State violation: UO-0 requires established context");
-    debug_assert!(self.buffer.len() >= UO0_MAX_SIZE, "Buffer overflow: {} < {}", self.buffer.len(), UO0_MAX_SIZE);
-    debug_assert!(ctx.sequence_number.is_some(), "State violation: missing sequence number");
-
-    // Now safely assume these hold - no more checks needed
-    let sn = ctx.sequence_number.unwrap(); // Safe after assertion
-}
-```
-
-**Never do this**:
-
-```rust
-debug_assert!(value > 0);          // ❌ BAD: No message
-debug_assert!(buf.len() >= 10);    // ❌ BAD: No message
-```
-
-**Always do this**:
-
-```rust
-debug_assert!(value > 0, "Invalid value: {} must be positive", value);           // ✅ GOOD
-debug_assert!(buf.len() >= 10, "Buffer overflow: {} < 10", buf.len());          // ✅ GOOD
-```
-
-### State Validation (Critical Paths Only)
-
-```rust
-fn transition_to_fo(&mut self) -> Result<(), RohcError> {
-    // State transitions must be validated - corruption here breaks everything
-    debug_assert!(
-        matches!(self.state, State::IR | State::FO),
-        "Invalid transition to FO from {:?}", self.state
-    );
-
-    match self.state {
-        State::IR => {
-            self.state = State::FO;
-            Ok(())
-        }
-        _ => Err(RohcError::InvalidTransition {
-            from: self.state,
-            to: State::FO
-        }),
-    }
-}
-```
-
-### Buffer Safety (Non-Negotiable)
-
-**Standard Message Format**: All buffer assertions MUST use this exact pattern:
-
-```rust
-fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
-    // Buffer overflows are never acceptable
-    debug_assert!(
-        self.pos + data.len() <= self.buffer.len(),
-        "Buffer overflow: {} + {} > {}",
-        self.pos, data.len(), self.buffer.len()
-    );
-
-    // Write safely
-    self.buffer[self.pos..self.pos + data.len()].copy_from_slice(data);
-    self.pos += data.len();
-    Ok(data.len())
-}
-```
-
-**Message Patterns** (MANDATORY - NO DEVIATIONS):
-
-```rust
-// Buffer write bounds
-"Buffer overflow: {} + {} > {}"     // For write operations
-"Buffer overflow: {} < {}"          // For size requirements
-
-// Range violations
-"Range violation: {} not in {}-{}"  // For value ranges
-"Range violation: {} >= {}"         // For upper bounds
-
-// State violations
-"State violation: description"      // For invalid state combinations
-"Invalid stride: {} must be positive" // For stride validation
-
-// Counter overflows
-"Counter overflow: {} > {}"         // For counter limits
-```
-
-## Documentation Standards
-
-All documentation must be consistent, complete, and production-ready. No exceptions.
-
-### Module Documentation (`//!`)
-
-Every module MUST have module-level documentation explaining its purpose:
-
-```rust
-//! ROHC Profile 1 decompression for RTP/UDP/IP packets.
+//! Profile 1 compression for RTP/UDP/IP packets.
 //!
-//! Implements RFC 3095 profile 0x0001 decompression with robust CRC recovery
-//! and conservative false positive prevention.
+//! Implements RFC 3095 profile 0x0001 with W-LSB encoding and
+//! TS_STRIDE detection for optimal compression ratios.
 ```
-
-**Structure**:
-
-- First line: Brief summary ending with period
-- Empty line
-- Detailed explanation (2-4 lines max)
-- Reference RFC sections when applicable
 
 ### Function Documentation
 
-#### Public Functions (`pub fn`, `pub(crate) fn`, `pub(super) fn`)
-
-**MANDATORY**: All public functions MUST have complete documentation:
+Public functions get full docs. Private functions get comments only when non-obvious.
 
 ```rust
-/// Compresses headers using W-LSB encoding for Profile 1 packets.
+/// Compresses headers using Profile 1.
 ///
-/// Analyzes header changes and selects optimal packet type based on RFC 3095 rules.
-/// Updates compressor context state including timestamp stride detection.
-///
-/// # Parameters
-/// - `context`: Mutable compressor context containing state and configuration
-/// - `headers`: Uncompressed headers of the current packet to compress
-/// - `out`: Output buffer to write the compressed packet into
+/// Selects optimal packet type based on header changes since last packet.
+/// Updates context state including TS_STRIDE detection.
 ///
 /// # Returns
-/// The number of bytes written to the output buffer.
+/// Number of bytes written to output buffer.
 ///
 /// # Errors
-/// - [`RohcError::Building`] - No suitable packet type available
-/// - [`RohcError::Internal`] - Internal logic error
-pub fn compress(&mut self, context: &mut Context, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
-```
+/// - [`RohcError::ContextNotFound`] - No context for given CID
+/// - [`RohcError::BufferTooSmall`] - Output buffer insufficient
+pub fn compress(&mut self, cid: ContextId, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
 
-**Required Sections**:
-
-1. **Summary**: One line describing what the function does
-2. **Details**: 1-3 lines explaining the approach (optional if obvious)
-3. **`# Parameters`**: Every parameter with brief description
-4. **`# Returns`**: What is returned and what it means
-5. **`# Errors`** (if function returns Result): Each error variant that can occur
-
-#### Private Functions (`fn`)
-
-**RULE**: Private functions should NOT use `///` documentation. Use brief `//` comments only when the function is complex or non-obvious:
-
-```rust
-// Calculates minimum wrapping distance between two sequence numbers
-fn min_wrapping_distance_u16<T, U>(a: T, b: U) -> u16
-where
-    T: Into<u16>,
-    U: Into<u16>,
-{
-    let a_val = a.into();
-    let b_val = b.into();
-    let forward = a_val.wrapping_sub(b_val);
-    let backward = b_val.wrapping_sub(a_val);
-    forward.min(backward)
-}
-
-// Simple helper functions need no comments
-fn can_use_uo0(marker_changed: bool, sn_delta: u16) -> bool {
-    !marker_changed && sn_delta > 0 && sn_delta < 16
-}
+// Private function - comment only if complex
+// Calculates minimum K value for W-LSB encoding per RFC 3095 Section 4.5.1
+fn calculate_k_value(v_ref: u16, v: u16) -> u8
 ```
 
 ### Inline Comments
 
-#### Keep These Comments (Valuable)
-
-Comments that explain **WHY** or **RFC requirements**:
+Only explain **why**, never **what**:
 
 ```rust
-// Use full window to handle timestamp wraparound at boundaries
-let ts_window = calculate_lsb_window(ts_bits + 2);
+// Good: Explains RFC requirement
+// RFC 3095 5.7.7.4: CRC includes static fields for IR packets only
+let crc_input = if is_ir_packet {
+    include_static_fields(data)
+} else {
+    data
+};
 
-// Profile 1 mandates specific CRC input format per RFC 3095 Section 5.7.7.4
-let crc_input = prepare_generic_uo_crc_input_payload(ssrc, sn, ts, marker);
+// Bad: Restates code
+let seq_num = seq_num + 1;  // Increment sequence number
+```
 
-// RFC 3095 Section 5.3.2.2.3: Decompressor transitions to NC on persistent CRC failures
-if consecutive_failures >= P1_CRC_FAILURE_LIMIT {
-    self.transition_to_nc();
-}
+## Testing
 
-// Complex logic: explain non-obvious algorithm or RFC nuance
-// If TS stride is not yet established, but the observed TS delta matches the candidate stride
-// for enough consecutive packets, promote to established stride mode (RFC 3095, 5.7.7.2)
-if !self.ts_stride_established && ts_delta == self.ts_stride_candidate {
-    self.ts_stride_confidence += 1;
-    // Only establish stride after threshold to avoid false positives on jitter
-    if self.ts_stride_confidence >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD {
-        self.ts_stride_established = true;
+### Test Organization
+
+```rust
+// Unit tests in same file
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compress_uo0_with_established_stride() {
+        // Test one specific behavior
     }
 }
-```
 
-#### Remove These Comments (Noise)
-
-Comments that restate the code, state obvious facts, or clutter struct initialization:
-
-```rust
-// BAD - Remove these
-let result = compress_packet();  // Compress the packet
-counter += 1;                    // Increment counter
-return Ok(headers);              // Return success
-self.state = State::Active;      // Set state to active
-
-// BAD - Noisy struct field comments
-RtpUdpIpv4Headers {
-    ip_total_length: 0,     // Typically set by higher layers or network stack
-    ip_dont_fragment: true, // Common assumption for ROHC Profile 1
-    ip_checksum: 0,         // Recalculated by network stack
-    udp_checksum: 0,        // May be 0 if not used, or recalculated
-    rtp_padding: false,     // Assumed false unless payload indicates otherwise
-    rtp_csrc_count: 0,      // Assumed 0 for Profile 1
-}
-
-// BAD - Obvious variable assignments
-let sn = 100;               // Set sequence number to 100
-let ts = get_timestamp();   // Get the current timestamp
-```
-
-#### Comment Maintenance Rules
-
-1. **Question every comment** - If it doesn't explain WHY or reference RFC requirements, delete it
-2. **Update comments with code changes** - Stale comments are worse than no comments
-3. **Remove TODO comments** - Fix immediately or create GitHub issue
-4. **No debugging comments** - Remove `println!`, `dbg!`, etc.
-5. **No commented-out code** - Delete it; use git history if needed
-6. **Clean struct initialization** - Default values should be self-explanatory without inline comments
-
-### Import Organization
-
-**MANDATORY**: All imports must follow this exact order with blank lines between groups:
-
-```rust
-// 1. Standard library
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
-use std::time::Instant;
-
-// 2. External dependencies (alphabetical by crate name)
-use criterion::{Criterion, black_box};
-use thiserror::Error;
-
-// 3. Crate-local imports (alphabetical, grouped by module)
-use crate::constants::{IP_PROTOCOL_UDP, RTP_VERSION};
-use crate::error::{RohcError, RohcParsingError};
-use crate::types::{ContextId, SequenceNumber};
-
-// 4. Relative imports (super, self)
-use super::constants::P1_UO0_SN_LSB_WIDTH_DEFAULT;
-use super::packet_types::Uo0Packet;
-```
-
-**FORBIDDEN**: Inline imports in function bodies:
-
-```rust
-// ❌ NEVER do this
-fn compress() {
-    use crate::types::SequenceNumber;
-    let sn = SequenceNumber::new(42);
-}
-
-// ✅ Always import at module level
-use crate::types::SequenceNumber;
-
-fn compress() {
-    let sn = SequenceNumber::new(42);
+// Integration tests in tests/
+#[test]
+fn profile1_thousand_packet_session() {
+    // End-to-end validation
 }
 ```
 
-### Documentation Examples
+### Test Naming
 
-#### Good Module Documentation
-
-```rust
-//! UO-1 packet serialization and deserialization for Profile 1.
-//!
-//! This module handles the creation and parsing of UO-1 (Unidirectional Optimistic, Order 1)
-//! packet variants: UO-1-SN, UO-1-TS, UO-1-ID, and UO-1-RTP. Each variant carries different
-//! combinations of sequence number, timestamp, IP-ID, and marker bit information depending
-//! on which fields have changed since the last packet.
-```
-
-#### Good Function Documentation
+Pattern: `<component>_<scenario>_<expected_outcome>`
 
 ```rust
-/// Prepares CRC input payload for UO-1-ID packet validation.
-///
-/// Creates the standardized byte sequence used for CRC calculation in UO-1-ID packets.
-/// This extends the generic UO CRC input with the IP-ID LSB field for UO-1-ID validation.
-///
-/// # Parameters
-/// - `context_ssrc`: RTP SSRC from compressor context
-/// - `sn_for_crc`: Sequence number to include in CRC calculation
-/// - `ts_for_crc`: Timestamp to include in CRC calculation
-/// - `marker_for_crc`: RTP marker bit to include in CRC calculation
-/// - `ip_id_lsb_for_crc`: IP-ID LSB value specific to UO-1-ID packets
-///
-/// # Returns
-/// Fixed-size array containing the CRC input payload (12 bytes)
-pub fn prepare_uo1_id_specific_crc_input_payload(
-    context_ssrc: Ssrc,
-    sn_for_crc: SequenceNumber,
-    ts_for_crc: Timestamp,
-    marker_for_crc: bool,
-    ip_id_lsb_for_crc: u8,
-) -> [u8; 12]
+#[test]
+fn lsb_encode_wraparound_selects_minimal_k() { }
+
+#[test]
+fn decompressor_nc_state_rejects_uo_packets() { }
 ```
 
-## Commit Style
+## Performance
 
-All commits must follow these strict formatting rules to maintain clean git history:
+### Measure, Don't Guess
 
-### Commit Message Format
+If you claim something is faster, show me the numbers.
+
+```rust
+// Every optimization needs proof:
+// BENCHMARK: compress_uo0
+// Before: 487ns per packet
+// After:  391ns per packet
+// Improvement: 19.7%
+//
+// Worth it? That's 96ns for something we do millions of times.
+```
+
+### Benchmarking Rules
+
+1. Write the benchmark first
+2. Use real packet data (not zeros)
+3. Check if the "improvement" actually matters
+4. Put the numbers in your commit message
+
+## Commit Messages
+
+Keep it simple, be specific about what changed.
 
 ```
-type(scope): brief description
+type(scope): what you did
 
-Optional longer explanation if needed
-- Bullet points for multiple changes
-- Keep each line under 72 characters
+Why you did it (if not obvious).
+
+BENCHMARK: [only if you changed performance]
 ```
 
-### Type Categories
-
-- **feat**: New feature or significant enhancement
-- **fix**: Bug fix or correction
-- **refactor**: Code restructuring without behavior change
-- **style**: Formatting, naming, organization (no logic change)
-- **docs**: Documentation additions or improvements
-- **test**: Adding or improving tests
-- **chore**: Tooling, dependencies, or maintenance
-
-### Scope Guidelines
-
-- **profile1**: Changes to Profile 1 implementation
-- **engine**: RohcEngine modifications
-- **style**: Style guide or formatting changes
-- **crc**: CRC calculation improvements
-- **buffer-safety**: Buffer bounds and safety improvements
-
-### Examples
-
+Examples:
 ```bash
-# Good commits
-feat(profile1): add UO-1-RTP packet support with TS_SCALED encoding
-fix(buffer-safety): add bounds checking to IR deserialization
-refactor(profile1): break down packet_processor into focused modules
-style(defensive): standardize debug_assert! patterns across codebase
-docs(profile1): add complete Parameter/Returns sections to UO-1 functions
+feat(profile1): add UO-1-RTP packet support
+fix(lsb): handle 32-bit wraparound correctly
+refactor(engine): split monster function into readable pieces
+bench(crc): reuse calculator, 86% faster
 
-# Bad commits
-Update stuff           # No type or scope
-Fix bug in thing       # Too vague
-Added new feature      # Wrong tense, no scope
+The last one would include:
+BENCHMARK: crc_calculate
+Before: 89ns per packet
+After: 12ns per packet
 ```
 
-### Rules
+## The Bottom Line
 
-1. **Present tense**: "add feature" not "added feature"
-2. **Lowercase**: Never capitalize the description
-3. **No period**: End descriptions without punctuation
-4. **Specific scope**: Use module names, not generic terms
-5. **Descriptive**: Explain WHAT and WHY, not HOW
-6. **Atomic**: Each commit should be a single logical change
+Write code like someone else will maintain it. Because they will. And that someone might be you in six months wondering what you were thinking.
 
-### Pre-commit Requirements
-
-Every commit MUST pass:
-
-- `cargo fmt --check` - Code formatting
-- `cargo clippy -- -D warnings` - Linting
-- `cargo test` - All tests pass
-
-## Tools & Automation
-
-- `cargo fmt` - Before every commit
-- `cargo clippy -- -D warnings` - In CI
-- `cargo test` - Including performance tests
-- `cargo bench` - Before optimization PRs
-
-## Summary
-
-This style guide optimizes for:
-
-- **Correctness**: Through types, tests, and assertions
-- **Performance**: Through measurement and static allocation
-- **Maintainability**: Through consistency and simplicity
-
-When in doubt, choose the approach that makes bugs impossible, performance predictable, and code obvious.
+When in doubt:
+- Make it correct first
+- Make it fast second (with proof)
+- Make it fancy never

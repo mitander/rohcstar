@@ -21,7 +21,7 @@ use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 ///
 /// # Parameters
 /// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet_bytes`: The ROHC packet data for the IR packet (core packet, after Add-CID if any).
+/// - `packet`: The ROHC packet data for the IR packet (core packet, after Add-CID if any).
 /// - `crc_calculators`: For CRC verification.
 /// - `handler_profile_id`: The `RohcProfile` ID of the calling handler, used for profile validation.
 ///
@@ -32,12 +32,12 @@ use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 /// - [`RohcError::Parsing`]: If IR packet parsing, CRC validation, or profile validation fails.
 pub(super) fn process_ir_packet(
     context: &mut Profile1DecompressorContext,
-    packet_bytes: &[u8],
+    packet: &[u8],
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
     let reconstructed_rtp_headers =
-        decompressor::decompress_as_ir(context, packet_bytes, crc_calculators, handler_profile_id)?;
+        decompressor::decompress_as_ir(context, packet, crc_calculators, handler_profile_id)?;
 
     // Use new transition system
     process_transition(
@@ -57,7 +57,7 @@ pub(super) fn process_ir_packet(
 ///
 /// # Parameters
 /// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet_bytes`: The ROHC packet data (core packet, after Add-CID if any).
+/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
 /// - `discriminated_type`: The `Profile1PacketType` (unused as `decompress_as_uo` re-discriminates).
 /// - `crc_calculators`: For CRC verification.
 ///
@@ -68,7 +68,7 @@ pub(super) fn process_ir_packet(
 /// - [`RohcError`]: Propagated from `decompress_as_uo` or state transition logic.
 pub(super) fn process_packet_in_fc_mode(
     context: &mut Profile1DecompressorContext,
-    packet_bytes: &[u8],
+    packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
@@ -82,7 +82,7 @@ pub(super) fn process_packet_in_fc_mode(
         "IR packet routed to UO processing in FC mode"
     );
 
-    let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
+    let outcome = decompressor::decompress_as_uo(context, packet, crc_calculators);
 
     // Simple RFC 3095 compliant CRC failure tracking
     match &outcome {
@@ -132,7 +132,7 @@ pub(super) fn process_packet_in_fc_mode(
 ///
 /// # Parameters
 /// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet_bytes`: The ROHC packet data (core packet, after Add-CID if any).
+/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
 /// - `discriminated_type`: The `Profile1PacketType` determined by the caller.
 /// - `crc_calculators`: For CRC verification.
 ///
@@ -145,7 +145,7 @@ pub(super) fn process_packet_in_fc_mode(
 /// - Other `RohcError` variants from underlying operations.
 pub(super) fn process_packet_in_sc_mode(
     context: &mut Profile1DecompressorContext,
-    packet_bytes: &[u8],
+    packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
@@ -166,7 +166,7 @@ pub(super) fn process_packet_in_sc_mode(
             return Err(RohcError::Decompression(
                 DecompressionError::InvalidPacketType {
                     cid: context.cid,
-                    packet_type: packet_bytes[0],
+                    packet_type: packet[0],
                 },
             ));
         }
@@ -181,7 +181,7 @@ pub(super) fn process_packet_in_sc_mode(
         }
         _ => {
             // All UO-1 variants are suitable for dynamic updates
-            decompressor::decompress_as_uo(context, packet_bytes, crc_calculators)
+            decompressor::decompress_as_uo(context, packet, crc_calculators)
         }
     };
 
@@ -248,7 +248,7 @@ pub(super) fn process_packet_in_sc_mode(
 ///
 /// # Parameters
 /// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet_bytes`: The ROHC packet data (core packet, after Add-CID if any).
+/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
 /// - `discriminated_type`: The `Profile1PacketType` (unused as `decompress_as_uo` re-discriminates).
 /// - `crc_calculators`: For CRC verification.
 ///
@@ -259,7 +259,7 @@ pub(super) fn process_packet_in_sc_mode(
 /// - [`RohcError`]: Propagated from `decompress_as_uo` or state transition logic.
 pub(super) fn process_packet_in_so_mode(
     context: &mut Profile1DecompressorContext,
-    packet_bytes: &[u8],
+    packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
@@ -273,7 +273,7 @@ pub(super) fn process_packet_in_so_mode(
         "IR packet routed to UO processing in SO mode"
     );
 
-    let outcome = decompressor::decompress_as_uo(context, packet_bytes, crc_calculators);
+    let outcome = decompressor::decompress_as_uo(context, packet, crc_calculators);
 
     // SO mode: treat successful recovery as confidence boost, not penalty
     match &outcome {

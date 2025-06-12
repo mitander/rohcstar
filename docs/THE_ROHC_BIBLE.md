@@ -99,7 +99,8 @@
 | 0 |  SN   |CRC|
 +-+-+-+-+-+-+-+-+
 ```
-- Updates: SN
+- Discriminator: 0xxxxxxx
+- Updates: SN only
 - CRC: 3-bit
 
 #### UO-1 (2 bytes + CID)
@@ -111,6 +112,7 @@
 |M|  SN   | CRC |
 +-+-+-+-+-+-+-+-+
 ```
+- Discriminator: 10xxxxxx
 - Updates: SN, TS
 - CRC: 3-bit
 
@@ -125,6 +127,7 @@
 |X|    CRC      |
 +-+-+-+-+-+-+-+-+
 ```
+- Discriminator: 110xxxxx
 - Updates: All fields
 - CRC: 7-bit
 - X: Extension present
@@ -165,9 +168,10 @@ Similar to RTP profile but:
 
 ## Profile 0x0000: Uncompressed
 
-- No compression performed
-- Minimal overhead (CID only)
+- Headers passed through unmodified
+- Adds ROHC framing (CID, packet type)
 - Used for incompressible packets
+- Minimal overhead
 
 ## Compression Procedures
 
@@ -192,7 +196,7 @@ When no TS bits sent:
 ## CRC Calculations (Corrected from RFC 4815)
 
 ### Coverage Rules
-- **IR/IR-DYN**: Entire packet excluding Payload, Padding, and Add-CID for CID 0
+- **IR/IR-DYN**: Entire uncompressed header excluding Payload and initial Padding octets
 - **Compressed headers**: Original uncompressed header
 - **Feedback CRC**: Excludes packet type, Size field, and Code octet
 
@@ -220,6 +224,12 @@ When no TS bits sent:
 3. Mode inheritance when reusing CID with same profile
 4. Enhanced procedures allow sparse feedback with D_TRANS=P
 
+### U-mode Specific
+- No feedback channel available
+- Periodic IR refreshes to maintain sync
+- Conservative state transitions
+- CRC failures trigger immediate recovery
+
 ## List Compression
 
 ### Encoding Types
@@ -237,7 +247,7 @@ When no TS bits sent:
 ## Context Management
 
 ### Reinitialization
-- **CONTEXT_REINITIALIZATION** signal forces IR state
+- **CONTEXT_REINITIALIZATION** signal forces IR state (feedback modes only)
 - Must reinitialize ALL contexts
 - Mode inherited when reusing CID
 
@@ -260,7 +270,7 @@ When no TS bits sent:
 - **PROFILES**: Supported profiles list
 - **MRRU**: Maximum reconstructed size
 
-### Feedback Options
+### Feedback Options (O-mode and R-mode only)
 1. **CRC** (Type 1): 8-bit CRC
 2. **REJECT** (Type 2): Reject flow
 3. **SN-NOT-VALID** (Type 3): Invalid SN
@@ -294,17 +304,18 @@ When no TS bits sent:
 - Pool compression contexts
 - Optimize W-LSB window operations
 - Cache TS_STRIDE calculations
+- Pre-allocate packet buffers
 
 ## Quick Reference Tables
 
 ### Packet Type Summary
-| Type | Size | Updates | CRC | Use Case |
-|------|------|---------|-----|----------|
-| UO-0 | 1B | SN | 3-bit | Minimal change |
-| UO-1 | 2B | SN,TS | 3-bit | TS update |
-| UOR-2 | 3B | All | 7-bit | Full update |
-| IR | Var | All | 8-bit | Initialize |
-| IR-DYN | Var | Dynamic | 8-bit | Reinit dynamic |
+| Type | Discriminator | Size | Updates | CRC | Use Case |
+|------|--------------|------|---------|-----|----------|
+| UO-0 | 0xxxxxxx | 1B | SN | 3-bit | Minimal change |
+| UO-1 | 10xxxxxx | 2B | SN,TS | 3-bit | TS update |
+| UOR-2 | 110xxxxx | 3B | All | 7-bit | Full update |
+| IR | 11111101 | Var | All | 8-bit | Initialize |
+| IR-DYN | 11111000 | Var | Dynamic | 8-bit | Reinit dynamic |
 
 ### Mode Comparison
 | Feature | U-mode | O-mode | R-mode |
@@ -323,13 +334,26 @@ When no TS bits sent:
 | CHANGING | SN, TS | Compress |
 | IRREGULAR | Checksum | Send as-is |
 
-## Common Pitfalls
+## Common Implementation Pitfalls
 
 1. **TS_OFFSET not recalculated** when receiving unscaled TS
 2. **Mode not inherited** during CID reuse
 3. **CRC coverage** excluding wrong fields
 4. **Reference list empty** for encoding types 1-3
 5. **IP-ID byte order** confusion with NBO flag
+6. **Timer resolution** insufficient for accurate TS prediction
+7. **Buffer alignment** issues on embedded platforms
+8. **Concurrent context** modification without proper locking
+
+## ROHCv2 Key Differences (RFC 5225)
+
+Since Rohcstar roadmap includes ROHCv2 support:
+
+1. **Improved encoding**: More efficient than ROHCv1
+2. **Better repair mechanisms**: Enhanced error recovery
+3. **Simplified implementation**: Cleaner specification
+4. **Profile differences**: New profile numbers and formats
+5. **Backwards compatibility**: Not compatible with ROHCv1
 
 ## Compliance Checklist
 
@@ -342,4 +366,4 @@ When no TS bits sent:
 - [ ] Context reuse follows rules
 - [ ] Error recovery implemented
 - [ ] All three modes supported
-- [ ] Feedback handling complete
+- [ ] Feedback handling complete (O/R modes)

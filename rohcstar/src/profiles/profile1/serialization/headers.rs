@@ -25,7 +25,7 @@ use crate::types::Ssrc;
 /// # Returns
 /// - `Ok(RtpUdpIpv4Headers)`: Parsed header structure with all extracted fields
 /// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
-pub fn deserialize_rtp_udp_ipv4_headers(
+pub(crate) fn deserialize_rtp_udp_ipv4_headers(
     data: &[u8],
 ) -> Result<RtpUdpIpv4Headers, RohcParsingError> {
     if data.len() < IPV4_MIN_HEADER_LENGTH_BYTES {

@@ -133,11 +133,7 @@ pub(super) fn decompress_as_uo(
     }
 }
 
-/// Decompresses a UO-0 packet, validates CRC, updates decompressor context, and reconstructs headers.
-///
-/// UO-0 packets carry an LSB-encoded RTP Sequence Number and a 3-bit CRC.
-/// The RTP Timestamp is implicitly reconstructed based on the context's TS stride, if established.
-/// The RTP Marker bit is assumed to be unchanged from the context.
+// Decompresses UO-0 packet with SN LSB and implicit TS reconstruction
 fn decompress_as_uo0(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -684,18 +680,7 @@ fn decompress_as_uo1_rtp(
     ))
 }
 
-/// Attempts sequence number recovery on CRC mismatch.
-///
-/// Unified recovery function that handles all packet types with configurable
-/// search windows and optional LSB validation. Uses minimal generics for
-/// performance while maintaining flexibility.
-///
-/// # Parameters
-/// - `forward_window`: Maximum packets to search forward from current SN
-/// - `backward_window`: Maximum packets to search backward from current SN
-/// - `lsb_constraint`: Optional LSB constraint for sequence number validation
-/// - `crc_calculator`: Closure for CRC calculation
-/// - `crc_input_generator`: Closure to generate CRC input
+// Attempts sequence number recovery on CRC mismatch using configurable search windows
 #[allow(clippy::too_many_arguments)]
 fn try_sn_recovery<F, G>(
     context: &Profile1DecompressorContext,
@@ -777,12 +762,7 @@ where
     }))
 }
 
-/// Reconstructs full RTP/UDP/IPv4 headers using context and current dynamic values.
-///
-/// Populates an `RtpUdpIpv4Headers` struct using static fields from the
-/// decompressor context and the provided dynamic values (SN, TS, Marker, IP-ID)
-/// from the currently processed packet. Fields not directly carried or inferred
-/// by ROHC Profile 1 are set to default or common values.
+// Reconstructs full RTP/UDP/IPv4 headers using context and current dynamic values
 fn reconstruct_headers_from_context(
     context: &Profile1DecompressorContext,
     sn: SequenceNumber,
@@ -826,12 +806,7 @@ fn reconstruct_headers_from_context(
     }
 }
 
-/// Calculates the reconstructed RTP Timestamp for packets where TS is implicit.
-///
-/// If a TS stride is established in the context, the timestamp is calculated based
-/// on the last reconstructed timestamp, the sequence number delta, and the stride.
-/// If no stride is established, or if the SN delta is not positive, the last
-/// reconstructed timestamp is returned (as per RFC 3095 UO-0 behavior when TS is static).
+// Calculates reconstructed RTP timestamp using established stride and SN delta
 fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
     decoded_sn: SequenceNumber,
@@ -855,11 +830,7 @@ fn calculate_reconstructed_ts_implicit(
     }
 }
 
-/// Calculates the reconstructed RTP Timestamp for packets where SN advances by exactly one.
-///
-/// This is a specialized version of `calculate_reconstructed_ts_implicit`
-/// used by packet types (like UO-1-ID, UO-1-RTP) where the SN is always
-/// `last_reconstructed_sn + 1`.
+// Calculates reconstructed RTP timestamp when SN advances by exactly one
 fn calculate_reconstructed_ts_implicit_sn_plus_one(
     context: &Profile1DecompressorContext,
 ) -> Timestamp {
