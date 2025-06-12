@@ -3,7 +3,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rohcstar::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
 use rohcstar::error::{Field, RohcBuildingError};
-use rohcstar::profiles::profile1::serialization::serialize_uo0;
+use rohcstar::profiles::profile1::serialization::uo0_packets::serialize_uo0;
 use rohcstar::profiles::profile1::{P1_UO0_SN_LSB_WIDTH_DEFAULT, Uo0Packet};
 use rohcstar::types::ContextId;
 
