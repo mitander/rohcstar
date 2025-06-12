@@ -10,12 +10,15 @@ Production-grade ROHC implementation built on three foundational pillars:
 ## The Three Pillars
 
 ### 1. ROBUSTNESS
+
 Code should be bulletproof like TigerBeetle. Every edge case handled, every invariant enforced.
 
 ### 2. CONSISTENCY
+
 Patterns must be identical across the codebase. No exceptions, no "this time is different."
 
 ### 3. SIMPLICITY
+
 Obvious code wins. No clever tricks. Future maintainers should understand immediately.
 
 ## Core Principles (Non-Negotiable)
@@ -44,16 +47,20 @@ src/
 ```
 
 **Size Limits**
+
 - Modules: <500 lines
 - Functions: <50 lines (exception: state machines)
 - Structs: <10 fields
 
 **Code Proximity Rule**
+
 - Related code lives together (no "utils" modules)
 - Tests next to implementation (in same file for private functions)
 - Constants defined where used, not in separate files
 
 ## Naming Conventions
+
+See [NAMING_CONVENTIONS.md](NAMING_CONVENTIONS.md) for full rules and examples. All code, documentation, and tests must follow these conventions.
 
 ### Functions
 
@@ -273,6 +280,7 @@ fn perf_compress_uo0_under_500ns() {
 ```
 
 ### Coverage Requirements
+
 - Unit tests: 90% line coverage
 - State machines: 100% transition coverage
 - Public API: Every path tested
@@ -309,6 +317,7 @@ fn perf_critical_path() {
 ```
 
 ### Hot Path Rules
+
 1. **No allocations** in packet processing
 2. **Reuse resources** (CRC tables, buffers)
 3. **Profile first** - no guessing
@@ -321,6 +330,7 @@ fn perf_critical_path() {
 ROHC is fault-tolerant by design - packet loss is expected and handled. Focus assertions on **critical invariants** that prevent undefined behavior, not every calculation.
 
 **Assert These (Critical)**:
+
 - Entry point parameter validation
 - Array bounds that could cause crashes
 - State machine invariant violations
@@ -328,6 +338,7 @@ ROHC is fault-tolerant by design - packet loss is expected and handled. Focus as
 - Buffer size guarantees before writes
 
 **Don't Assert These (Acceptable)**:
+
 - Packet loss scenarios (protocol handles these)
 - Temporary calculation steps
 - Performance-critical inner loops
@@ -352,12 +363,14 @@ pub fn compress_uo0(&mut self, ctx: &Context) -> Result<&[u8], RohcError> {
 ```
 
 **Never do this**:
+
 ```rust
 debug_assert!(value > 0);          // ❌ BAD: No message
 debug_assert!(buf.len() >= 10);    // ❌ BAD: No message
 ```
 
 **Always do this**:
+
 ```rust
 debug_assert!(value > 0, "Invalid value: {} must be positive", value);           // ✅ GOOD
 debug_assert!(buf.len() >= 10, "Buffer overflow: {} < 10", buf.len());          // ✅ GOOD
@@ -407,6 +420,7 @@ fn write_header(&mut self, data: &[u8]) -> Result<usize, RohcError> {
 ```
 
 **Message Patterns** (MANDATORY - NO DEVIATIONS):
+
 ```rust
 // Buffer write bounds
 "Buffer overflow: {} + {} > {}"     // For write operations
@@ -440,6 +454,7 @@ Every module MUST have module-level documentation explaining its purpose:
 ```
 
 **Structure**:
+
 - First line: Brief summary ending with period
 - Empty line
 - Detailed explanation (2-4 lines max)
@@ -472,6 +487,7 @@ pub fn compress(&mut self, context: &mut Context, headers: &Headers, out: &mut [
 ```
 
 **Required Sections**:
+
 1. **Summary**: One line describing what the function does
 2. **Details**: 1-3 lines explaining the approach (optional if obvious)
 3. **`# Parameters`**: Every parameter with brief description
@@ -506,45 +522,66 @@ fn can_use_uo0(marker_changed: bool, sn_delta: u16) -> bool {
 
 #### Keep These Comments (Valuable)
 
-Comments that explain **WHY** a value is set or **business logic**:
+Comments that explain **WHY** or **RFC requirements**:
 
 ```rust
-RtpUdpIpv4Headers {
-    ip_total_length: 0,     // Typically set by higher layers or network stack
-    ip_dont_fragment: true, // Common assumption for ROHC Profile 1
-    ip_checksum: 0,         // Recalculated by network stack
-    udp_checksum: 0,        // May be 0 if not used, or recalculated
-    rtp_padding: context.rtp_padding, // Assumed false unless payload indicates otherwise
-    rtp_csrc_count: 0,      // Assumed 0 for Profile 1
-}
-
 // Use full window to handle timestamp wraparound at boundaries
 let ts_window = calculate_lsb_window(ts_bits + 2);
 
 // Profile 1 mandates specific CRC input format per RFC 3095 Section 5.7.7.4
 let crc_input = prepare_generic_uo_crc_input_payload(ssrc, sn, ts, marker);
+
+// RFC 3095 Section 5.3.2.2.3: Decompressor transitions to NC on persistent CRC failures
+if consecutive_failures >= P1_CRC_FAILURE_LIMIT {
+    self.transition_to_nc();
+}
+
+// Complex logic: explain non-obvious algorithm or RFC nuance
+// If TS stride is not yet established, but the observed TS delta matches the candidate stride
+// for enough consecutive packets, promote to established stride mode (RFC 3095, 5.7.7.2)
+if !self.ts_stride_established && ts_delta == self.ts_stride_candidate {
+    self.ts_stride_confidence += 1;
+    // Only establish stride after threshold to avoid false positives on jitter
+    if self.ts_stride_confidence >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD {
+        self.ts_stride_established = true;
+    }
+}
 ```
 
 #### Remove These Comments (Noise)
 
-Comments that restate the code or add no value:
+Comments that restate the code, state obvious facts, or clutter struct initialization:
 
 ```rust
 // BAD - Remove these
 let result = compress_packet();  // Compress the packet
 counter += 1;                    // Increment counter
 return Ok(headers);              // Return success
-
-// BAD - Obvious state updates
 self.state = State::Active;      // Set state to active
+
+// BAD - Noisy struct field comments
+RtpUdpIpv4Headers {
+    ip_total_length: 0,     // Typically set by higher layers or network stack
+    ip_dont_fragment: true, // Common assumption for ROHC Profile 1
+    ip_checksum: 0,         // Recalculated by network stack
+    udp_checksum: 0,        // May be 0 if not used, or recalculated
+    rtp_padding: false,     // Assumed false unless payload indicates otherwise
+    rtp_csrc_count: 0,      // Assumed 0 for Profile 1
+}
+
+// BAD - Obvious variable assignments
+let sn = 100;               // Set sequence number to 100
+let ts = get_timestamp();   // Get the current timestamp
 ```
 
 #### Comment Maintenance Rules
 
-1. **Update comments with code changes** - Stale comments are worse than no comments
-2. **Remove TODO comments** - Fix immediately or create GitHub issue
-3. **No debugging comments** - Remove `println!`, `dbg!`, etc.
-4. **No commented-out code** - Delete it; use git history if needed
+1. **Question every comment** - If it doesn't explain WHY or reference RFC requirements, delete it
+2. **Update comments with code changes** - Stale comments are worse than no comments
+3. **Remove TODO comments** - Fix immediately or create GitHub issue
+4. **No debugging comments** - Remove `println!`, `dbg!`, etc.
+5. **No commented-out code** - Delete it; use git history if needed
+6. **Clean struct initialization** - Default values should be self-explanatory without inline comments
 
 ### Import Organization
 
@@ -644,7 +681,7 @@ Optional longer explanation if needed
 
 - **feat**: New feature or significant enhancement
 - **fix**: Bug fix or correction
-- **refactor**: Code restructuring without behavior change  
+- **refactor**: Code restructuring without behavior change
 - **style**: Formatting, naming, organization (no logic change)
 - **docs**: Documentation additions or improvements
 - **test**: Adding or improving tests
@@ -663,12 +700,12 @@ Optional longer explanation if needed
 ```bash
 # Good commits
 feat(profile1): add UO-1-RTP packet support with TS_SCALED encoding
-fix(buffer-safety): add bounds checking to IR deserialization  
+fix(buffer-safety): add bounds checking to IR deserialization
 refactor(profile1): break down packet_processor into focused modules
 style(defensive): standardize debug_assert! patterns across codebase
 docs(profile1): add complete Parameter/Returns sections to UO-1 functions
 
-# Bad commits  
+# Bad commits
 Update stuff           # No type or scope
 Fix bug in thing       # Too vague
 Added new feature      # Wrong tense, no scope
@@ -686,6 +723,7 @@ Added new feature      # Wrong tense, no scope
 ### Pre-commit Requirements
 
 Every commit MUST pass:
+
 - `cargo fmt --check` - Code formatting
 - `cargo clippy -- -D warnings` - Linting
 - `cargo test` - All tests pass
@@ -700,6 +738,7 @@ Every commit MUST pass:
 ## Summary
 
 This style guide optimizes for:
+
 - **Correctness**: Through types, tests, and assertions
 - **Performance**: Through measurement and static allocation
 - **Maintainability**: Through consistency and simplicity

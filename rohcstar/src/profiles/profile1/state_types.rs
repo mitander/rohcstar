@@ -1,4 +1,9 @@
 //! State machine types for Profile 1 decompressor.
+//!
+//! This module defines the data structures used to track decompressor state machine
+//! information, including success/failure counters, mode transitions, and operational
+//! statistics. These types support the robust state management required by RFC 3095
+//! for reliable decompression in lossy network environments.
 
 use super::constants::*;
 

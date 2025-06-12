@@ -1,4 +1,9 @@
 //! State transition logic for Profile 1 decompressor.
+//!
+//! This module implements the decompressor state transition functions that determine
+//! when to move between different operational modes (NoContext, StaticContext, FullContext, SecondOrder)
+//! based on packet reception success/failure patterns. These transitions follow RFC 3095
+//! requirements for robust decompression in unreliable network conditions.
 
 use super::constants::*;
 use super::context::Profile1DecompressorMode;

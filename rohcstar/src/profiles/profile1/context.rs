@@ -502,8 +502,6 @@ pub struct Profile1DecompressorContext {
     pub counters: StateCounters,
     /// Timestamp of the last successful access (e.g., decompression operation).
     pub last_accessed: Instant,
-
-    // --- TS Stride specific fields ---
     /// Timestamp stride established from an IR-DYN packet or inferred; `None` if not active.
     pub ts_stride: Option<u32>,
     /// Base timestamp (`TS_Offset`) for reconstructing TS from TS_SCALED. Set by IR-DYN or inference.

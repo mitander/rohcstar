@@ -27,8 +27,16 @@ use super::serialization::uo1_packets::{
     prepare_uo1_id_specific_crc_input_into_buf, prepare_uo1_id_specific_crc_input_payload,
 };
 
-/// Decompresses IR packet and reconstructs headers.
-/// static chain information (IP addresses, ports, SSRC) and dynamic chain elements
+/// LSB constraint for sequence number recovery validation.
+#[derive(Debug, Clone, Copy)]
+struct LsbConstraint {
+    /// The expected LSB value
+    value: u8,
+    /// Number of LSB bits to validate
+    bits: u8,
+}
+
+/// Decompresses IR packet and reconstructs headers from static chain information (IP addresses, ports, SSRC) and dynamic chain elements
 /// (SN, TS, Marker, optional TS_STRIDE). It initializes the decompressor context
 /// based on the received IR packet and validates the profile ID.
 ///
@@ -69,6 +77,8 @@ pub(super) fn decompress_as_ir(
 }
 
 /// Decompresses a UO (Unidirectional Optimistic) packet by auto-dispatching to the appropriate variant.
+///
+/// Decompresses UO packets and reconstructs headers.
 ///
 /// This function provides a unified entry point for decompressing any UO packet type.
 /// It automatically determines the packet type from the first byte and dispatches to the
@@ -313,7 +323,10 @@ fn decompress_as_uo1_sn(
             Crc8Uo1Sn,
             32,
             8,
-            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
+            Some(LsbConstraint {
+                value: parsed_uo1.sn_lsb as u8,
+                bits: parsed_uo1.num_sn_lsb_bits,
+            }),
             |input| crc_calculators.crc8(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -363,7 +376,10 @@ fn decompress_as_uo1_sn(
             Crc8Uo1Sn,
             32,
             8,
-            Some((parsed_uo1.sn_lsb as u8, parsed_uo1.num_sn_lsb_bits)),
+            Some(LsbConstraint {
+                value: parsed_uo1.sn_lsb as u8,
+                bits: parsed_uo1.num_sn_lsb_bits,
+            }),
             |input| crc_calculators.crc8(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -677,7 +693,7 @@ fn decompress_as_uo1_rtp(
 /// # Parameters
 /// - `forward_window`: Maximum packets to search forward from current SN
 /// - `backward_window`: Maximum packets to search backward from current SN
-/// - `lsb_constraint`: Optional (lsb_value, num_bits) for LSB validation
+/// - `lsb_constraint`: Optional LSB constraint for sequence number validation
 /// - `crc_calculator`: Closure for CRC calculation
 /// - `crc_input_generator`: Closure to generate CRC input
 #[allow(clippy::too_many_arguments)]
@@ -687,7 +703,7 @@ fn try_sn_recovery<F, G>(
     crc_type: CrcType,
     forward_window: u16,
     backward_window: u16,
-    lsb_constraint: Option<(u8, u8)>,
+    lsb_constraint: Option<LsbConstraint>,
     crc_calculator: F,
     crc_input_generator: G,
 ) -> Result<SequenceNumber, RohcError>
@@ -698,9 +714,9 @@ where
     let expected_next_sn = context.last_reconstructed_rtp_sn_full.wrapping_add(1);
 
     // Pre-compute LSB mask if needed
-    let lsb_mask_and_value = lsb_constraint.map(|(lsb_value, num_bits)| {
-        let mask = (1u16 << num_bits) - 1;
-        (mask, lsb_value)
+    let lsb_mask_and_value = lsb_constraint.map(|constraint| {
+        let mask = (1u16 << constraint.bits) - 1;
+        (mask, constraint.value)
     });
 
     // Stack buffer for CRC input - largest is 12 bytes for UO-1-ID

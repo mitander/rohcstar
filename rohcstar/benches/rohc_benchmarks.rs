@@ -2,12 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
+use rohcstar::profiles::profile1::serialization::headers::deserialize_rtp_udp_ipv4_headers;
 use rohcstar::{
     crc::CrcCalculators,
     encodings::{decode_lsb, encode_lsb},
     engine::RohcEngine,
     packet_defs::{GenericUncompressedHeaders, RohcProfile},
-    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers, deserialize_rtp_udp_ipv4_headers},
+    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers},
     time::SystemClock,
     types::{IpId, SequenceNumber, Timestamp},
 };

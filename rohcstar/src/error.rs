@@ -412,18 +412,22 @@ pub enum RohcError {
     Engine(#[from] EngineError),
 
     /// Legacy support for existing code (temporary).
+    // TODO: Refactor callsites to use EngineError::ContextNotFound and remove this variant.
     #[error("Context not found for CID: {0}")]
     ContextNotFound(u16),
 
     /// Legacy support for existing code (temporary).
+    // TODO: Refactor callsites to use EngineError::ProfileHandlerNotRegistered and remove this variant.
     #[error("Unsupported ROHC profile: 0x{0:02X}")]
     UnsupportedProfile(u8),
 
     /// Legacy support for existing code (temporary).
+    // TODO: Refactor callsites to use structured errors and remove this variant.
     #[error("Invalid state for operation: {0}")]
     InvalidState(String),
 
     /// Legacy support for existing code (temporary).
+    // TODO: Refactor callsites to use structured errors and remove this variant.
     #[error("Internal logic error: {0}")]
     Internal(String),
 }

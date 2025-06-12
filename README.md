@@ -16,6 +16,7 @@
 *   **Performance & Efficiency:** Target high compression/decompression throughput and low CPU overhead, making it suitable for embedded systems and high-volume data flows.
 *   **Modularity & Testability:** Employ a clean, modular architecture for easy maintenance, extension with new ROHC profiles (e.g., ROHCv2, ROHC-TCP), and comprehensive validation.
 *   **Fuzz-Driven Development:** Utilize Drifter extensively from day one to continuously test for correctness, security vulnerabilities, and protocol conformance.
+*   **Simplicity**: Clean, testable architecture. No clever abstractions - obvious code wins.
 
 ## Current Status
 
@@ -76,63 +77,45 @@ cd rohcstar && cargo bench --bench rohc_benchmarks
 
 See [BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance analysis, optimization guidance, benchmark descriptions, and CI/CD integration.
 
-## Basic Usage
+## Usage
 
 ```rust
 use rohcstar::packet_defs::GenericUncompressedHeaders;
 use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::SystemClock;
-use rohcstar::{EngineError, RohcEngine, RohcProfile};
+use rohcstar::{RohcEngine, RohcProfile};
 use std::sync::Arc;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a ROHC engine
     let mut engine = RohcEngine::new(
-        20,                       // IR refresh interval
-        Duration::from_secs(300), // Context timeout
-        Arc::new(SystemClock),    // Clock implementation
+        20,
+        Duration::from_secs(300),
+        Arc::new(SystemClock),
     );
-
-    // Register Profile 1 handler for RTP/UDP/IP compression
     engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
 
-    // Create headers to compress
     let headers = RtpUdpIpv4Headers {
-        ip_src: "192.168.1.10".parse().unwrap(),
-        ip_dst: "192.168.1.20".parse().unwrap(),
-        udp_src_port: 10010,
-        udp_dst_port: 20020,
+        ip_src: "192.168.1.10".parse()?,
+        ip_dst: "192.168.1.20".parse()?,
+        udp_src_port: 5004,
+        udp_dst_port: 5006,
         rtp_ssrc: 0x12345678.into(),
         rtp_sequence_number: 100.into(),
-        rtp_timestamp: 1000.into(),
+        rtp_timestamp: 8000.into(),
         ..Default::default()
     };
-    let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(headers);
 
-    // Compress packet
-    let mut compressed_buf = [0u8; 128];
-    let compressed_len = engine.compress(
-        0.into(),                    // Context ID
-        Some(RohcProfile::RtpUdpIp), // Profile hint
-        &generic_headers,
-        &mut compressed_buf,
+    let mut buf = [0u8; 128];
+    let len = engine.compress(
+        0.into(),
+        Some(RohcProfile::RtpUdpIp),
+        &GenericUncompressedHeaders::RtpUdpIpv4(headers),
+        &mut buf,
     )?;
-    let compressed_packet = &compressed_buf[..compressed_len];
-    println!("Compressed packet: {} bytes", compressed_len);
 
-    // Decompress packet - graceful packet loss handling
-    match engine.decompress(compressed_packet) {
-        Ok(decompressed_headers) => {
-            println!("Decompressed headers: {:#?}", decompressed_headers);
-        }
-        Err(rohcstar::RohcError::Engine(EngineError::PacketLoss { .. })) => {
-            todo!("handle packet loss")
-        }
-        Err(e) => {
-            panic!("failed to decompress: {e} ");
-        }
-    }
+    let decompressed = engine.decompress(&buf[..len])?;
+    println!("Roundtrip successful: {} -> {} bytes", 28, len);
 
     Ok(())
 }
@@ -152,6 +135,7 @@ The co-development of Rohcstar with its fuzzing counterpart, [Drifter](https://g
 *   **[Design Document](docs/DESIGN_DOCUMENT.md)** - Detailed architecture, components, and roadmap
 *   **[The ROHC Bible](docs/THE_ROHC_BIBLE.md)** - Comprehensive ROHC protocol reference and implementation guide
 *   **[Style Guide](docs/STYLE.md)** - Code conventions and development standards
+*   **[Naming Conventions](docs/NAMING_CONVENTIONS.md)** - Consistent naming patterns
 *   **[Benchmarks](docs/BENCHMARKS.md)** - Performance analysis and optimization guidance
 
 ## License

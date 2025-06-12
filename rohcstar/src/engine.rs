@@ -136,17 +136,17 @@ impl RohcEngine {
         out: &mut [u8],
     ) -> Result<usize, RohcError> {
         match self.context_manager.get_compressor_context_mut(cid) {
-            Ok(context_box) => {
-                let profile_id = context_box.profile_id();
+            Ok(context_dyn) => {
+                let profile_id = context_dyn.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or({
                     RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
                         profile: profile_id,
                     })
                 })?;
-                let result = handler.compress(context_box.as_mut(), headers, out);
+                let result = handler.compress(context_dyn.as_mut(), headers, out);
 
                 if result.is_ok() {
-                    context_box.update_access_time(self.clock.now());
+                    context_dyn.update_access_time(self.clock.now());
                 }
                 result
             }
@@ -217,17 +217,17 @@ impl RohcEngine {
         }
 
         let result = match self.context_manager.get_decompressor_context_mut(cid) {
-            Ok(context_box) => {
-                let profile_id = context_box.profile_id();
+            Ok(context_dyn) => {
+                let profile_id = context_dyn.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or({
                     RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
                         profile: profile_id,
                     })
                 })?;
 
-                match handler.decompress(context_box.as_mut(), core_packet_slice) {
+                match handler.decompress(context_dyn.as_mut(), core_packet_slice) {
                     Ok(headers) => {
-                        context_box.update_access_time(self.clock.now());
+                        context_dyn.update_access_time(self.clock.now());
                         Ok(headers)
                     }
                     Err(e) => Err(e),
@@ -310,17 +310,17 @@ impl RohcEngine {
         }
 
         match self.context_manager.get_decompressor_context_mut(cid) {
-            Ok(context_box) => {
-                let profile_id = context_box.profile_id();
+            Ok(context_dyn) => {
+                let profile_id = context_dyn.profile_id();
                 let handler = self.profile_handlers.get(&profile_id).ok_or({
                     RohcError::Engine(EngineError::ProfileHandlerNotRegistered {
                         profile: profile_id,
                     })
                 })?;
 
-                match handler.decompress(context_box.as_mut(), core_packet_slice) {
+                match handler.decompress(context_dyn.as_mut(), core_packet_slice) {
                     Ok(headers) => {
-                        context_box.update_access_time(self.clock.now());
+                        context_dyn.update_access_time(self.clock.now());
                         Ok(headers)
                     }
                     Err(e) => Err(e),
@@ -435,8 +435,8 @@ impl RohcEngine {
         let stale_compressor_cids: Vec<ContextId> = self
             .context_manager
             .compressor_contexts_iter()
-            .filter_map(|(cid, context_box)| {
-                if now.duration_since(context_box.last_accessed()) > timeout_duration {
+            .filter_map(|(cid, context_dyn)| {
+                if now.duration_since(context_dyn.last_accessed()) > timeout_duration {
                     Some(*cid)
                 } else {
                     None
@@ -451,8 +451,8 @@ impl RohcEngine {
         let stale_decompressor_cids: Vec<ContextId> = self
             .context_manager
             .decompressor_contexts_iter()
-            .filter_map(|(cid, context_box)| {
-                if now.duration_since(context_box.last_accessed()) > timeout_duration {
+            .filter_map(|(cid, context_dyn)| {
+                if now.duration_since(context_dyn.last_accessed()) > timeout_duration {
                     Some(*cid)
                 } else {
                     None
