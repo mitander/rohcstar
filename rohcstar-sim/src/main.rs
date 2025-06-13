@@ -149,9 +149,19 @@ fn generate_fuzz_config(
         } else {
             rng.random_range(0.0..=max_channel_loss.clamp(0.0, 1.0))
         },
-        // Ensure phases are not trivially small, especially for larger packet counts
-        stable_phase_count: rng.random_range(1..=(10.max(num_packets_per_run / 20))),
-        uo0_phase_count: rng.random_range(1..=(10.max(num_packets_per_run / 20))),
+        // Ensure phases fit within total packet count and are not trivially small
+        stable_phase_count: {
+            let max_stable = (num_packets_per_run / 2)
+                .max(1)
+                .min(10.max(num_packets_per_run / 20));
+            rng.random_range(1..=max_stable)
+        },
+        uo0_phase_count: {
+            let max_uo0 = (num_packets_per_run / 2)
+                .max(1)
+                .min(10.max(num_packets_per_run / 20));
+            rng.random_range(1..=max_uo0)
+        },
     }
 }
 

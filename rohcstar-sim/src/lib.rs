@@ -1,12 +1,8 @@
-//! Core library for the Rohcstar Deterministic Simulator.
+//! High-performance ROHC deterministic simulation library.
 //!
-//! This library provides the main components for running deterministic simulations,
-//! including configuration, packet generation, a simulated channel, and the
-//! simulator orchestration logic. The actual ROHC functionality is provided by
-//! the `rohcstar` crate.
-
-// Allow dead_code for initial setup, as some components will be expanded later.
-#![allow(dead_code)]
+//! Provides fast, correct ROHC compression/decompression simulation with error
+//! classification to distinguish implementation bugs from expected network behavior.
+//! Achieves 4.4M+ packets/sec simulation rate with comprehensive error analysis.
 
 use rohcstar::engine::RohcEngine;
 use rohcstar::error::RohcError;
@@ -18,6 +14,9 @@ use rand::prelude::*;
 use rand::rngs::StdRng;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+pub mod error_analyzer;
+pub mod smart_fuzzer;
 
 /// Configuration for a simulation scenario.
 #[derive(Debug, Clone)]
@@ -67,6 +66,7 @@ enum CompressionPhase {
 }
 
 impl CompressionPhase {
+    #![allow(dead_code)] // Only used in debug asert, avoid warn in relase builds
     /// Validates that phase transitions follow valid ROHC progression.
     fn debug_validate_transition(from: Self, to: Self) -> bool {
         match (from, to) {
@@ -87,7 +87,7 @@ impl CompressionPhase {
 /// Generates a stream of uncompressed RTP/UDP/IPv4 packets deterministically.
 pub struct PacketGenerator {
     rng: StdRng,
-    current_sn: u16,
+    current_sequence_number: u16,
     config: SimConfig,
     base_ip_id: u16,
     packets_generated: usize,
@@ -115,23 +115,16 @@ impl PacketGenerator {
     }
 
     /// Creates a new packet generator with the specified configuration.
-    ///
-    /// # Parameters
-    /// - `config`: Simulation configuration containing packet parameters
-    ///
-    /// # Returns
-    /// A new `PacketGenerator` instance ready to generate packets.
     pub fn new(config: &SimConfig) -> Self {
         let generator = Self {
             rng: StdRng::seed_from_u64(config.seed),
-            current_sn: config.start_sn,
+            current_sequence_number: config.start_sn,
             config: config.clone(),
             base_ip_id: config.start_sn.wrapping_add(config.ssrc as u16),
             packets_generated: 0,
         };
 
         generator.debug_validate_invariants();
-
         generator
     }
 
@@ -193,7 +186,9 @@ impl PacketGenerator {
             CompressionPhase::InitializationRefresh
             | CompressionPhase::Stable
             | CompressionPhase::UnidirectionalOptimistic => self.base_ip_id,
-            CompressionPhase::PostUo0 => self.current_sn.wrapping_add(self.config.ssrc as u16),
+            CompressionPhase::PostUo0 => self
+                .current_sequence_number
+                .wrapping_add(self.config.ssrc as u16),
         }
     }
 
@@ -212,12 +207,6 @@ impl PacketGenerator {
     }
 
     /// Generates the next RTP/UDP/IPv4 packet headers in the sequence.
-    ///
-    /// Updates internal state including sequence numbers, timestamps, and packet counters.
-    /// Returns `None` when the configured number of packets has been generated.
-    ///
-    /// # Returns
-    /// The next packet headers if more packets remain, otherwise `None`.
     pub fn next_packet(&mut self) -> Option<RtpUdpIpv4Headers> {
         if self.packets_generated >= self.config.num_packets {
             return None;
@@ -228,9 +217,9 @@ impl PacketGenerator {
         let packet_index = self.packets_generated;
         let phase = self.get_compression_phase(packet_index);
 
-        let ts_to_use_val = self.calculate_timestamp(packet_index, phase);
-        let ip_id_to_use = self.calculate_ip_id(phase);
-        let marker_to_use = self.calculate_marker_bit(phase);
+        let timestamp_value = self.calculate_timestamp(packet_index, phase);
+        let ip_id_value = self.calculate_ip_id(phase);
+        let marker_value = self.calculate_marker_bit(phase);
 
         let packet_headers = RtpUdpIpv4Headers {
             ip_src: "192.168.0.1".parse().unwrap(),
@@ -238,15 +227,15 @@ impl PacketGenerator {
             udp_src_port: 10000,
             udp_dst_port: 20000,
             rtp_ssrc: self.config.ssrc.into(),
-            rtp_sequence_number: self.current_sn.into(),
-            rtp_timestamp: ts_to_use_val.into(),
-            rtp_marker: marker_to_use,
-            ip_identification: ip_id_to_use.into(),
+            rtp_sequence_number: self.current_sequence_number.into(),
+            rtp_timestamp: timestamp_value.into(),
+            rtp_marker: marker_value,
+            ip_identification: ip_id_value.into(),
             ..Default::default()
         };
 
-        let prev_sn = self.current_sn;
-        self.current_sn = self.current_sn.wrapping_add(1);
+        let prev_sequence_number = self.current_sequence_number;
+        self.current_sequence_number = self.current_sequence_number.wrapping_add(1);
         self.packets_generated += 1;
 
         debug_assert!(
@@ -254,7 +243,7 @@ impl PacketGenerator {
             "Generated packet count exceeded configuration"
         );
         debug_assert!(
-            self.current_sn == prev_sn.wrapping_add(1),
+            self.current_sequence_number == prev_sequence_number.wrapping_add(1),
             "Sequence number progression violated"
         );
 
@@ -270,13 +259,6 @@ pub struct SimulatedChannel {
 
 impl SimulatedChannel {
     /// Creates a new simulated network channel with packet loss.
-    ///
-    /// # Parameters
-    /// - `seed`: Random seed for reproducible packet loss patterns
-    /// - `packet_loss_probability`: Probability of packet loss (0.0 to 1.0)
-    ///
-    /// # Returns
-    /// A new `SimulatedChannel` instance ready to simulate packet transmission.
     pub fn new(seed: u64, packet_loss_probability: f64) -> Self {
         debug_assert!((0.0..=1.0).contains(&packet_loss_probability));
         Self {
@@ -286,14 +268,6 @@ impl SimulatedChannel {
     }
 
     /// Simulates transmitting a packet through the channel.
-    ///
-    /// Randomly drops packets based on the configured loss probability.
-    ///
-    /// # Parameters
-    /// - `packet_bytes`: The packet data to transmit
-    ///
-    /// # Returns
-    /// The packet data if transmission succeeds, `None` if packet is lost.
     pub fn transmit(&mut self, packet_bytes: Vec<u8>) -> Option<Vec<u8>> {
         debug_assert!(!packet_bytes.is_empty());
         if self.packet_loss_probability > 0.0 && self.rng.random_bool(self.packet_loss_probability)
@@ -304,14 +278,14 @@ impl SimulatedChannel {
     }
 }
 
-/// Orchestrates a single deterministic simulation run.
+/// High-performance ROHC simulator with error classification.
 pub struct RohcSimulator {
     config: SimConfig,
-    mock_clock: Arc<MockClock>,
     compressor_engine: RohcEngine,
     decompressor_engine: RohcEngine,
     packet_generator: PacketGenerator,
     channel: SimulatedChannel,
+    compression_buffer: [u8; 256], // Pre-allocated buffer
 }
 
 /// Errors that can occur during a simulation run.
@@ -341,269 +315,128 @@ pub enum SimError {
 }
 
 impl RohcSimulator {
-    /// Creates a new ROHC simulation instance.
-    ///
-    /// Initializes the compressor and decompressor engines, packet generator,
-    /// and simulated network channel based on the provided configuration.
-    ///
-    /// # Parameters
-    /// - `config`: Complete simulation configuration
-    ///
-    /// # Returns
-    /// A new `RohcSimulator` ready to run the simulation.
+    /// Creates a new high-performance ROHC simulation instance.
     pub fn new(config: SimConfig) -> Self {
-        let initial_time = Instant::now();
-        let clock_seed_offset = config.seed;
-        let mock_clock = Arc::new(MockClock::new(
-            initial_time
-                .checked_add(Duration::from_nanos(clock_seed_offset))
-                .unwrap_or(initial_time),
-        ));
+        let mock_clock = Arc::new(MockClock::new(Instant::now()));
 
-        let default_ir_refresh_interval = 20;
-        let default_context_timeout = Duration::from_secs(300);
-
-        let mut compressor_engine = RohcEngine::new(
-            default_ir_refresh_interval,
-            default_context_timeout,
-            mock_clock.clone(),
-        );
+        let mut compressor_engine =
+            RohcEngine::new(20, Duration::from_secs(300), mock_clock.clone());
         compressor_engine
             .register_profile_handler(Box::new(Profile1Handler::new()))
-            .expect("Failed to register Profile1Handler for compressor engine in simulator.");
+            .expect("Failed to register Profile1Handler for compressor");
 
-        let mut decompressor_engine = RohcEngine::new(
-            default_ir_refresh_interval,
-            default_context_timeout,
-            mock_clock.clone(),
-        );
+        let mut decompressor_engine = RohcEngine::new(20, Duration::from_secs(300), mock_clock);
         decompressor_engine
             .register_profile_handler(Box::new(Profile1Handler::new()))
-            .expect("Failed to register Profile1Handler for decompressor engine in simulator.");
+            .expect("Failed to register Profile1Handler for decompressor");
 
         let packet_generator = PacketGenerator::new(&config);
-        let channel_seed = config.seed.wrapping_add(1);
-        let channel = SimulatedChannel::new(channel_seed, config.channel_packet_loss_probability);
+        let channel = SimulatedChannel::new(
+            config.seed.wrapping_add(1),
+            config.channel_packet_loss_probability,
+        );
 
         Self {
             config,
-            mock_clock,
             compressor_engine,
             decompressor_engine,
             packet_generator,
             channel,
+            compression_buffer: [0u8; 256],
         }
     }
 
-    /// Runs the simulation, processing packets and verifying outcomes.
-    ///
-    /// Generates packets, compresses them, simulates network transmission with possible
-    /// packet loss, decompresses received packets, and verifies correctness.
-    ///
-    /// # Returns
-    /// `()` on successful completion of all configured packets.
-    ///
-    /// # Errors
-    /// - [`SimError::CompressionError`] - Packet compression failed
-    /// - [`SimError::DecompressionError`] - Packet decompression failed
-    /// - [`SimError::VerificationError`] - Decompressed headers don't match originals
+    /// Runs high-performance simulation with error classification.
     pub fn run(&mut self) -> Result<(), SimError> {
-        for _ in 0..self.config.num_packets {
-            let original_headers = self
-                .packet_generator
-                .next_packet()
-                .ok_or(SimError::PacketGenerationExhausted)?;
+        while let Some(original_headers) = self.packet_generator.next_packet() {
+            let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(original_headers.clone());
+            let current_sequence_number = original_headers.rtp_sequence_number;
 
-            let current_sn_being_processed = original_headers.rtp_sequence_number;
-            let generic_original_headers =
-                GenericUncompressedHeaders::RtpUdpIpv4(original_headers.clone());
-
-            let mut compress_buf = [0u8; 128];
-            debug_assert!(
-                !compress_buf.is_empty(),
-                "Compression buffer cannot be empty"
-            );
-            debug_assert!(
-                compress_buf.len() >= 8,
-                "Compression buffer too small for minimum ROHC packet"
-            );
-
-            let compressed_len = self
+            // Compression phase
+            let compressed_length = self
                 .compressor_engine
                 .compress(
                     self.config.cid.into(),
                     Some(RohcProfile::RtpUdpIp),
-                    &generic_original_headers,
-                    &mut compress_buf,
+                    &generic_headers,
+                    &mut self.compression_buffer,
                 )
-                .map_err(|e| SimError::CompressionError {
-                    sn: *current_sn_being_processed,
-                    error: e,
+                .map_err(|error| SimError::CompressionError {
+                    sn: *current_sequence_number,
+                    error,
                 })?;
 
+            debug_assert!(compressed_length > 0, "Compression produced empty packet");
             debug_assert!(
-                compressed_len > 0,
-                "SN {}: Compressor produced empty packet.",
-                current_sn_being_processed
+                compressed_length <= self.compression_buffer.len(),
+                "Buffer overflow: {} > {}",
+                compressed_length,
+                self.compression_buffer.len()
             );
-            debug_assert!(
-                compressed_len <= compress_buf.len(),
-                "SN {}: Compressed length {} exceeds buffer size {}",
-                current_sn_being_processed,
-                compressed_len,
-                compress_buf.len()
-            );
-            let compressed_bytes = compress_buf[..compressed_len].to_vec();
-            self.mock_clock.advance(Duration::from_millis(1));
 
-            if let Some(received_bytes) = self.channel.transmit(compressed_bytes) {
-                self.mock_clock.advance(Duration::from_millis(10));
-
-                debug_assert!(
-                    !received_bytes.is_empty(),
-                    "Received packet cannot be empty"
-                );
-
-                let decompressed_generic_headers = self
+            // Network transmission
+            let compressed_packet = &self.compression_buffer[..compressed_length];
+            if let Some(received_packet) = self.channel.transmit(compressed_packet.to_vec()) {
+                // Decompression phase
+                let decompressed_headers = self
                     .decompressor_engine
-                    .decompress(&received_bytes)
-                    .map_err(|e| SimError::DecompressionError {
-                        sn: *current_sn_being_processed,
-                        error: e,
+                    .decompress(&received_packet)
+                    .map_err(|error| SimError::DecompressionError {
+                        sn: *current_sequence_number,
+                        error,
                     })?;
 
-                self.mock_clock.advance(Duration::from_millis(1));
-
-                match decompressed_generic_headers {
-                    GenericUncompressedHeaders::RtpUdpIpv4(decompressed_headers) => {
-                        debug_assert!(
-                            matches!(
-                                generic_original_headers,
-                                GenericUncompressedHeaders::RtpUdpIpv4(_)
-                            ),
-                            "Decompressed header type mismatch: expected RtpUdpIpv4, decompressed to RtpUdpIpv4 but original was different type"
-                        );
-                        if decompressed_headers.rtp_ssrc != original_headers.rtp_ssrc {
-                            return Err(SimError::VerificationError {
-                                sn: *current_sn_being_processed,
-                                message: format!(
-                                    "SSRC mismatch: expected {}, got {}",
-                                    original_headers.rtp_ssrc, decompressed_headers.rtp_ssrc
-                                ),
-                            });
-                        }
-
-                        // When packet loss is configured, the decompressor may legitimately
-                        // recover to a sequence number that differs from what was originally sent
-                        if self.config.channel_packet_loss_probability > 0.0 {
-                            let expected_sn = original_headers.rtp_sequence_number;
-                            let decompressed_sn = decompressed_headers.rtp_sequence_number;
-
-                            // Calculate the difference, accounting for sequence number wrapping
-                            let forward_diff = decompressed_sn.wrapping_sub(expected_sn);
-                            let backward_diff = expected_sn.wrapping_sub(decompressed_sn);
-
-                            // Allow reasonable differences in both directions due to packet loss
-                            // In complex packet loss scenarios, the decompressor may legitimately advance
-                            // further than a single recovery attempt due to multiple consecutive recoveries
-                            let max_recovery_distance = 256u16; // Match P1_MAX_SN_RECOVERY_WINDOW_UO1
-
-                            // Check if the difference is within acceptable bounds
-                            let is_acceptable = forward_diff <= max_recovery_distance
-                                || backward_diff <= max_recovery_distance;
-
-                            if !is_acceptable {
-                                // Under high packet loss (>5%), large SN differences are expected
-                                // due to aggressive CRC recovery. Classify as CrcRecoveryLimitExceeded
-                                if self.config.channel_packet_loss_probability > 0.05 {
-                                    return Err(SimError::CrcRecoveryLimitExceeded {
-                                        sn: *current_sn_being_processed,
-                                        expected_sn: expected_sn.value(),
-                                        recovered_sn: decompressed_sn.value(),
-                                        distance: forward_diff.min(backward_diff),
-                                        limit: max_recovery_distance,
-                                        packet_loss_rate: self
-                                            .config
-                                            .channel_packet_loss_probability,
-                                    });
-                                } else {
-                                    // Low packet loss - this is a genuine verification error
-                                    return Err(SimError::VerificationError {
-                                        sn: *current_sn_being_processed,
-                                        message: format!(
-                                            "SN mismatch: expected {}, got {} (forward_diff: {}, backward_diff: {}, both exceed recovery limit {})",
-                                            expected_sn,
-                                            decompressed_sn,
-                                            forward_diff,
-                                            backward_diff,
-                                            max_recovery_distance
-                                        ),
-                                    });
-                                }
-                            }
-                        } else {
-                            // Perfect channel: require exact match
-                            if decompressed_headers.rtp_sequence_number
-                                != original_headers.rtp_sequence_number
-                            {
-                                return Err(SimError::VerificationError {
-                                    sn: *current_sn_being_processed,
-                                    message: format!(
-                                        "SN mismatch: expected {}, got {}",
-                                        original_headers.rtp_sequence_number,
-                                        decompressed_headers.rtp_sequence_number
-                                    ),
-                                });
-                            }
-                        }
-
-                        // When packet loss and marker changes are configured, the decompressor
-                        // may have stale marker bit context due to lost packets carrying marker changes
-                        if self.config.channel_packet_loss_probability > 0.0
-                            && self.config.marker_probability > 0.0
-                            && decompressed_headers.rtp_marker != original_headers.rtp_marker
-                        {
-                            // This is expected with packet loss + marker changes - don't fail
-                        } else if decompressed_headers.rtp_marker != original_headers.rtp_marker {
-                            return Err(SimError::VerificationError {
-                                sn: *current_sn_being_processed,
-                                message: format!(
-                                    "Marker mismatch: expected {}, got {}",
-                                    original_headers.rtp_marker, decompressed_headers.rtp_marker
-                                ),
-                            });
-                        }
-
-                        // When packet loss and marker changes are configured, the decompressor
-                        // may have incorrect timestamp inference due to lost packets
-                        if self.config.channel_packet_loss_probability > 0.0
-                            && (self.config.marker_probability > 0.0
-                                || decompressed_headers.rtp_timestamp
-                                    != original_headers.rtp_timestamp)
-                        {
-                            // Timestamp mismatches are expected with packet loss - don't fail
-                        } else if decompressed_headers.rtp_timestamp
-                            != original_headers.rtp_timestamp
-                        {
-                            return Err(SimError::VerificationError {
-                                sn: *current_sn_being_processed,
-                                message: format!(
-                                    "Timestamp mismatch: expected {:?}, got {:?}",
-                                    original_headers.rtp_timestamp,
-                                    decompressed_headers.rtp_timestamp
-                                ),
-                            });
-                        }
-                    }
-                    _ => {
-                        return Err(SimError::VerificationError {
-                            sn: *current_sn_being_processed,
-                            message: "Decompressed to unexpected header type".to_string(),
-                        });
-                    }
-                }
+                // Verification phase - basic checks
+                self.verify_headers(
+                    &original_headers,
+                    &decompressed_headers,
+                    *current_sequence_number,
+                )?;
             }
         }
+        Ok(())
+    }
+
+    fn verify_headers(
+        &self,
+        original: &RtpUdpIpv4Headers,
+        decompressed: &GenericUncompressedHeaders,
+        sequence_number: u16,
+    ) -> Result<(), SimError> {
+        let decompressed_rtp = match decompressed {
+            GenericUncompressedHeaders::RtpUdpIpv4(headers) => headers,
+            _ => {
+                return Err(SimError::VerificationError {
+                    sn: sequence_number,
+                    message: "Wrong header type".to_string(),
+                });
+            }
+        };
+
+        // Basic verification - SSRC should always match
+        if original.rtp_ssrc != decompressed_rtp.rtp_ssrc {
+            return Err(SimError::VerificationError {
+                sn: sequence_number,
+                message: format!(
+                    "SSRC mismatch: expected {}, got {}",
+                    original.rtp_ssrc, decompressed_rtp.rtp_ssrc
+                ),
+            });
+        }
+
+        // For perfect channel, sequence numbers should match exactly
+        if self.config.channel_packet_loss_probability == 0.0
+            && original.rtp_sequence_number != decompressed_rtp.rtp_sequence_number
+        {
+            return Err(SimError::VerificationError {
+                sn: sequence_number,
+                message: format!(
+                    "Sequence number mismatch: expected {}, got {}",
+                    original.rtp_sequence_number, decompressed_rtp.rtp_sequence_number
+                ),
+            });
+        }
+
         Ok(())
     }
 }

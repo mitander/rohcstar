@@ -12,6 +12,21 @@ ctrlc = { version = "3.4", features = ["termination"] }
 num_cpus = "1.17.0"
 chrono = "0.4.41"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [[bin]]
 name = "rohcstar-sim"
 path = "src/main.rs"
+
+[[bench]]
+name = "simulator_bench"
+harness = false
+
+[[example]]
+name = "error_analysis_demo"
+path = "examples/error_analysis_demo.rs"
+
+[[example]]
+name = "smart_fuzzer_demo"
+path = "examples/smart_fuzzer_demo.rs"
