@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-use super::compressor;
+use super::compression::{compress_as_ir, compress_as_uo, should_force_ir};
 use super::context::{
     Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
 };
@@ -157,27 +157,17 @@ impl ProfileHandler for Profile1Handler {
             "Context SSRC should be initialized at this point."
         );
 
-        let len = if compressor::should_force_ir(context, uncompressed_headers) {
-            compressor::compress_as_ir(context, uncompressed_headers, &self.crc_calculators, out)?
+        let len = if should_force_ir(context, uncompressed_headers) {
+            compress_as_ir(context, uncompressed_headers, &self.crc_calculators, out)?
         } else {
-            match compressor::compress_as_uo(
-                context,
-                uncompressed_headers,
-                &self.crc_calculators,
-                out,
-            ) {
+            match compress_as_uo(context, uncompressed_headers, &self.crc_calculators, out) {
                 Ok(len) => len,
                 Err(RohcError::Compression(CompressionError::ContextInsufficient {
                     field: Field::TsScaled,
                     ..
                 })) => {
                     // ts_scaled_mode was newly activated, retry with IR packet
-                    compressor::compress_as_ir(
-                        context,
-                        uncompressed_headers,
-                        &self.crc_calculators,
-                        out,
-                    )?
+                    compress_as_ir(context, uncompressed_headers, &self.crc_calculators, out)?
                 }
                 Err(e) => return Err(e),
             }

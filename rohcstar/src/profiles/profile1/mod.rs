@@ -6,7 +6,7 @@
 //!
 //! Key components:
 //! - `handler`: Implements the `ProfileHandler` trait for Profile 1.
-//! - `compressor`: Contains functions for Profile 1 compression decisions and packet building.
+//! - `compression`: Contains focused compression modules for Profile 1 packet building and compression decisions.
 //! - `decompression`: Contains focused decompression modules for Profile 1 packet parsing and header reconstruction.
 //! - `state_machine`: Handles decompressor state transitions for Profile 1.
 //! - `context`: Defines `Profile1CompressorContext` and `Profile1DecompressorContext`.
@@ -16,7 +16,7 @@
 //! - `protocol_types`: Defines `RtpUdpIpv4Headers`.
 //! - `constants`: Holds constants specific to Profile 1 operations.
 
-mod compressor;
+mod compression;
 pub mod constants;
 pub mod context;
 pub mod decompression;
