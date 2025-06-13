@@ -30,6 +30,7 @@ pub enum ParseContext {
     Uo1IdPacketCore,
     Uo1RtpPacketCore,
     UoPacketTypeDiscriminator,
+    RtpHeaderCalculated,
 }
 
 impl std::fmt::Display for ParseContext {
@@ -53,6 +54,7 @@ impl std::fmt::Display for ParseContext {
             Self::Uo1IdPacketCore => "UO-1-ID Packet Core",
             Self::Uo1RtpPacketCore => "UO-1-RTP Packet Core",
             Self::UoPacketTypeDiscriminator => "UO packet type discriminator",
+            Self::RtpHeaderCalculated => "RTP header calculated",
         };
         write!(f, "{}", s)
     }
