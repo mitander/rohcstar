@@ -78,7 +78,7 @@ main() {
 
         # Pull latest changes
         echo "Pulling latest changes..."
-        if ! git pull; then
+        if ! git pull --rebase; then
             echo "Git pull failed, continuing with current version"
         fi
 
