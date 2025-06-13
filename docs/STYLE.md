@@ -120,18 +120,31 @@ Every module has a purpose statement:
 Public functions get full docs. Private functions get comments only when non-obvious.
 
 ```rust
-/// Compresses headers using Profile 1.
+/// Compresses uncompressed RTP/UDP/IP headers into provided buffer.
 ///
-/// Selects optimal packet type based on header changes since last packet.
-/// Updates context state including TS_STRIDE detection.
+/// Analyzes the uncompressed headers and context state to determine the optimal
+/// packet type (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
+/// Updates the compressor context state and statistics.
+///
+/// # Parameters
+/// - `context_dyn`: Mutable reference to the Profile 1 compressor context
+/// - `headers_generic`: Uncompressed headers to compress (must be RTP/UDP/IPv4)
+/// - `out`: Output buffer to write the compressed packet into
 ///
 /// # Returns
-/// Number of bytes written to output buffer.
+/// The number of bytes written to the output buffer.
 ///
 /// # Errors
-/// - [`RohcError::ContextNotFound`] - No context for given CID
-/// - [`RohcError::BufferTooSmall`] - Output buffer insufficient
-pub fn compress(&mut self, cid: ContextId, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
+/// - [`RohcError::Internal`] - Context downcast failed
+/// - [`RohcError::UnsupportedProfile`] - Headers not compatible with Profile 1
+/// - [`RohcError::Building`] - Packet construction failed
+fn compress(
+    &self,
+    context_dyn: &mut dyn RohcCompressorContext,
+    headers_generic: &GenericUncompressedHeaders,
+    out: &mut [u8],
+) -> Result<usize, RohcError>
+
 
 // Private function - comment only if complex
 // Calculates minimum K value for W-LSB encoding per RFC 3095 Section 4.5.1
