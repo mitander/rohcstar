@@ -1,0 +1,9 @@
+# Trigger a warning if a module exceeds 500 lines.
+# Note: Clippy automatically excludes comments and docstrings from its count.
+too-many-lines-threshold = 500
+
+# Trigger a warning if a function's cognitive complexity exceeds 15.
+# This is a better measure of simplicity than a raw line count. It penalizes
+# deep nesting and complex control flow, directly enforcing the style guide's
+# philosophy.
+cognitive-complexity-threshold = 15

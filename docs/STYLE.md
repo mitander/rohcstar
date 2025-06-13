@@ -26,12 +26,7 @@ src/
       packet_types.rs     // Packet definitions
 ```
 
-**Limits:**
-- Module: <500 lines
-- Function: <50 lines
-- No deeply nested code (>3 levels)
-
-### Type Safety
+## Type Safety
 
 Use newtypes where mixing parameters would be catastrophic:
 
@@ -250,6 +245,32 @@ BENCHMARK: crc_calculate
 Before: 89ns per packet
 After: 12ns per packet
 ```
+
+## Clippy
+
+**Limits:**
+- Module: <500 lines
+- Function: <50 lines
+- No deeply nested code (>3 levels)
+
+Style guides are useless if they aren't enforced. We don't rely on memory or manual checks; we use automated tooling to ensure consistency.
+
+### Config (`clippy.toml`)
+
+```toml
+# clippy.toml (Example)
+
+# The < 500 lines limit is checked by the too-many-lines-threshold.
+# Clippy is smart enough to exclude comments and documentation, so it only measures the production code’s complexity.
+too-many-lines-threshold = 500
+
+# The `< 50 lines` and "no deep nesting" rules are enforced by the `cognitive-complexity-threshold`.
+# This metric is better than a raw line count because it specifically penalizes complex branching and
+# nested logic that make functions hard to understand.
+cognitive-complexity-threshold = 15
+```
+
+
 
 ## The Bottom Line
 
