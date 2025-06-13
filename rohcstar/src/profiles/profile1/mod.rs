@@ -7,7 +7,7 @@
 //! Key components:
 //! - `handler`: Implements the `ProfileHandler` trait for Profile 1.
 //! - `compressor`: Contains functions for Profile 1 compression decisions and packet building.
-//! - `decompressor`: Contains functions for Profile 1 ROHC packet parsing and header reconstruction.
+//! - `decompression`: Contains focused decompression modules for Profile 1 packet parsing and header reconstruction.
 //! - `state_machine`: Handles decompressor state transitions for Profile 1.
 //! - `context`: Defines `Profile1CompressorContext` and `Profile1DecompressorContext`.
 //! - `discriminator`: Defines `Profile1PacketType` for structured packet type identification.
@@ -19,7 +19,8 @@
 mod compressor;
 pub mod constants;
 pub mod context;
-mod decompressor;
+pub mod decompression;
+
 pub mod discriminator;
 pub mod handler;
 pub mod packet_types;

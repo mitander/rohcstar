@@ -2,11 +2,11 @@
 //!
 //! This module implements the state transitions (NoContext, StaticContext, FullContext, SecondOrder)
 //! for the ROHC Profile 1 decompressor, as defined in RFC 3095, Section 5.3.
-//! It works in conjunction with `decompressor.rs` which handles packet parsing
+//! It works in conjunction with the `decompression` module which handles packet parsing
 //! and header reconstruction.
 
 use super::context::{Profile1DecompressorContext, Profile1DecompressorMode};
-use super::decompressor;
+use super::decompression;
 use super::discriminator::Profile1PacketType;
 use super::state_transitions::{TransitionEvent, process_transition};
 
@@ -37,7 +37,7 @@ pub(super) fn process_ir_packet(
     handler_profile_id: RohcProfile,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
     let reconstructed_rtp_headers =
-        decompressor::decompress_as_ir(context, packet, crc_calculators, handler_profile_id)?;
+        decompression::decompress_as_ir(context, packet, crc_calculators, handler_profile_id)?;
 
     // Use new transition system
     process_transition(
@@ -82,7 +82,7 @@ pub(super) fn process_packet_in_fc_mode(
         "IR packet routed to UO processing in FC mode"
     );
 
-    let outcome = decompressor::decompress_as_uo(context, packet, crc_calculators);
+    let outcome = super::decompression::decompress_as_uo(context, packet, crc_calculators);
 
     // Simple RFC 3095 compliant CRC failure tracking
     match &outcome {
@@ -181,7 +181,7 @@ pub(super) fn process_packet_in_sc_mode(
         }
         _ => {
             // All UO-1 variants are suitable for dynamic updates
-            decompressor::decompress_as_uo(context, packet, crc_calculators)
+            super::decompression::decompress_as_uo(context, packet, crc_calculators)
         }
     };
 
@@ -273,7 +273,7 @@ pub(super) fn process_packet_in_so_mode(
         "IR packet routed to UO processing in SO mode"
     );
 
-    let outcome = decompressor::decompress_as_uo(context, packet, crc_calculators);
+    let outcome = super::decompression::decompress_as_uo(context, packet, crc_calculators);
 
     // SO mode: treat successful recovery as confidence boost, not penalty
     match &outcome {

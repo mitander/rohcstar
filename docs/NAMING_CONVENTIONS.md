@@ -42,7 +42,7 @@ find_context()    // Returns Option
 // Structs
 RohcEngine           // Not ROHC_Engine or Engine
 Profile1Handler      // Not Profile1ProfileHandler
-CompressorContext   // Not Context or CompressorCtx
+CompressorContext    // Not Context or CompressorCtx
 
 // Enums and variants
 enum DecompressorMode {
@@ -125,7 +125,7 @@ pub enum RohcError {
 
 ```rust
 // Never use these patterns:
-let ctx = get_context();        // Use context
+let ctx = get_context();       // Use context
 let sn = seq_num;              // Use sequence_number
 struct PacketParser;           // Too generic - Profile1PacketParser
 const TIMEOUT: u64 = 300;      // Which timeout? CONTEXT_TIMEOUT_SECS
