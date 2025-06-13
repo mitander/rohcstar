@@ -110,10 +110,9 @@ pub fn compress_as_ir(
         context.ts_offset = Timestamp::default();
         context.ts_stride_packets = 0;
         None
-    } else if context.ts_scaled_mode {
-        context.ts_stride
-    } else if context.ts_stride.is_some()
-        && context.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD
+    } else if context.ts_scaled_mode
+        || (context.ts_stride.is_some()
+            && context.ts_stride_packets >= P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD)
     {
         context.ts_stride
     } else {

@@ -227,10 +227,7 @@ mod tests {
             headers.udp_dst_port, 5006,
             "Dest port should match static chain"
         );
-        assert_eq!(
-            headers.rtp_marker, true,
-            "Marker bit should match dynamic chain"
-        );
+        assert!(headers.rtp_marker, "Marker bit should match dynamic chain");
     }
 
     #[test]

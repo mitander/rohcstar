@@ -256,7 +256,7 @@ mod tests {
         context.last_reconstructed_rtp_sn_full = SequenceNumber::new(sequence_number);
         context.last_reconstructed_rtp_ts_full = Timestamp::new(timestamp);
         context.last_reconstructed_ip_id_full = IpId::new(0x1000);
-        context.ts_stride = Some(160u32.into());
+        context.ts_stride = Some(160u32);
         context
     }
 
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn implicit_timestamp_calculation_handles_wraparound() {
         let mut context = create_test_context(65535, 4294967000, 0x11223344); // Near u32::MAX
-        context.ts_stride = Some(1000u32.into()); // Large stride
+        context.ts_stride = Some(1000u32); // Large stride
 
         // Test wraparound scenario
         let calculated_ts = calculate_reconstructed_ts_implicit(&context, SequenceNumber::new(2)); // Wrapped SN
