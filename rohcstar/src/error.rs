@@ -20,17 +20,20 @@ pub enum ParseContext {
     Ipv4HeaderCalculated,
     UdpHeader,
     RtpHeaderMin,
+    RtpHeaderCalculated,
     IrPacketTypeOctet,
     IrPacketRtpFlags,
     IrPacketCrcAndPayload,
     IrPacketTsStrideExtension,
+    IrPacketStaticChain,
+    IrPacketDynamicChain,
+    IrSerialization,
     Uo0PacketCore,
     Uo1SnPacketCore,
     Uo1TsPacketCore,
     Uo1IdPacketCore,
     Uo1RtpPacketCore,
     UoPacketTypeDiscriminator,
-    RtpHeaderCalculated,
 }
 
 impl std::fmt::Display for ParseContext {
@@ -44,17 +47,20 @@ impl std::fmt::Display for ParseContext {
             Self::Ipv4HeaderCalculated => "IPv4 header (calculated IHL)",
             Self::UdpHeader => "UDP header",
             Self::RtpHeaderMin => "RTP header (minimum)",
+            Self::RtpHeaderCalculated => "RTP header calculated",
             Self::IrPacketTypeOctet => "IR Packet Type Octet",
             Self::IrPacketRtpFlags => "IR Packet (RTP_Flags for CRC check)",
             Self::IrPacketCrcAndPayload => "IR Packet (CRC field and defined payload)",
             Self::IrPacketTsStrideExtension => "IR Packet TS_STRIDE Extension",
+            Self::IrPacketStaticChain => "IR Packet Static Chain",
+            Self::IrPacketDynamicChain => "IR Packet Dynamic Chain",
+            Self::IrSerialization => "IR Packet Serialization",
             Self::Uo0PacketCore => "UO-0 Packet Core",
             Self::Uo1SnPacketCore => "UO-1-SN Packet Core",
             Self::Uo1TsPacketCore => "UO-1-TS Packet Core",
             Self::Uo1IdPacketCore => "UO-1-ID Packet Core",
             Self::Uo1RtpPacketCore => "UO-1-RTP Packet Core",
             Self::UoPacketTypeDiscriminator => "UO packet type discriminator",
-            Self::RtpHeaderCalculated => "RTP header calculated",
         };
         write!(f, "{}", s)
     }

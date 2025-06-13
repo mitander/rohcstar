@@ -85,8 +85,6 @@ pub struct Profile1CompressorContext {
     pub consecutive_fo_packets_sent: u32,
     /// Timestamp of the last successful access (e.g., compression operation).
     pub last_accessed: Instant,
-
-    // --- TS Stride specific fields (RFC 3095, Section 4.5.4) ---
     /// Detected timestamp stride (constant TS increment); `None` if no stride active.
     pub ts_stride: Option<u32>,
     /// Base timestamp (`TS_Offset`) for TS_SCALED calculation. This is the RTP Timestamp

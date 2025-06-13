@@ -878,7 +878,7 @@ mod tests {
                 .is_err()
         );
 
-        // --- Phase 3: Test fresh context survives a prune if accessed within timeout ---
+        // Phase 3: Test fresh context survives a prune if accessed within timeout
         // Current clock: T0 + 10(c10_c) + 10(c11_c) + 10(c11_d) + 50(c10_r) + 60(p1) + 50(p2) = T0 + 190ms
         let _ = engine
             .compress(
