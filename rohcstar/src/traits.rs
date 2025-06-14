@@ -122,7 +122,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{Field, ParseContext, RohcBuildingError, RohcError, RohcParsingError};
+    use crate::error::{ParseContext, RohcBuildingError, RohcError, RohcParsingError};
     use crate::packet_defs::RohcProfile;
     use bytes::Bytes;
     use std::time::{Duration, Instant};
@@ -228,13 +228,11 @@ mod tests {
                 GenericUncompressedHeaders::TestRaw(data) => {
                     let bytes_needed = 1 + std::cmp::min(data.len(), 2);
                     if out.len() < bytes_needed {
-                        return Err(RohcError::Building(
-                            RohcBuildingError::InvalidFieldValueForBuild {
-                                field: Field::BufferSize,
-                                value: out.len() as u32,
-                                max_bits: bytes_needed as u8,
-                            },
-                        ));
+                        return Err(RohcError::Building(RohcBuildingError::BufferTooSmall {
+                            needed: bytes_needed,
+                            available: out.len(),
+                            context: ParseContext::RohcPacketInput,
+                        }));
                     }
                     out[0] = self.profile.into();
                     let data_len = std::cmp::min(data.len(), 2);

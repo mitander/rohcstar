@@ -61,10 +61,10 @@ pub(crate) fn serialize_uo1_sn(
         0
     };
     if out.len() < required_size {
-        return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: Field::BufferSize,
-            value: out.len() as u32,
-            max_bits: required_size as u8,
+        return Err(RohcBuildingError::BufferTooSmall {
+            needed: required_size,
+            available: out.len(),
+            context: ParseContext::Uo1SnPacketCore,
         });
     }
 
@@ -206,10 +206,10 @@ pub(crate) fn serialize_uo1_ts(
         0
     };
     if out.len() < required_size {
-        return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: Field::BufferSize,
-            value: out.len() as u32,
-            max_bits: required_size as u8,
+        return Err(RohcBuildingError::BufferTooSmall {
+            needed: required_size,
+            available: out.len(),
+            context: ParseContext::Uo1TsPacketCore,
         });
     }
 
@@ -362,10 +362,10 @@ pub(crate) fn serialize_uo1_id(
         0
     };
     if out.len() < required_size {
-        return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: Field::BufferSize,
-            value: out.len() as u32,
-            max_bits: required_size as u8,
+        return Err(RohcBuildingError::BufferTooSmall {
+            needed: required_size,
+            available: out.len(),
+            context: ParseContext::Uo1IdPacketCore,
         });
     }
 
@@ -486,10 +486,10 @@ pub(crate) fn serialize_uo1_rtp(
         0
     };
     if out.len() < required_size {
-        return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: Field::BufferSize,
-            value: out.len() as u32,
-            max_bits: required_size as u8,
+        return Err(RohcBuildingError::BufferTooSmall {
+            needed: required_size,
+            available: out.len(),
+            context: ParseContext::Uo1RtpPacketCore,
         });
     }
 

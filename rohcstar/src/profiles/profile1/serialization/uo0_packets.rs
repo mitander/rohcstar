@@ -59,10 +59,10 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
         0
     };
     if out.len() < required_size {
-        return Err(RohcBuildingError::InvalidFieldValueForBuild {
-            field: Field::BufferSize,
-            value: out.len() as u32,
-            max_bits: required_size as u8,
+        return Err(RohcBuildingError::BufferTooSmall {
+            needed: required_size,
+            available: out.len(),
+            context: ParseContext::Uo0PacketCore,
         });
     }
 
