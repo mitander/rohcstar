@@ -24,6 +24,15 @@ pub struct StateCounters {
 impl StateCounters {
     pub fn reset_for_nc(&mut self) {
         *self = Self::default();
+        debug_assert_eq!(self.fc_crc_failures, 0, "NoContext reset validation failed");
+        debug_assert_eq!(
+            self.so_consecutive_failures, 0,
+            "NoContext reset validation failed"
+        );
+        debug_assert!(
+            !self.had_recent_crc_failure,
+            "NoContext reset validation failed"
+        );
     }
 
     pub fn reset_for_fc(&mut self) {
@@ -31,6 +40,18 @@ impl StateCounters {
         self.fc_success_streak = 0;
         self.sc_k_failures = 0;
         self.sc_n_window = 0;
+        // Reset SO counters that should not persist into FC mode
+        self.so_static_confidence = 0;
+        self.so_dynamic_confidence = 0;
+        self.so_consecutive_failures = 0;
+        self.so_packets_in_so = 0;
+        self.had_recent_crc_failure = false;
+
+        debug_assert_eq!(
+            self.fc_crc_failures, 0,
+            "FullContext reset validation failed"
+        );
+        debug_assert_eq!(self.sc_k_failures, 0, "FullContext reset validation failed");
     }
 
     pub fn init_for_so(&mut self) {
@@ -39,5 +60,14 @@ impl StateCounters {
         self.so_consecutive_failures = 0;
         self.so_packets_in_so = 0;
         self.fc_success_streak = 0;
+        // Reset SC counters when entering SO mode
+        self.sc_k_failures = 0;
+        self.sc_n_window = 0;
+
+        debug_assert_eq!(
+            self.so_consecutive_failures, 0,
+            "SecondOrder init validation failed"
+        );
+        debug_assert_eq!(self.sc_k_failures, 0, "SecondOrder init validation failed");
     }
 }

@@ -42,7 +42,26 @@ pub fn decompress_as_ir(
         )));
     }
 
+    // Initialize context from IR packet - this resets all dynamic state
     context.initialize_from_ir_packet(&parsed_ir);
+
+    // Validate that context is in a consistent state after initialization
+    debug_assert_eq!(
+        context.rtp_ssrc, parsed_ir.static_rtp_ssrc,
+        "Context SSRC not properly initialized from IR"
+    );
+    debug_assert_eq!(
+        context.last_reconstructed_rtp_sn_full, parsed_ir.dyn_rtp_sn,
+        "Context SN not properly initialized from IR"
+    );
+    debug_assert_eq!(
+        context.ts_stride, parsed_ir.ts_stride,
+        "Context TS stride not properly initialized from IR"
+    );
+    debug_assert!(
+        context.potential_ts_stride.is_none(),
+        "Context potential stride not reset during IR initialization"
+    );
 
     Ok(reconstruct_headers_from_context(
         context,

@@ -36,6 +36,9 @@ pub(super) fn process_ir_packet(
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
 ) -> Result<GenericUncompressedHeaders, RohcError> {
+    // IR packets are valid from any mode - no pre-validation needed
+    let initial_mode = context.mode;
+
     let reconstructed_rtp_headers =
         decompression::decompress_as_ir(context, packet, crc_calculators, handler_profile_id)?;
 
@@ -44,6 +47,14 @@ pub(super) fn process_ir_packet(
         &mut context.mode,
         &mut context.counters,
         TransitionEvent::IrReceived,
+    );
+
+    // Validate that IR processing resulted in FullContext mode
+    debug_assert_eq!(
+        context.mode,
+        Profile1DecompressorMode::FullContext,
+        "IR processing failed to transition to FullContext from {:?}",
+        initial_mode
     );
 
     Ok(GenericUncompressedHeaders::RtpUdpIpv4(

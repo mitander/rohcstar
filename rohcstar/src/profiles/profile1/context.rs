@@ -634,6 +634,7 @@ impl Profile1DecompressorContext {
         self.ts_stride = ir_packet.ts_stride;
         self.ts_offset = ir_packet.dyn_rtp_timestamp;
         self.ts_scaled_mode = ir_packet.ts_stride.is_some();
+        self.potential_ts_stride = None; // Reset stride detection state
 
         self.debug_validate_invariants();
     }
@@ -1282,5 +1283,124 @@ mod tests {
             s_ctx.mode = Profile1DecompressorMode::StaticContext;
             assert_eq!(s_ctx.mode, Profile1DecompressorMode::StaticContext);
         }
+    }
+
+    /// Test that potential_ts_stride is properly reset during IR initialization.
+    /// This addresses the incomplete context state reset bug.
+    #[test]
+    fn ir_initialization_resets_potential_stride() {
+        let mut context = Profile1DecompressorContext::new(ContextId::new(0));
+
+        // Simulate having a potential stride from previous use
+        context.potential_ts_stride = Some(160);
+
+        let ir_packet = IrPacket {
+            cid: ContextId::new(0),
+            profile_id: RohcProfile::RtpUdpIp,
+            static_rtp_ssrc: 0x12345678.into(),
+            dyn_rtp_sn: SequenceNumber::new(100),
+            dyn_rtp_timestamp: Timestamp::new(16000),
+            ts_stride: None, // No stride in IR packet
+            ..Default::default()
+        };
+
+        // Initialize context from IR packet
+        context.initialize_from_ir_packet(&ir_packet);
+
+        // Verify that potential_ts_stride was reset
+        assert!(
+            context.potential_ts_stride.is_none(),
+            "potential_ts_stride should be reset to None during IR initialization"
+        );
+
+        // Verify other stride-related fields are properly set
+        assert_eq!(context.ts_stride, None);
+        assert_eq!(context.ts_offset, Timestamp::new(16000));
+        assert!(!context.ts_scaled_mode);
+    }
+
+    /// Test that IR initialization with TS_STRIDE still resets potential_ts_stride.
+    #[test]
+    fn ir_initialization_with_stride_resets_potential_stride() {
+        let mut context = Profile1DecompressorContext::new(ContextId::new(0));
+
+        // Simulate having a different potential stride from previous use
+        context.potential_ts_stride = Some(320);
+
+        let ir_packet = IrPacket {
+            cid: ContextId::new(0),
+            profile_id: RohcProfile::RtpUdpIp,
+            static_rtp_ssrc: 0x12345678.into(),
+            dyn_rtp_sn: SequenceNumber::new(100),
+            dyn_rtp_timestamp: Timestamp::new(16000),
+            ts_stride: Some(160), // Stride provided in IR packet
+            ..Default::default()
+        };
+
+        // Initialize context from IR packet
+        context.initialize_from_ir_packet(&ir_packet);
+
+        // Verify that potential_ts_stride was reset even when stride is provided
+        assert!(
+            context.potential_ts_stride.is_none(),
+            "potential_ts_stride should be reset to None even when IR has stride"
+        );
+
+        // Verify stride-related fields are properly set from IR
+        assert_eq!(context.ts_stride, Some(160));
+        assert_eq!(context.ts_offset, Timestamp::new(16000));
+        assert!(context.ts_scaled_mode);
+    }
+
+    /// Test that repeated IR packets don't cause state accumulation.
+    #[test]
+    fn repeated_ir_packets_maintain_clean_state() {
+        let mut context = Profile1DecompressorContext::new(ContextId::new(0));
+
+        // Process first IR packet
+        let ir_packet_1 = IrPacket {
+            cid: ContextId::new(0),
+            profile_id: RohcProfile::RtpUdpIp,
+            static_rtp_ssrc: 0x11111111.into(),
+            dyn_rtp_sn: SequenceNumber::new(100),
+            dyn_rtp_timestamp: Timestamp::new(10000),
+            ts_stride: Some(160),
+            ..Default::default()
+        };
+
+        context.initialize_from_ir_packet(&ir_packet_1);
+
+        // Simulate some stride detection state
+        context.potential_ts_stride = Some(320); // This should be cleared by next IR
+
+        // Process second IR packet with different parameters
+        let ir_packet_2 = IrPacket {
+            cid: ContextId::new(0),
+            profile_id: RohcProfile::RtpUdpIp,
+            static_rtp_ssrc: 0x22222222.into(),
+            dyn_rtp_sn: SequenceNumber::new(500),
+            dyn_rtp_timestamp: Timestamp::new(50000),
+            ts_stride: None, // No stride this time
+            ..Default::default()
+        };
+
+        context.initialize_from_ir_packet(&ir_packet_2);
+
+        // Verify that all state was properly reset and updated
+        assert_eq!(context.rtp_ssrc.value(), 0x22222222);
+        assert_eq!(
+            context.last_reconstructed_rtp_sn_full,
+            SequenceNumber::new(500)
+        );
+        assert_eq!(
+            context.last_reconstructed_rtp_ts_full,
+            Timestamp::new(50000)
+        );
+        assert_eq!(context.ts_stride, None);
+        assert!(!context.ts_scaled_mode);
+        assert!(
+            context.potential_ts_stride.is_none(),
+            "potential_ts_stride should be reset by second IR packet"
+        );
     }
 }
