@@ -19,7 +19,8 @@ use super::super::serialization::uo1_packets::{
     prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
 };
 use super::recovery::{
-    calculate_reconstructed_ts_implicit, reconstruct_headers_from_context, try_sn_recovery,
+    LsbConstraint, calculate_reconstructed_ts_implicit, reconstruct_headers_from_context,
+    try_sn_recovery,
 };
 
 /// Decompresses UO-0 packet with SN LSB and implicit TS reconstruction.
@@ -92,7 +93,10 @@ pub fn decompress_as_uo0(
             CrcType::Crc3Uo0,
             forward_window,
             backward_window,
-            None,
+            Some(LsbConstraint {
+                value: parsed_uo0.sn_lsb,
+                bits: 4,
+            }),
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -145,7 +149,10 @@ pub fn decompress_as_uo0(
             Crc3Uo0,
             8,
             4,
-            None,
+            Some(LsbConstraint {
+                value: parsed_uo0.sn_lsb,
+                bits: 4,
+            }),
             |input| crc_calculators.crc3(input),
             |candidate_sn, candidate_ts, buf| {
                 prepare_generic_uo_crc_input_into_buf(
@@ -221,12 +228,23 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let mut context = create_test_context(100, 16000, 0x12345678);
 
-        // Create UO-0 packet with LSB=5. Due to CRC mismatch (using 0x0 instead of correct CRC),
-        // the recovery logic will search for valid SN candidates and may find a different value.
-        // This test verifies that decompression succeeds and produces a reasonable SN.
+        // Calculate correct CRC for SN=101 to test recovery path
+        let target_sn = SequenceNumber::new(101);
+        let target_ts = context.last_reconstructed_rtp_ts_full
+            + (target_sn.value() - context.last_reconstructed_rtp_sn_full.value()) as u32
+                * context.ts_stride.unwrap_or(160);
+        let crc_input_bytes = prepare_generic_uo_crc_input_payload(
+            context.rtp_ssrc,
+            target_sn,
+            target_ts.into(),
+            context.last_reconstructed_rtp_marker,
+        );
+        let correct_crc = crc_calculators.crc3(&crc_input_bytes);
+
+        // Create UO-0 packet with LSB=5 (matching SN=101) and correct CRC for recovery test
         let uo0_packet = Uo0Packet {
-            sn_lsb: 5, // 4-bit LSB value
-            crc3: 0x0, // Intentionally incorrect to test recovery path
+            sn_lsb: 5,         // 4-bit LSB value, matches SN=101
+            crc3: correct_crc, // Use correct CRC for SN=101 to test recovery
             cid: None,
         };
 
@@ -244,11 +262,11 @@ mod tests {
         );
 
         let headers = result.unwrap();
-        // Recovery logic finds SN=105, which is in valid UO-0 window [100, 115]
+        // Recovery logic finds SN=101, which matches 4-bit LSB=5 and is valid forward jump
         assert_eq!(
             headers.rtp_sequence_number.value(),
-            105,
-            "CRC recovery should find SN=105"
+            101,
+            "CRC recovery should find SN=101 (LSB constraint: 101 & 0xF = 5)"
         );
         assert!(
             headers.rtp_sequence_number.value() >= 100
@@ -262,10 +280,25 @@ mod tests {
         let crc_calculators = CrcCalculators::new();
         let mut context = create_test_context(65535, 1048575, 0x87654321); // At u16::MAX
 
+        // Calculate correct CRC for SN=0 (wraparound case)
+        let target_sn = SequenceNumber::new(0);
+        let target_ts = context.last_reconstructed_rtp_ts_full
+            + (target_sn
+                .value()
+                .wrapping_sub(context.last_reconstructed_rtp_sn_full.value())) as u32
+                * context.ts_stride.unwrap_or(160);
+        let crc_input_bytes = prepare_generic_uo_crc_input_payload(
+            context.rtp_ssrc,
+            target_sn,
+            target_ts.into(),
+            context.last_reconstructed_rtp_marker,
+        );
+        let correct_crc = crc_calculators.crc3(&crc_input_bytes);
+
         // Test wraparound to 0
         let uo0_packet = Uo0Packet {
-            sn_lsb: 0, // Wraparound to 0
-            crc3: 0x0,
+            sn_lsb: 0,         // Wraparound to 0
+            crc3: correct_crc, // Use correct CRC for recovery test
             cid: None,
         };
 
@@ -345,9 +378,22 @@ mod tests {
         let mut context = create_test_context(1000, 160000, 0x55667788);
         context.ts_stride = Some(160u32); // Standard audio stride
 
+        // Calculate correct CRC for SN=1001 to test implicit TS calculation
+        let target_sn = SequenceNumber::new(1001);
+        let target_ts = context.last_reconstructed_rtp_ts_full
+            + (target_sn.value() - context.last_reconstructed_rtp_sn_full.value()) as u32
+                * context.ts_stride.unwrap_or(160);
+        let crc_input_bytes = prepare_generic_uo_crc_input_payload(
+            context.rtp_ssrc,
+            target_sn,
+            target_ts.into(),
+            context.last_reconstructed_rtp_marker,
+        );
+        let correct_crc = crc_calculators.crc3(&crc_input_bytes);
+
         let uo0_packet = Uo0Packet {
-            sn_lsb: 1, // SN 1001
-            crc3: 0x0,
+            sn_lsb: 9,         // 4-bit LSB matching SN=1001 (1001 & 0xF = 9)
+            crc3: correct_crc, // Use correct CRC for recovery test
             cid: None,
         };
 

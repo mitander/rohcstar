@@ -1,5 +1,8 @@
 use clap::{Arg, Command};
-use rohcstar_sim::{RohcSimulator, SimConfig, error_analyzer::{ErrorAnalyzer, ErrorAnalysis, ErrorCategory}};
+use rohcstar_sim::{
+    RohcSimulator, SimConfig,
+    error_analyzer::{ErrorAnalysis, ErrorAnalyzer, ErrorCategory},
+};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -68,12 +71,33 @@ impl FuzzStats {
         println!("Uptime: {:.1}h", uptime.as_secs_f64() / 3600.0);
         println!("Runs completed: {}", runs);
         println!("Total packets: {} ({}/sec)", packets, pps);
-        println!("Network errors: {} ({:.1}%)", network, 
-                 if packets > 0 { (network as f64 / packets as f64) * 100.0 } else { 0.0 });
-        println!("Implementation bugs: {} ({:.1}%)", bugs,
-                 if packets > 0 { (bugs as f64 / packets as f64) * 100.0 } else { 0.0 });
-        println!("Requires review: {} ({:.1}%)", review,
-                 if packets > 0 { (review as f64 / packets as f64) * 100.0 } else { 0.0 });
+        println!(
+            "Network errors: {} ({:.1}%)",
+            network,
+            if packets > 0 {
+                (network as f64 / packets as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
+        println!(
+            "Implementation bugs: {} ({:.1}%)",
+            bugs,
+            if packets > 0 {
+                (bugs as f64 / packets as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
+        println!(
+            "Requires review: {} ({:.1}%)",
+            review,
+            if packets > 0 {
+                (review as f64 / packets as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
     }
 }
 
@@ -120,7 +144,7 @@ fn run_continuous_fuzz(
 
     while !stop_flag.load(Ordering::Relaxed) {
         _run_counter += 1;
-        
+
         match simulator.run() {
             Ok(()) => {
                 // Successful run - no errors to analyze
@@ -130,12 +154,12 @@ fn run_continuous_fuzz(
             Err(sim_error) => {
                 let packets = config.num_packets as u64;
                 let analysis = ErrorAnalyzer::analyze_error(&sim_error, &config);
-                
+
                 // Record implementation bugs for tracking
                 if let ErrorCategory::ImplementationBug = analysis.category {
                     bug_tracker.record_bug(&format!("{:?}", sim_error));
                 }
-                
+
                 stats.record_run(packets, &[analysis]);
             }
         }
@@ -146,38 +170,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new("ROHC Fuzz Monitor")
         .version("1.0")
         .about("Continuous ROHC fuzzing with real-time monitoring")
-        .arg(Arg::new("packets")
-            .long("packets")
-            .value_name("NUM")
-            .help("Packets per simulation run")
-            .default_value("1000"))
-        .arg(Arg::new("loss-rate")
-            .long("loss-rate")
-            .value_name("RATE")
-            .help("Packet loss rate (0.0-1.0)")
-            .default_value("0.01"))
-        .arg(Arg::new("error-rate")
-            .long("error-rate")
-            .value_name("RATE")
-            .help("Bit error rate (0.0-1.0)")
-            .default_value("0.001"))
-        .arg(Arg::new("threads")
-            .long("threads")
-            .value_name("NUM")
-            .help("Number of fuzzing threads")
-            .default_value("4"))
-        .arg(Arg::new("update-interval")
-            .long("update-interval")
-            .value_name("SECONDS")
-            .help("Stats update interval")
-            .default_value("10"))
+        .arg(
+            Arg::new("packets")
+                .long("packets")
+                .value_name("NUM")
+                .help("Packets per simulation run")
+                .default_value("1000"),
+        )
+        .arg(
+            Arg::new("loss-rate")
+                .long("loss-rate")
+                .value_name("RATE")
+                .help("Packet loss rate (0.0-1.0)")
+                .default_value("0.01"),
+        )
+        .arg(
+            Arg::new("error-rate")
+                .long("error-rate")
+                .value_name("RATE")
+                .help("Bit error rate (0.0-1.0)")
+                .default_value("0.001"),
+        )
+        .arg(
+            Arg::new("threads")
+                .long("threads")
+                .value_name("NUM")
+                .help("Number of fuzzing threads")
+                .default_value("4"),
+        )
+        .arg(
+            Arg::new("update-interval")
+                .long("update-interval")
+                .value_name("SECONDS")
+                .help("Stats update interval")
+                .default_value("10"),
+        )
         .get_matches();
 
     let packets: usize = matches.get_one::<String>("packets").unwrap().parse()?;
     let loss_rate: f64 = matches.get_one::<String>("loss-rate").unwrap().parse()?;
     let _error_rate: f64 = matches.get_one::<String>("error-rate").unwrap().parse()?;
     let threads: usize = matches.get_one::<String>("threads").unwrap().parse()?;
-    let update_interval: u64 = matches.get_one::<String>("update-interval").unwrap().parse()?;
+    let update_interval: u64 = matches
+        .get_one::<String>("update-interval")
+        .unwrap()
+        .parse()?;
 
     let config = SimConfig {
         num_packets: packets,
@@ -210,13 +247,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stats = stats.clone();
         let bug_tracker = bug_tracker.clone();
         let stop_flag = stop_flag.clone();
-        
+
         let handle = thread::spawn(move || {
             println!("Fuzzing thread {} started", i);
             run_continuous_fuzz(config, stats, bug_tracker, stop_flag);
             println!("Fuzzing thread {} stopped", i);
         });
-        
+
         handles.push(handle);
     }
 
@@ -224,17 +261,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats_display = stats.clone();
     let bug_tracker_display = bug_tracker.clone();
     let stop_flag_display = stop_flag.clone();
-    
+
     let stats_handle = thread::spawn(move || {
         while !stop_flag_display.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_secs(update_interval));
-            
+
             print!("\x1B[2J\x1B[1;1H"); // Clear screen
             io::stdout().flush().unwrap();
-            
+
             stats_display.print_summary();
             bug_tracker_display.print_top_bugs(10);
-            
+
             println!("\nPress Ctrl+C to stop gracefully.");
         }
     });
@@ -243,14 +280,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     stats_handle.join().unwrap();
-    
+
     // Final summary
     print!("\x1B[2J\x1B[1;1H"); // Clear screen
     stats.print_summary();
     bug_tracker.print_top_bugs(20);
-    
+
     println!("\nFuzzing completed.");
     Ok(())
 }
