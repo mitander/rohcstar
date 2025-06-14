@@ -110,12 +110,21 @@ impl GenericUncompressedHeaders {
 
     /// Creates a `GenericUncompressedHeaders::TestRaw` variant from a byte vector.
     /// Available for testing purposes.
+    ///
+    /// # Parameters
+    /// - `data`: Raw header data as a byte vector
+    ///
+    /// # Returns
+    /// A `GenericUncompressedHeaders::TestRaw` variant containing the provided data
     #[cfg(test)]
     pub fn new_test_raw(data: Vec<u8>) -> Self {
         Self::TestRaw(Bytes::from(data))
     }
 
     /// Attempts to return a reference to the inner `Bytes` if the variant is `TestRaw`.
+    ///
+    /// # Returns
+    /// `Some(&Bytes)` if the variant is `TestRaw`, `None` otherwise
     #[cfg(test)]
     pub fn as_test_raw(&self) -> Option<&Bytes> {
         match self {

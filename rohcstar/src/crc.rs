@@ -5,8 +5,9 @@
 //! the 3-bit CRC (CRC-3/ROHC) and 8-bit CRC (CRC-8/ROHC) as specified in RFC 3095, Section 5.9.
 //! It also provides a `CrcCalculators` struct for convenient reuse of CRC algorithm instances.
 
-use crc::{CRC_3_ROHC, CRC_8_ROHC, Crc};
 use std::fmt;
+
+use crc::{CRC_3_ROHC, CRC_8_ROHC, Crc};
 
 /// A struct holding pre-initialized CRC algorithm instances for ROHC.
 ///
@@ -174,7 +175,8 @@ mod tests {
         );
         if CRC_3_ROHC.check != expected_crc {
             eprintln!(
-                "Note for direct CRC-3 test: `crc` crate's CRC_3_ROHC.check value (0x{:02X}) differs from ROHC examples (0x06).",
+                "Note for direct CRC-3 test: `crc` crate's CRC_3_ROHC.check value \
+                (0x{:02X}) differs from ROHC examples (0x06).",
                 CRC_3_ROHC.check
             );
         }

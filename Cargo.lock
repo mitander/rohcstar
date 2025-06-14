@@ -827,13 +827,16 @@ dependencies = [
  "cargo-husky",
  "crc",
  "criterion",
+ "proc-macro2",
  "quickcheck",
  "quickcheck_macros",
  "rand 0.9.1",
  "serde",
  "serde_json",
  "serde_with",
+ "syn",
  "thiserror",
+ "walkdir",
 ]
 
 [[package]]

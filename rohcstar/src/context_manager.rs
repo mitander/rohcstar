@@ -321,41 +321,42 @@ mod tests {
     fn add_and_get_compressor_context() {
         let mut manager = ContextManager::new();
         let initial_time = Instant::now();
-        let ctx1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
+        let context1: Box<dyn RohcCompressorContext> = Box::new(MockCompressorCtx {
             cid: 1.into(),
             data: "flow1".to_string(),
             last_accessed: initial_time,
         });
-        let cid1 = ctx1.cid();
-        manager.add_compressor_context(cid1, ctx1);
+        let cid1 = context1.cid();
+        manager.add_compressor_context(cid1, context1);
 
         assert_eq!(manager.compressor_context_count(), 1);
 
-        let retrieved_ctx1_mut = manager.get_compressor_context_mut(cid1).unwrap();
-        assert_eq!(retrieved_ctx1_mut.cid(), cid1);
-        assert_eq!(retrieved_ctx1_mut.last_accessed(), initial_time);
+        let retrieved_context1_mut = manager.get_compressor_context_mut(cid1).unwrap();
+        assert_eq!(retrieved_context1_mut.cid(), cid1);
+        assert_eq!(retrieved_context1_mut.last_accessed(), initial_time);
 
         // Simulate access
-        retrieved_ctx1_mut.update_access_time(Instant::now());
-        let time_after_update = retrieved_ctx1_mut.last_accessed();
+        retrieved_context1_mut.update_access_time(Instant::now());
+        let time_after_update = retrieved_context1_mut.last_accessed();
         assert!(time_after_update > initial_time);
 
-        retrieved_ctx1_mut
+        retrieved_context1_mut
             .as_any_mut()
             .downcast_mut::<MockCompressorCtx>()
             .unwrap()
             .data = "flow1_updated".to_string();
 
-        let retrieved_ctx1_again = manager.get_compressor_context(cid1).unwrap();
+        let retrieved_context1_again = manager.get_compressor_context(cid1).unwrap();
         assert_eq!(
-            retrieved_ctx1_again
+            retrieved_context1_again
                 .as_any()
                 .downcast_ref::<MockCompressorCtx>()
                 .unwrap()
                 .data,
             "flow1_updated"
         );
-        assert_eq!(retrieved_ctx1_again.last_accessed(), time_after_update); // Check time persists
+        // Check time persists
+        assert_eq!(retrieved_context1_again.last_accessed(), time_after_update);
 
         let result_non_existent = manager.get_compressor_context_mut(99.into());
         assert!(matches!(

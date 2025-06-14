@@ -446,6 +446,9 @@ impl RohcError {
     /// These errors represent normal ROHC protocol behavior when packets are lost
     /// and should typically be handled gracefully by applications rather than
     /// treated as critical failures.
+    ///
+    /// # Returns
+    /// `true` if the error is a normal consequence of packet loss, `false` otherwise.
     pub fn is_expected_with_packet_loss(&self) -> bool {
         match self {
             // CRC mismatches are expected when packets are corrupted or lost

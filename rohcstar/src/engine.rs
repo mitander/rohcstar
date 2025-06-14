@@ -466,11 +466,17 @@ impl RohcEngine {
     }
 
     /// Provides access to the underlying `ContextManager`.
+    ///
+    /// # Returns
+    /// A reference to the internal context manager.
     pub fn context_manager(&self) -> &ContextManager {
         &self.context_manager
     }
 
     /// Provides mutable access to the underlying `ContextManager`.
+    ///
+    /// # Returns
+    /// A mutable reference to the internal context manager.
     pub fn context_manager_mut(&mut self) -> &mut ContextManager {
         &mut self.context_manager
     }
@@ -681,14 +687,17 @@ mod tests {
             .register_profile_handler(Box::new(Profile1Handler::new()))
             .unwrap();
 
-        let uo0_packet_cid0 = vec![(0x0A << 3) | 0x05]; // SN=10, CRC=5, for implicit CID 0. Length is 1.
+        // SN=10, CRC=5, for implicit CID 0. Length is 1.
+        let uo0_packet_cid0 = vec![(0x0A << 3) | 0x05];
         let result = engine.decompress(&uo0_packet_cid0);
         let result_clone_for_assert_msg = result.clone();
 
         assert!(
             matches!(
                 result,
-                Err(RohcError::Parsing(RohcParsingError::NotEnoughData { needed: 2, got: 1, context}))
+                Err(RohcError::Parsing(RohcParsingError::NotEnoughData {
+                    needed: 2, got: 1, context
+                }))
                 if context == ParseContext::ProfileIdPeek
             ),
             "Expected NotEnoughData from peek_profile_from_core_packet for 1-byte UO-0, got {:?}",
@@ -704,7 +713,8 @@ mod tests {
             .register_profile_handler(Box::new(Profile1Handler::new()))
             .unwrap();
 
-        let mut fake_ir_packet_bytes = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN, 0xFF]; // 0xFF is unsupported
+        // 0xFF is unsupported
+        let mut fake_ir_packet_bytes = vec![P1_ROHC_IR_PACKET_TYPE_WITH_DYN, 0xFF];
         fake_ir_packet_bytes.extend_from_slice(
             &[0u8; P1_STATIC_CHAIN_LENGTH_BYTES + P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES + 1],
         );
@@ -879,7 +889,8 @@ mod tests {
         );
 
         // Phase 3: Test fresh context survives a prune if accessed within timeout
-        // Current clock: T0 + 10(c10_c) + 10(c11_c) + 10(c11_d) + 50(c10_r) + 60(p1) + 50(p2) = T0 + 190ms
+        // Current clock: T0 + 10(c10_c) + 10(c11_c) + 10(c11_d) + 50(c10_r)
+        // + 60(p1) + 50(p2) = T0 + 190ms
         let _ = engine
             .compress(
                 cid_fresh,

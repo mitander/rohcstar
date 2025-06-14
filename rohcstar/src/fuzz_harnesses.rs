@@ -13,7 +13,7 @@ use crate::profiles::profile1::serialize_ir;
 use crate::profiles::profile1::{IrPacket, Profile1Handler};
 use crate::traits::ProfileHandler;
 
-const HARNESS_IR_BUF_SIZE: usize = 64;
+const DEFAULT_IR_BUF_SIZE: usize = 64;
 
 /// Fuzz tests the Profile 1 U-mode decompressor.
 ///
@@ -56,7 +56,7 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
         crc8: 0, // Will be calculated by serialize_ir
     };
 
-    let mut sample_ir_buf = [0u8; HARNESS_IR_BUF_SIZE];
+    let mut sample_ir_buf = [0u8; DEFAULT_IR_BUF_SIZE];
     match serialize_ir(
         &sample_ir_data_for_harness,
         &crc_calculators,

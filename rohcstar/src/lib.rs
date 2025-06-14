@@ -77,3 +77,6 @@ pub use packet_defs::{GenericUncompressedHeaders, RohcProfile};
 pub use traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 pub mod fuzz_harnesses;
 pub use time::mock_clock::MockClock;
+
+#[cfg(test)]
+mod tidy;

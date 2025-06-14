@@ -1,9 +1,27 @@
-# Trigger a warning if a module exceeds 500 lines.
-# Note: Clippy automatically excludes comments and docstrings from its count.
-too-many-lines-threshold = 500
+# ROHC Three-Tiered Quality Enforcement Configuration
+# 
+# Level 1: Critical (CI failures) - Handled by tidy.rs
+# Level 2: Quality Ratchets - Module size handled by tidy.rs ratchet mechanism  
+# Level 3: Style Guidelines - Handled by clippy warnings
 
-# Trigger a warning if a function's cognitive complexity exceeds 15.
-# This is a better measure of simplicity than a raw line count. It penalizes
-# deep nesting and complex control flow, directly enforcing the style guide's
-# philosophy.
-cognitive-complexity-threshold = 15
+# COGNITIVE COMPLEXITY - The real function complexity limit
+# This replaces line-of-code limits with meaningful complexity measurement
+# 25 is reasonable for systems programming with error handling
+cognitive-complexity-threshold = 25
+
+# MODULE SIZE - Warning only, ratchet mechanism in tidy.rs handles hard limits
+# Remove the too-many-lines-threshold to disable clippy's module size checking
+# Our ratchet system is more flexible and allows conscious growth
+
+# NAMING AND STYLE - Let clippy guide us with warnings
+# Allow slightly longer argument lists for builder patterns common in ROHC
+too-many-arguments-threshold = 8
+
+# DOCUMENTATION - Public APIs must be documented (enforced in tidy.rs)
+# Private docs are optional
+missing-docs-in-private-items = false
+
+# PERFORMANCE - Catch common inefficiencies  
+single-char-pattern = "warn"
+redundant-clone = "warn"
+unnecessary-wraps = "warn"

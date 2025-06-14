@@ -72,7 +72,6 @@ impl TidyViolation {
             message: message.into(),
         }
     }
-    
 }
 
 /// Represents a source file being tidied.
@@ -222,7 +221,7 @@ impl<'ast, 'a> Visit<'ast> for TidyVisitor<'a> {
                     );
                 }
             }
-            
+
             if let Some(span) = find_call_in_stmt(stmt, "expect") {
                 self.add_violation(
                     Severity::Critical,

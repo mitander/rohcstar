@@ -133,7 +133,8 @@ pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
 ///
 /// # Parameters
 /// - `received_lsbs`: The LSB-encoded part of the value that was received.
-/// - `reference_value`: The reference value (`v_ref`) from the context, used to disambiguate the LSBs.
+/// - `reference_value`: The reference value (`v_ref`) from the context,
+///   used to disambiguate the LSBs.
 /// - `num_lsb_bits`: The number of LSBs (`k`) that were used for encoding.
 ///   Must be between 1 and 63, inclusive, for meaningful W-LSB decoding.
 /// - `p_offset`: The window offset parameter (`p`) from W-LSB.
@@ -142,7 +143,8 @@ pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
 /// The reconstructed original value.
 ///
 /// # Errors
-/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid parameters, LSBs too large, or no unique resolution
+/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid parameters, LSBs too large,
+///   or no unique resolution
 pub fn decode_lsb(
     received_lsb: u64,
     reference_value: u64,
@@ -202,7 +204,9 @@ pub fn decode_lsb(
             Err(RohcParsingError::InvalidLsbOperation {
                 field: Field::ReceivedLsbs,
                 description: format!(
-                    "Cannot be uniquely resolved to a value in the interpretation window. LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
+                    "Cannot be uniquely resolved to a value in the interpretation window. \
+                    LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. \
+                    Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
                     received_lsb,
                     reference_value,
                     num_lsb_bits,
@@ -437,7 +441,8 @@ mod tests {
         );
 
         // Case 3: Received LSBs are 0. ref_val is u64::MAX - 5.
-        // Expected: 0 (after wrapping), as it's within the window relative to ref_val and matches LSBs.
+        // Expected: 0 (after wrapping), as it's within the window
+        // relative to ref_val and matches LSBs.
         assert_eq!(decode_lsb(0, ref_val, k, 0).unwrap(), 0);
 
         // Case 4: Received LSBs are 3. ref_val is u64::MAX - 5.
@@ -554,9 +559,11 @@ mod tests {
             k_val,
             p_neg
         )); // u64::MAX is ...FFFF. diff = MAX - (...FFF7) = 8. 8 < 16.
-        assert!(is_value_in_lsb_interval(0, ref_near_max, k_val, p_neg)); // 0.sub(...FFF7) = 9. 9 < 16.
+        // 0.sub(...FFF7) = 9. 9 < 16.
+        assert!(is_value_in_lsb_interval(0, ref_near_max, k_val, p_neg));
 
-        let upper_val_in_window = interval_base_neg_p.wrapping_add(15); // ...FFF7 + 15 = ...0006 (wrapped)
+        // ...FFF7 + 15 = ...0006 (wrapped)
+        let upper_val_in_window = interval_base_neg_p.wrapping_add(15);
         assert!(is_value_in_lsb_interval(
             upper_val_in_window,
             ref_near_max,
