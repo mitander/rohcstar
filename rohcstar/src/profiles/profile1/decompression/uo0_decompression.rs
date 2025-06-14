@@ -13,7 +13,6 @@ use crate::types::SequenceNumber;
 
 use super::super::constants::P1_MAX_REASONABLE_UO0_SN_JUMP;
 use super::super::context::Profile1DecompressorContext;
-use super::super::protocol_types::RtpUdpIpv4Headers;
 use super::super::serialization::uo0_packets::deserialize_uo0;
 use super::super::serialization::uo1_packets::{
     prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
@@ -22,6 +21,7 @@ use super::recovery::{
     LsbConstraint, calculate_reconstructed_ts_implicit, reconstruct_headers_from_context,
     try_sn_recovery,
 };
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Decompresses UO-0 packet with SN LSB and implicit TS reconstruction.
 ///
@@ -236,7 +236,7 @@ mod tests {
         let crc_input_bytes = prepare_generic_uo_crc_input_payload(
             context.rtp_ssrc,
             target_sn,
-            target_ts.into(),
+            target_ts,
             context.last_reconstructed_rtp_marker,
         );
         let correct_crc = crc_calculators.crc3(&crc_input_bytes);
@@ -290,7 +290,7 @@ mod tests {
         let crc_input_bytes = prepare_generic_uo_crc_input_payload(
             context.rtp_ssrc,
             target_sn,
-            target_ts.into(),
+            target_ts,
             context.last_reconstructed_rtp_marker,
         );
         let correct_crc = crc_calculators.crc3(&crc_input_bytes);
@@ -386,7 +386,7 @@ mod tests {
         let crc_input_bytes = prepare_generic_uo_crc_input_payload(
             context.rtp_ssrc,
             target_sn,
-            target_ts.into(),
+            target_ts,
             context.last_reconstructed_rtp_marker,
         );
         let correct_crc = crc_calculators.crc3(&crc_input_bytes);

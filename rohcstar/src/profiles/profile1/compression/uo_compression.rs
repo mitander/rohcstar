@@ -12,7 +12,6 @@ use crate::types::{IpId, SequenceNumber, Timestamp};
 use super::super::constants::*;
 use super::super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::super::packet_types::{Uo0Packet, Uo1Packet};
-use super::super::protocol_types::RtpUdpIpv4Headers;
 use super::super::serialization::uo0_packets::serialize_uo0;
 use super::super::serialization::uo1_packets::{
     prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
@@ -21,6 +20,7 @@ use super::super::serialization::uo1_packets::{
     serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn, serialize_uo1_ts,
 };
 use super::compute_implicit_ts;
+use crate::protocol_types::RtpUdpIpv4Headers;
 use crate::traits::RohcCompressorContext;
 
 /// Compresses headers as a UO (Unidirectional Optimistic) packet into provided buffer.

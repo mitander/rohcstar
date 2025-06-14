@@ -1,7 +1,7 @@
 # ROHC Three-Tiered Quality Enforcement Configuration
-# 
+#
 # Level 1: Critical (CI failures) - Handled by tidy.rs
-# Level 2: Quality Ratchets - Module size handled by tidy.rs ratchet mechanism  
+# Level 2: Quality Ratchets - Module size handled by tidy.rs ratchet mechanism
 # Level 3: Style Guidelines - Handled by clippy warnings
 
 # COGNITIVE COMPLEXITY - The real function complexity limit
@@ -10,18 +10,16 @@
 cognitive-complexity-threshold = 25
 
 # MODULE SIZE - Warning only, ratchet mechanism in tidy.rs handles hard limits
-# Remove the too-many-lines-threshold to disable clippy's module size checking
-# Our ratchet system is more flexible and allows conscious growth
+# Set high threshold since our ratchet system handles this more intelligently
+too-many-lines-threshold = 1000
 
 # NAMING AND STYLE - Let clippy guide us with warnings
 # Allow slightly longer argument lists for builder patterns common in ROHC
 too-many-arguments-threshold = 8
 
 # DOCUMENTATION - Public APIs must be documented (enforced in tidy.rs)
-# Private docs are optional
-missing-docs-in-private-items = false
+# Enable checking for missing docs in public crate items
+missing-docs-in-crate-items = true
 
-# PERFORMANCE - Catch common inefficiencies  
-single-char-pattern = "warn"
-redundant-clone = "warn"
-unnecessary-wraps = "warn"
+# PERFORMANCE - Standard thresholds for performance lints
+# These are handled by clippy's built-in lints, no configuration needed here

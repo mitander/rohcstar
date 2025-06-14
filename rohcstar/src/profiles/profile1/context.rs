@@ -19,8 +19,8 @@ use super::constants::{
     P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
 };
 use super::packet_types::IrPacket;
-use super::protocol_types::RtpUdpIpv4Headers;
 use super::state_types::StateCounters;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Operational modes for the ROHC Profile 1 compressor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -803,7 +803,7 @@ mod tests {
         P1_UO1_IP_ID_LSB_WIDTH_DEFAULT, P1_UO1_TS_LSB_WIDTH_DEFAULT,
     };
     use crate::profiles::profile1::packet_types::IrPacket;
-    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
+    use crate::protocol_types::RtpUdpIpv4Headers;
     use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
     use std::time::Instant;
 

@@ -12,7 +12,8 @@
 //!
 //! ```rust
 //! use rohcstar::packet_defs::GenericUncompressedHeaders;
-//! use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+//! use rohcstar::profiles::profile1::Profile1Handler;
+//! use rohcstar::protocol_types::RtpUdpIpv4Headers;
 //! use rohcstar::time::SystemClock;
 //! use rohcstar::{RohcEngine, RohcProfile};
 //! use std::sync::Arc;
@@ -64,6 +65,7 @@ pub mod engine;
 pub mod error;
 pub mod packet_defs;
 pub mod profiles;
+pub mod protocol_types;
 pub mod time;
 pub mod traits;
 pub mod types;

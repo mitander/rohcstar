@@ -11,9 +11,9 @@ use crate::types::Timestamp;
 use super::super::constants::*;
 use super::super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::super::packet_types::IrPacket;
-use super::super::protocol_types::RtpUdpIpv4Headers;
 use super::super::serialization::ir_packets::serialize_ir;
 use super::{min_wrapping_distance_u16, min_wrapping_distance_u32};
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Determines if an IR packet must be sent by the compressor.
 ///

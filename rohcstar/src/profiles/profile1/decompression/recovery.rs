@@ -9,7 +9,7 @@ use crate::error::{RohcError, RohcParsingError};
 use crate::types::{IpId, SequenceNumber, Timestamp};
 
 use super::super::context::Profile1DecompressorContext;
-use super::super::protocol_types::RtpUdpIpv4Headers;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// LSB constraint for sequence number recovery validation.
 #[derive(Debug, Clone, Copy)]

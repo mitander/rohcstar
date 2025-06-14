@@ -11,7 +11,7 @@ use crate::constants::{
     RTP_VERSION, UDP_HEADER_LENGTH_BYTES,
 };
 use crate::error::{Field, NetworkLayer, ParseContext, RohcParsingError, StructureType};
-use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
+use crate::protocol_types::RtpUdpIpv4Headers;
 use crate::types::{SequenceNumber, Ssrc, Timestamp};
 
 // Helper structs for holding intermediate parsing results.

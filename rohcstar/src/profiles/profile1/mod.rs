@@ -13,7 +13,7 @@
 //! - `discriminator`: Defines `Profile1PacketType` for structured packet type identification.
 //! - `serialization`: Focused packet serialization modules (IR, UO-0, UO-1 variants).
 //! - `packet_types`: Defines Profile 1 specific ROHC packet representations (IR, UO-0, UO-1).
-//! - `protocol_types`: Defines `RtpUdpIpv4Headers`.
+//! - Re-exports `RtpUdpIpv4Headers` from `protocol_types` for convenience.
 //! - `constants`: Holds constants specific to Profile 1 operations.
 
 mod compression;
@@ -24,7 +24,7 @@ pub mod decompression;
 pub mod discriminator;
 pub mod handler;
 pub mod packet_types;
-pub mod protocol_types;
+
 pub mod serialization;
 mod state_machine;
 mod state_transitions;
@@ -35,5 +35,5 @@ pub use self::context::{Profile1CompressorContext, Profile1DecompressorContext};
 pub use self::discriminator::Profile1PacketType;
 pub use self::handler::Profile1Handler;
 pub use self::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
-pub use self::protocol_types::RtpUdpIpv4Headers;
 pub use self::serialization::ir_packets::serialize_ir;
+pub use crate::protocol_types::RtpUdpIpv4Headers;

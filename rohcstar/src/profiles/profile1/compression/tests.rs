@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use super::super::constants::*;
 use super::super::context::{Profile1CompressorContext, Profile1CompressorMode};
-use super::super::protocol_types::RtpUdpIpv4Headers;
+use crate::protocol_types::RtpUdpIpv4Headers;
 use super::uo_compression::compress_as_uo;
 
 fn create_test_context(

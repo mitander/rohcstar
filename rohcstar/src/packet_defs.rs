@@ -7,7 +7,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::profiles::profile1::RtpUdpIpv4Headers;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Supported ROHC profile identifiers.
 ///
@@ -67,13 +67,11 @@ impl From<RohcProfile> for u8 {
 /// A generic container for various types of uncompressed protocol headers.
 ///
 /// This enum allows profile handlers to work with different header formats
-/// through a unified interface. Each variant will correspond to the set of
-/// headers a specific ROHC profile (or a group of similar profiles) can process.
+/// through a unified interface. Each variant corresponds to the set of
+/// headers a specific ROHC profile can process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenericUncompressedHeaders {
     /// Uncompressed headers for RTP/UDP/IPv4, typically processed by ROHC Profile 1.
-    /// The actual struct `RtpUdpIpv4Headers` will be defined within the Profile 1 module.
-    /// We use a fully qualified path here to indicate its future location.
     RtpUdpIpv4(RtpUdpIpv4Headers),
 
     /// A raw byte payload primarily for testing or for profiles that handle opaque data.
@@ -86,9 +84,7 @@ impl GenericUncompressedHeaders {
     ///
     /// # Returns
     /// A reference to the headers if this is the `RtpUdpIpv4` variant, otherwise `None`.
-    pub fn as_rtp_udp_ipv4(
-        &self,
-    ) -> Option<&crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers> {
+    pub fn as_rtp_udp_ipv4(&self) -> Option<&RtpUdpIpv4Headers> {
         match self {
             GenericUncompressedHeaders::RtpUdpIpv4(headers) => Some(headers),
             _ => None,
@@ -99,9 +95,7 @@ impl GenericUncompressedHeaders {
     ///
     /// # Returns
     /// A mutable reference to the headers if this is the `RtpUdpIpv4` variant, otherwise `None`.
-    pub fn as_rtp_udp_ipv4_mut(
-        &mut self,
-    ) -> Option<&mut crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers> {
+    pub fn as_rtp_udp_ipv4_mut(&mut self) -> Option<&mut RtpUdpIpv4Headers> {
         match self {
             GenericUncompressedHeaders::RtpUdpIpv4(headers) => Some(headers),
             _ => None,
@@ -137,7 +131,6 @@ impl GenericUncompressedHeaders {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
 
     #[test]
     fn rohc_profile_from_u8() {

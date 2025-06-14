@@ -14,7 +14,6 @@ use crate::types::{IpId, Timestamp};
 
 use super::super::constants::P1_MAX_REASONABLE_SN_JUMP;
 use super::super::context::Profile1DecompressorContext;
-use super::super::protocol_types::RtpUdpIpv4Headers;
 use super::super::serialization::uo1_packets::{
     deserialize_uo1_id, deserialize_uo1_rtp, deserialize_uo1_sn, deserialize_uo1_ts,
     prepare_generic_uo_crc_input_into_buf, prepare_generic_uo_crc_input_payload,
@@ -25,6 +24,7 @@ use super::recovery::{
     calculate_reconstructed_ts_implicit_sn_plus_one, reconstruct_headers_from_context,
     try_sn_recovery,
 };
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Decompresses a UO-1-SN packet, validates CRC, updates context, and reconstructs headers.
 ///

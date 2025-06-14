@@ -32,7 +32,6 @@ use proc_macro2::Span;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{FnArg, ItemFn, ItemStruct, Pat, PatType, Stmt, Visibility};
-use walkdir;
 
 // --- Configuration Constants ---
 
@@ -111,7 +110,7 @@ impl<'a> TidyVisitor<'a> {
     }
 }
 
-impl<'ast, 'a> Visit<'ast> for TidyVisitor<'a> {
+impl<'ast> Visit<'ast> for TidyVisitor<'_> {
     /// Check function definitions for public API naming and documentation.
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
         let is_public = matches!(item.vis, Visibility::Public(_));
@@ -237,15 +236,10 @@ impl<'ast, 'a> Visit<'ast> for TidyVisitor<'a> {
 
 /// Helper to find a specific method call within a statement's expression.
 fn find_call_in_stmt(stmt: &Stmt, method_name: &str) -> Option<Span> {
-    match stmt {
-        Stmt::Expr(expr, _) => {
-            if let syn::Expr::MethodCall(mc) = expr {
-                if mc.method == method_name {
-                    return Some(mc.method.span());
-                }
-            }
+    if let Stmt::Expr(syn::Expr::MethodCall(mc), _) = stmt {
+        if mc.method == method_name {
+            return Some(mc.method.span());
         }
-        _ => {}
     }
     None
 }
@@ -278,9 +272,7 @@ fn list_rust_files() -> Vec<PathBuf> {
     walkdir::WalkDir::new("src")
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| {
-            e.file_type().is_file() && e.path().extension().map_or(false, |ext| ext == "rs")
-        })
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "rs"))
         .map(|e| e.path().to_path_buf())
         .collect()
 }
@@ -300,7 +292,7 @@ mod tests {
                 continue;
             }
 
-            let source_text = fs::read_to_string(&path).expect("Failed to read file");
+            let source_text = fs::read_to_string(path).expect("Failed to read file");
             let file = SourceFile {
                 path,
                 text: &source_text,

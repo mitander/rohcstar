@@ -9,10 +9,10 @@
 use crate::crc::CrcCalculators;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 use super::context::Profile1DecompressorContext;
 use super::discriminator::Profile1PacketType;
-use super::protocol_types::RtpUdpIpv4Headers;
 
 pub mod ir_decompression;
 pub mod recovery;

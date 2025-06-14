@@ -5,14 +5,15 @@
 //! It works in conjunction with the `decompression` module which handles packet parsing
 //! and header reconstruction.
 
+use crate::crc::CrcCalculators;
+use crate::error::{DecompressionError, RohcError, RohcParsingError};
+use crate::packet_defs::RohcProfile;
+use crate::protocol_types::RtpUdpIpv4Headers;
+
 use super::context::{Profile1DecompressorContext, Profile1DecompressorMode};
 use super::decompression;
 use super::discriminator::Profile1PacketType;
 use super::state_transitions::{TransitionEvent, process_transition};
-
-use crate::crc::CrcCalculators;
-use crate::error::{DecompressionError, RohcError, RohcParsingError};
-use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 
 /// Processes a received IR packet.
 ///
@@ -35,7 +36,7 @@ pub(super) fn process_ir_packet(
     packet: &[u8],
     crc_calculators: &CrcCalculators,
     handler_profile_id: RohcProfile,
-) -> Result<GenericUncompressedHeaders, RohcError> {
+) -> Result<RtpUdpIpv4Headers, RohcError> {
     // IR packets are valid from any mode - no pre-validation needed
     let initial_mode = context.mode;
 
@@ -57,9 +58,7 @@ pub(super) fn process_ir_packet(
         initial_mode
     );
 
-    Ok(GenericUncompressedHeaders::RtpUdpIpv4(
-        reconstructed_rtp_headers,
-    ))
+    Ok(reconstructed_rtp_headers)
 }
 
 /// Processes a received UO packet when the decompressor is in Full Context (FC) mode.
@@ -82,7 +81,7 @@ pub(super) fn process_packet_in_fc_mode(
     packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
-) -> Result<GenericUncompressedHeaders, RohcError> {
+) -> Result<RtpUdpIpv4Headers, RohcError> {
     debug_assert_eq!(
         context.mode,
         Profile1DecompressorMode::FullContext,
@@ -132,7 +131,7 @@ pub(super) fn process_packet_in_fc_mode(
         }
     }
 
-    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
+    outcome
 }
 
 /// Processes a received ROHC packet when the decompressor is in Static Context (SC) mode.
@@ -159,7 +158,7 @@ pub(super) fn process_packet_in_sc_mode(
     packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
-) -> Result<GenericUncompressedHeaders, RohcError> {
+) -> Result<RtpUdpIpv4Headers, RohcError> {
     // Function may transition mode during execution, so only verify initial state
     if context.mode != Profile1DecompressorMode::StaticContext {
         return Err(RohcError::InvalidState(format!(
@@ -223,9 +222,7 @@ pub(super) fn process_packet_in_sc_mode(
                 },
             );
 
-            Ok(GenericUncompressedHeaders::RtpUdpIpv4(
-                decompress_result.as_ref().unwrap().clone(),
-            ))
+            Ok(decompress_result.as_ref().unwrap().clone())
         }
         Err(e) => {
             // Only dynamic updating packets count for SC->NC logic
@@ -273,7 +270,7 @@ pub(super) fn process_packet_in_so_mode(
     packet: &[u8],
     discriminated_type: Profile1PacketType,
     crc_calculators: &CrcCalculators,
-) -> Result<GenericUncompressedHeaders, RohcError> {
+) -> Result<RtpUdpIpv4Headers, RohcError> {
     debug_assert_eq!(
         context.mode,
         Profile1DecompressorMode::SecondOrder,
@@ -317,7 +314,7 @@ pub(super) fn process_packet_in_so_mode(
         }
     }
 
-    outcome.map(GenericUncompressedHeaders::RtpUdpIpv4)
+    outcome
 }
 
 #[cfg(test)]

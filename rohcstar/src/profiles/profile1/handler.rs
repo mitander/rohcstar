@@ -8,13 +8,6 @@
 
 use std::time::Instant;
 
-use super::compression::{compress_as_ir, compress_as_uo, should_force_ir};
-use super::context::{
-    Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
-};
-use super::discriminator::Profile1PacketType;
-use super::state_machine;
-
 use crate::crc::CrcCalculators;
 use crate::error::{
     CompressionError, DecompressionError, EngineError, Field, ParseContext, RohcError,
@@ -23,6 +16,13 @@ use crate::error::{
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 use crate::types::ContextId;
+
+use super::compression::{compress_as_ir, compress_as_uo, should_force_ir};
+use super::context::{
+    Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
+};
+use super::discriminator::Profile1PacketType;
+use super::state_machine;
 
 /// ROHC Profile 1 handler for RTP/UDP/IP packet compression.
 ///
@@ -230,6 +230,7 @@ impl ProfileHandler for Profile1Handler {
                         &self.crc_calculators,
                         self.profile_id(),
                     )
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4)
                 } else {
                     Err(RohcError::Decompression(
                         DecompressionError::InvalidPacketType {
@@ -247,7 +248,8 @@ impl ProfileHandler for Profile1Handler {
                         packet,
                         &self.crc_calculators,
                         self.profile_id(),
-                    );
+                    )
+                    .map(GenericUncompressedHeaders::RtpUdpIpv4);
                 }
                 // Delegate to mode-specific UO/other packet processing in state_machine
                 match context.mode {
@@ -258,6 +260,7 @@ impl ProfileHandler for Profile1Handler {
                             discriminated_type,
                             &self.crc_calculators,
                         )
+                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
                     }
                     Profile1DecompressorMode::StaticContext => {
                         state_machine::process_packet_in_sc_mode(
@@ -266,6 +269,7 @@ impl ProfileHandler for Profile1Handler {
                             discriminated_type,
                             &self.crc_calculators,
                         )
+                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
                     }
                     Profile1DecompressorMode::SecondOrder => {
                         state_machine::process_packet_in_so_mode(
@@ -274,6 +278,7 @@ impl ProfileHandler for Profile1Handler {
                             discriminated_type,
                             &self.crc_calculators,
                         )
+                        .map(GenericUncompressedHeaders::RtpUdpIpv4)
                     }
                     Profile1DecompressorMode::NoContext => {
                         unreachable!("NoContext handled by the outer match")
@@ -291,13 +296,14 @@ impl ProfileHandler for Profile1Handler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::packet_defs::GenericUncompressedHeaders;
     use crate::profiles::profile1::constants::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
     use crate::profiles::profile1::context::Profile1CompressorMode;
     use crate::profiles::profile1::packet_types::IrPacket;
-    use crate::profiles::profile1::protocol_types::RtpUdpIpv4Headers;
     use crate::profiles::profile1::serialization::ir_packets::serialize_ir;
+    use crate::protocol_types::RtpUdpIpv4Headers;
+
+    use super::*;
 
     #[test]
     fn handler_calls_compressor_for_ir() {

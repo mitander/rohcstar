@@ -9,9 +9,9 @@ use crate::packet_defs::RohcProfile;
 use crate::traits::RohcDecompressorContext;
 
 use super::super::context::Profile1DecompressorContext;
-use super::super::protocol_types::RtpUdpIpv4Headers;
 use super::super::serialization::ir_packets::deserialize_ir;
 use super::recovery::reconstruct_headers_from_context;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Decompresses IR packet and reconstructs headers from static chain information (IP addresses, ports, SSRC) and dynamic chain elements
 /// (SN, TS, Marker, optional TS_STRIDE). It initializes the decompressor context

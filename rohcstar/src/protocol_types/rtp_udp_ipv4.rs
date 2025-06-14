@@ -1,8 +1,8 @@
-//! Protocol header types specific to ROHC (Robust Header Compression) Profile 1 (RTP/UDP/IP).
+//! RTP/UDP/IPv4 protocol header types for ROHC compression.
 //!
 //! This module defines the structure for representing combined uncompressed
-//! RTP/UDP/IPv4 headers, which are the target for compression and the result
-//! of decompression for Profile 1.
+//! RTP/UDP/IPv4 headers, used primarily by ROHC Profile 1 but available
+//! for other profiles that need RTP/UDP/IPv4 support.
 
 use std::net::Ipv4Addr;
 
