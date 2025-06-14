@@ -19,6 +19,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "rohcstar-sim"
 path = "src/main.rs"
 
+[[bin]]
+name = "fuzz-monitor"
+path = "src/bin/fuzz_monitor.rs"
+
 [[bench]]
 name = "simulator_bench"
 harness = false
