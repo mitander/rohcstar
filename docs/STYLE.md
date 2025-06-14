@@ -246,28 +246,44 @@ Before: 89ns per packet
 After: 12ns per packet
 ```
 
-## Clippy
+## Automated Quality Enforcement
 
-**Limits:**
-- Module: <500 lines
-- Function: <50 lines
-- No deeply nested code (>3 levels)
+Style guides are useless if they aren't enforced. We use a three-tiered approach combining standard tools with custom checks.
 
-Style guides are useless if they aren't enforced. We don't rely on memory or manual checks; we use automated tooling to ensure consistency.
+### Standard Tools (CI Required)
+- `rustfmt --check`: Code formatting consistency
+- `cargo clippy`: Standard lints with cognitive complexity limits
+- Custom tidy system: Project-specific quality ratchets
+
+### Tidy System Philosophy
+
+Our custom tidy system focuses on what standard tools cannot catch:
+
+**Level 1: Critical Enforcement** (CI Breaking)
+- Memory safety (no `.unwrap()` without safety comments)
+- Public API clarity (unambiguous naming)
+- Architectural integrity (no anti-pattern modules)
+- Documentation completeness
+
+**Level 2: Quality Ratchets** (Prevent Regression)
+- Module size high-water mark (650 lines)
+- Struct field count limits (12 fields max)
+- Conscious growth with justification
+
+**Level 3: Guidelines** (Human Judgment)
+- Internal naming conventions
+- Code clarity suggestions
+- Professional discretion trusted
 
 ### Config (`clippy.toml`)
 
 ```toml
-# clippy.toml (Example)
+# Cognitive complexity - the real measure of function complexity
 
-# The < 500 lines limit is checked by the too-many-lines-threshold.
+cognitive-complexity-threshold = 25
 # Clippy is smart enough to exclude comments and documentation, so it only measures the production code’s complexity.
-too-many-lines-threshold = 500
+too-many-lines-threshold = 1000
 
-# The `< 50 lines` and "no deep nesting" rules are enforced by the `cognitive-complexity-threshold`.
-# This metric is better than a raw line count because it specifically penalizes complex branching and
-# nested logic that make functions hard to understand.
-cognitive-complexity-threshold = 15
 ```
 
 

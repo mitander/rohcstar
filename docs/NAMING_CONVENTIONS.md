@@ -1,6 +1,6 @@
 # Rohcstar Naming Conventions
 
-Consistency enables skimmability. Same concept, same name, everywhere.
+Simple, binary rule: Public APIs must be unambiguous. Private code uses professional judgment.
 
 ## Functions
 
@@ -30,11 +30,20 @@ parse_packet()    // Also returns Result (try_ optional for clarity)
 find_context()    // Returns Option
 ```
 
-### Rules
+### The Binary Rule
 
-1. Use full words: `sequence_number` not `seq_num` or `sn`
-2. Exception: Universally known acronyms (CRC, IP, UDP, RTP)
-3. Parameters match struct fields they populate
+**Public APIs (pub): STRICT** - Mechanically enforced
+- Function names: `compress_packet` not `compress_pkt`
+- Parameters: `context: &mut Context` not `ctx: &mut Context`
+- Struct fields: `pub sequence_number: u16` not `pub sn: u16`
+- Return types: Clear and unambiguous
+
+**Private Code: PROFESSIONAL JUDGMENT** - Code review enforced
+- Use whatever is clearest in context
+- Short closures: `ctx` is fine if obvious
+- RFC implementation: `k`, `p`, `sn` when matching spec
+- Long functions: Prefer descriptive names
+- Team review validates appropriateness
 
 ## Types
 
@@ -72,17 +81,37 @@ const MAX_PACKET_SIZE: usize = 2048;
 const DEFAULT_WINDOW_SIZE: u16 = 64;
 ```
 
-## Variables
+## Examples
 
 ```rust
-// Local variables - descriptive
-let packet_length = calculate_length();     // Not len or pkt_len
-let compressor_context = get_context(cid);  // Not ctx
-let sequence_number = extract_sn(packet);   // Not sn or seq_num
+// ❌ PUBLIC API - FAILS CI
+pub fn compress(ctx: &mut Context, sn: u16) -> Result<Vec<u8>, RohcError>
+pub struct Packet { pub ctx_id: u16 }
 
-// Common patterns
-let mut output_buffer = [0u8; 128];
-let bytes_written = compress(&mut output_buffer)?;
+// ✅ PUBLIC API - PASSES CI
+pub fn compress(
+    context: &mut CompressorContext,
+    sequence_number: u16,
+) -> Result<Vec<u8>, RohcError>
+
+pub struct Packet {
+    pub context_id: ContextId,
+    pub sequence_number: u16,
+}
+
+// ✅ PRIVATE CODE - YOUR CHOICE (validated in code review)
+fn process_packet(ctx: &Context) {          // OK: Team decides
+    let sn = ctx.sequence_number();         // OK: RFC notation
+}
+
+self.contexts.iter_mut().for_each(|ctx| {   // OK: Short, obvious
+    ctx.update_timestamp();
+});
+
+fn decode_w_lsb(lsb: u64, v_ref: u64, k: u8, p: i64) -> u64 {
+    // RFC 3095 Section 4.5.1 notation
+    let window_size = 1u64 << k;
+}
 ```
 
 ## Test Names
@@ -121,21 +150,47 @@ pub enum RohcError {
 }
 ```
 
-## Forbidden
+## Enforcement
 
-```rust
-// Never use these patterns:
-let ctx = get_context();       // Use context
-let sn = seq_num;              // Use sequence_number
-struct PacketParser;           // Too generic - Profile1PacketParser
-const TIMEOUT: u64 = 300;      // Which timeout? CONTEXT_TIMEOUT_SECS
-```
+**Mechanical (CI Breaking via Tidy System)**
+- Public function names with abbreviations (`ctx` → `context`)
+- Public function parameters with abbreviations (`seq_num` → `sequence_number`)
+- Public struct fields with abbreviations
+- Public API documentation completeness
+- Anti-pattern module names (`utils.rs`, `helpers.rs`)
 
-## RFC Term Mapping
+**Human (Code Review)**
+- Internal naming clarity and appropriateness
+- RFC notation when it enhances understanding
+- Variable naming based on context and purpose
+- Overall code readability and maintainability
 
-When RFC uses abbreviations, we expand them:
+## Philosophy
 
-- SN → sequence_number
-- TS → timestamp
-- CID → context_id
-- SSRC → ssrc (universally known in RTP context)
+**Why the Binary Rule?**
+
+1. **Zero Decision Fatigue**: No need to assess "scope length" or "RFC compliance"
+2. **Clear Boundaries**: Public contract vs. private implementation
+3. **Trust Professionals**: Developers can judge what's clearest internally
+4. **Mechanical Enforcement**: Simple rule that's easy to check automatically
+
+**Public APIs are Forever**
+Once published, changing `ctx` to `context` in a public function breaks every user. The external contract must be unambiguous from day one.
+
+**Private Code Evolves**
+Internal naming can be refactored, improved, and adapted as the team learns. A 3-character variable in a closure might be perfect; a 50-line function might need descriptive names. Professional judgment applies.
+
+### Guideline: Name Variables for What They Are
+
+Strive to name variables based on the value they hold. Often, this is closely related to the function that produced the value. For example, a variable holding the result of `compress_packet()` can often be clearly named `compressed_packet`.
+
+However, this is a principle, not a strict rule. Use your judgment. If a different name provides more clarity about the variable's purpose or its state in the program's logic (e.g., `stale_context` vs. `current_context`), prefer that more descriptive name. **Clarity is the ultimate goal.**
+
+## Migration Guide
+
+If you have existing code:
+
+1. **Public APIs**: Fix immediately (CI will catch these)
+2. **Private code**: Fix during normal refactoring
+3. **Tests**: Be pragmatic, focus on clarity
+4. **RFC implementation**: Use spec notation when it helps
