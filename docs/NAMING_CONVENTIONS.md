@@ -33,12 +33,14 @@ find_context()    // Returns Option
 ### The Binary Rule
 
 **Public APIs (pub): STRICT** - Mechanically enforced
+
 - Function names: `compress_packet` not `compress_pkt`
 - Parameters: `context: &mut Context` not `ctx: &mut Context`
 - Struct fields: `pub sequence_number: u16` not `pub sn: u16`
 - Return types: Clear and unambiguous
 
 **Private Code: PROFESSIONAL JUDGMENT** - Code review enforced
+
 - Use whatever is clearest in context
 - Short closures: `ctx` is fine if obvious
 - RFC implementation: `k`, `p`, `sn` when matching spec
@@ -137,6 +139,49 @@ mod decompression;    // Not decompressor
 mod state_machine;    // Not states or state_mgmt
 ```
 
+## Documentation
+
+**Purpose-focused descriptions** - Describe what the function does, not what it returns:
+
+```rust
+// GOOD - describes purpose
+/// Compresses RTP/UDP/IP headers into ROHC packet.
+fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
+
+/// Creates a new ROHC engine with specified configuration.
+fn new(config: Config) -> RohcEngine
+
+// BAD - restates signature
+/// Returns compressed packet data.
+/// Returns a new ROHC engine.
+```
+
+**Document returns only when non-obvious:**
+
+```rust
+// GOOD - return semantics aren't clear from signature
+/// Returns `None` if stride is not established or result exceeds 8 bits.
+fn calculate_ts_scaled(&self, ts: u32) -> Option<u8>
+
+/// Returns a slice valid until the next compression operation.
+fn get_buffer(&mut self) -> &[u8]
+
+/// Returns the previous value.
+fn replace(&mut self, new_value: T) -> T
+
+// BAD - obvious from signature + name
+/// Returns the length.
+fn len(&self) -> usize
+```
+
+**Standard pattern:**
+
+- Brief purpose statement (required)
+- Longer explanation if behavior is complex (optional)
+- `# Errors` section for fallible functions (required)
+- `# Examples` section for public APIs (encouraged)
+- No `# Parameters` - good names and types are self-documenting
+
 ## Error Types
 
 ```rust
@@ -153,6 +198,7 @@ pub enum RohcError {
 ## Enforcement
 
 **Mechanical (CI Breaking via Tidy System)**
+
 - Public function names with abbreviations (`ctx` → `context`)
 - Public function parameters with abbreviations (`seq_num` → `sequence_number`)
 - Public struct fields with abbreviations
@@ -160,6 +206,7 @@ pub enum RohcError {
 - Anti-pattern module names (`utils.rs`, `helpers.rs`)
 
 **Human (Code Review)**
+
 - Internal naming clarity and appropriateness
 - RFC notation when it enhances understanding
 - Variable naming based on context and purpose

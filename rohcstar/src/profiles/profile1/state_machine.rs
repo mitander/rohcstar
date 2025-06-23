@@ -15,22 +15,13 @@ use super::decompression;
 use super::discriminator::Profile1PacketType;
 use super::state_transitions::{TransitionEvent, process_transition};
 
-/// Processes a received IR packet.
+/// Processes a received IR packet and transitions decompressor to FullContext mode.
 ///
-/// This function always transitions the decompressor to `FullContext` mode and
-/// resets relevant state counters after successful IR packet parsing.
-///
-/// # Parameters
-/// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet`: The ROHC packet data for the IR packet (core packet, after Add-CID if any).
-/// - `crc_calculators`: For CRC verification.
-/// - `handler_profile_id`: The `RohcProfile` ID of the calling handler, used for profile validation.
-///
-/// # Returns
-/// The reconstructed `GenericUncompressedHeaders` on success.
+/// Always transitions the decompressor to `FullContext` mode and resets relevant
+/// state counters after successful IR packet parsing.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`]: If IR packet parsing, CRC validation, or profile validation fails.
+/// - `RohcError::Parsing` - IR packet parsing, CRC validation, or profile validation fails
 pub(super) fn process_ir_packet(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -65,17 +56,8 @@ pub(super) fn process_ir_packet(
 ///
 /// Handles state transitions to SO or SC mode based on the outcome of UO packet processing.
 ///
-/// # Parameters
-/// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
-/// - `discriminated_type`: The `Profile1PacketType` (unused as `decompress_as_uo` re-discriminates).
-/// - `crc_calculators`: For CRC verification.
-///
-/// # Returns
-/// The reconstructed `GenericUncompressedHeaders` on successful UO packet processing.
-///
 /// # Errors
-/// - [`RohcError`]: Propagated from `decompress_as_uo` or state transition logic.
+/// - `RohcError` - Propagated from `decompress_as_uo` or state transition logic
 pub(super) fn process_packet_in_fc_mode(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -140,19 +122,10 @@ pub(super) fn process_packet_in_fc_mode(
 /// Successful processing of UO-1 packets transitions to FC mode. Repeated failures
 /// can lead to a transition to NC mode.
 ///
-/// # Parameters
-/// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
-/// - `discriminated_type`: The `Profile1PacketType` determined by the caller.
-/// - `crc_calculators`: For CRC verification.
-///
-/// # Returns
-/// The reconstructed `GenericUncompressedHeaders` on successful decompression and context update.
-///
 /// # Errors
-/// - [`RohcError::InvalidState`]: If a UO-0 packet is received.
-/// - [`RohcError::Parsing`]: If packet type is unknown or decompression fails.
-/// - Other `RohcError` variants from underlying operations.
+/// - `RohcError::InvalidState` - If a UO-0 packet is received
+/// - `RohcError::Parsing` - If packet type is unknown or decompression fails
+/// - Other `RohcError` variants from underlying operations
 pub(super) fn process_packet_in_sc_mode(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -254,17 +227,8 @@ pub(super) fn process_packet_in_sc_mode(
 /// Updates confidence levels based on packet processing success or failure.
 /// Transitions to NC mode if confidence drops too low or too many consecutive failures occur.
 ///
-/// # Parameters
-/// - `context`: Mutable reference to the `Profile1DecompressorContext`.
-/// - `packet`: The ROHC packet data (core packet, after Add-CID if any).
-/// - `discriminated_type`: The `Profile1PacketType` (unused as `decompress_as_uo` re-discriminates).
-/// - `crc_calculators`: For CRC verification.
-///
-/// # Returns
-/// The reconstructed `GenericUncompressedHeaders` on successful UO packet processing.
-///
 /// # Errors
-/// - [`RohcError`]: Propagated from `decompress_as_uo` or state transition logic.
+/// - `RohcError` - Propagated from `decompress_as_uo` or state transition logic
 pub(super) fn process_packet_in_so_mode(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],

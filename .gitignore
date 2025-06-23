@@ -14,3 +14,6 @@ rohc_sim_failures.log
 
 # Private TODO
 TODO.md
+
+# Vendored Dependencies
+vendor

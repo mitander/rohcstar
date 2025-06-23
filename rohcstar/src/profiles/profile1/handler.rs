@@ -46,9 +46,6 @@ impl Profile1Handler {
     ///
     /// Initializes the handler with pre-configured CRC calculators for performance
     /// optimization during packet processing.
-    ///
-    /// # Returns
-    /// A new `Profile1Handler` ready for registration with a ROHC engine.
     pub fn new() -> Self {
         Profile1Handler {
             crc_calculators: CrcCalculators::new(),
@@ -58,25 +55,14 @@ impl Profile1Handler {
 
 impl ProfileHandler for Profile1Handler {
     /// Returns the ROHC Profile Identifier for Profile 1.
-    ///
-    /// # Returns
-    /// [`RohcProfile::RtpUdpIp`] indicating this handler supports Profile 1.
     fn profile_id(&self) -> RohcProfile {
         RohcProfile::RtpUdpIp
     }
 
     /// Creates a new Profile 1 compressor context.
     ///
-    /// Initializes a context in the Initialization and Refresh (IR) state with
+    /// Initializes a context ready for packet compression operations with
     /// the specified configuration parameters.
-    ///
-    /// # Parameters
-    /// - `cid`: Context ID for the new compression flow
-    /// - `ir_refresh_interval`: Number of packets between IR refreshes
-    /// - `creation_time`: Timestamp for context creation and initial access time
-    ///
-    /// # Returns
-    /// A boxed Profile 1 compressor context ready for packet compression.
     fn create_compressor_context(
         &self,
         cid: ContextId,
@@ -92,15 +78,9 @@ impl ProfileHandler for Profile1Handler {
 
     /// Creates a new Profile 1 decompressor context.
     ///
-    /// Initializes a context in the No Context state, ready to receive the first
+    /// Initializes a context ready for packet decompression operations. The context
+    /// begins in NoContext mode and must receive a well-formed and CRC-verified
     /// IR packet for the decompression flow.
-    ///
-    /// # Parameters
-    /// - `cid`: Context ID for the new decompression flow
-    /// - `creation_time`: Timestamp for context creation and initial access time
-    ///
-    /// # Returns
-    /// A boxed Profile 1 decompressor context ready for packet decompression.
     fn create_decompressor_context(
         &self,
         cid: ContextId,
@@ -111,24 +91,16 @@ impl ProfileHandler for Profile1Handler {
         Box::new(ctx)
     }
 
-    /// Compresses uncompressed RTP/UDP/IP headers into provided buffer.
+    /// Compresses RTP/UDP/IP headers into ROHC packet.
     ///
     /// Analyzes the uncompressed headers and context state to determine the optimal
     /// packet type (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
     /// Updates the compressor context state and statistics.
     ///
-    /// # Parameters
-    /// - `context_dyn`: Mutable reference to the Profile 1 compressor context
-    /// - `headers_generic`: Uncompressed headers to compress (must be RTP/UDP/IPv4)
-    /// - `out`: Output buffer to write the compressed packet into
-    ///
-    /// # Returns
-    /// The number of bytes written to the output buffer.
-    ///
     /// # Errors
-    /// - [`RohcError::Internal`] - Context downcast failed
-    /// - [`RohcError::UnsupportedProfile`] - Headers not compatible with Profile 1
-    /// - [`RohcError::Building`] - Packet construction failed
+    /// - `RohcError::Internal` - Context downcast failed
+    /// - `RohcError::UnsupportedProfile` - Headers not compatible with Profile 1
+    /// - `RohcError::Building` - Packet construction failed
     fn compress(
         &self,
         context_dyn: &mut dyn RohcCompressorContext,
@@ -185,17 +157,10 @@ impl ProfileHandler for Profile1Handler {
     /// the decompressor context and reconstructing the original headers. Handles
     /// packet type discrimination and CRC validation.
     ///
-    /// # Parameters
-    /// - `context_dyn`: Mutable reference to the Profile 1 decompressor context
-    /// - `packet`: ROHC packet data to decompress
-    ///
-    /// # Returns
-    /// The reconstructed uncompressed headers.
-    ///
     /// # Errors
-    /// - [`RohcError::Internal`] - Context downcast failed
-    /// - [`RohcError::Parsing`] - Invalid packet format or CRC mismatch
-    /// - [`RohcError::Decompression`] - Context state inconsistent with packet type
+    /// - `RohcError::Internal` - Context downcast failed
+    /// - `RohcError::Parsing` - Packet too short, invalid type, or CRC mismatch
+    /// - `RohcError::Decompression` - Context state inconsistent with packet type
     fn decompress(
         &self,
         context_dyn: &mut dyn RohcDecompressorContext,

@@ -5,6 +5,7 @@
 Write code that works, performs well, and doesn't make future-you hate current-you.
 
 Three things matter:
+
 1. **Correctness** - It should do what the RFC says
 2. **Performance** - It should be fast (and we can prove it)
 3. **Simplicity** - It should be obvious what's happening
@@ -112,27 +113,25 @@ Every module has a purpose statement:
 
 ### Function Documentation
 
-Public functions get full docs. Private functions get comments only when non-obvious.
+Public functions get focused docs following Rust ecosystem patterns. Private functions get comments only when non-obvious.
 
-```rust
-/// Compresses uncompressed RTP/UDP/IP headers into provided buffer.
+````rust
+/// Compresses RTP/UDP/IP headers into ROHC packet.
 ///
-/// Analyzes the uncompressed headers and context state to determine the optimal
-/// packet type (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
-/// Updates the compressor context state and statistics.
-///
-/// # Parameters
-/// - `context_dyn`: Mutable reference to the Profile 1 compressor context
-/// - `headers_generic`: Uncompressed headers to compress (must be RTP/UDP/IPv4)
-/// - `out`: Output buffer to write the compressed packet into
-///
-/// # Returns
-/// The number of bytes written to the output buffer.
+/// Analyzes headers and context state to determine optimal packet type
+/// (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
+/// Updates compressor context state and statistics.
 ///
 /// # Errors
-/// - [`RohcError::Internal`] - Context downcast failed
-/// - [`RohcError::UnsupportedProfile`] - Headers not compatible with Profile 1
-/// - [`RohcError::Building`] - Packet construction failed
+/// - `RohcError::Internal` - Context downcast failed
+/// - `RohcError::UnsupportedProfile` - Headers not compatible with Profile 1
+/// - `RohcError::Building` - Packet construction failed
+///
+/// # Examples
+/// ```
+/// let mut buffer = [0u8; 1500];
+/// let size = handler.compress(&mut context, &headers, &mut buffer)?;
+/// ```
 fn compress(
     &self,
     context_dyn: &mut dyn RohcCompressorContext,
@@ -144,7 +143,36 @@ fn compress(
 // Private function - comment only if complex
 // Calculates minimum K value for W-LSB encoding per RFC 3095 Section 4.5.1
 fn calculate_k_value(v_ref: u16, v: u16) -> u8
-```
+````
+
+**Documentation Pattern:**
+
+- **Purpose-focused descriptions**: "Compresses headers" not "Returns compressed data"
+- **Document returns only when non-obvious**:
+
+  ```rust
+  /// Returns `None` if stride is not established or result exceeds 8 bits.
+  fn calculate_ts_scaled(&self, ts: u32) -> Option<u8>
+
+  /// Returns a slice valid until the next compression operation.
+  fn get_buffer(&mut self) -> &[u8]
+  ```
+
+- **Skip return docs when obvious**:
+
+  ```rust
+  // GOOD - signature tells the story
+  /// Creates a new ROHC engine.
+  fn new() -> RohcEngine
+
+  // BAD - redundant with signature
+  /// Returns a new ROHC engine.
+  fn new() -> RohcEngine
+  ```
+
+- `# Errors` section with specific error variants
+- `# Examples` section showing typical usage
+- No `# Parameters` - good parameter names and types are self-documenting
 
 ### Inline Comments
 
@@ -234,6 +262,7 @@ BENCHMARK: [only if you changed performance]
 ```
 
 Examples:
+
 ```bash
 feat(profile1): add UO-1-RTP packet support
 fix(lsb): handle 32-bit wraparound correctly
@@ -251,6 +280,7 @@ After: 12ns per packet
 Style guides are useless if they aren't enforced. We use a three-tiered approach combining standard tools with custom checks.
 
 ### Standard Tools (CI Required)
+
 - `rustfmt --check`: Code formatting consistency
 - `cargo clippy`: Standard lints with cognitive complexity limits
 - Custom tidy system: Project-specific quality ratchets
@@ -260,17 +290,20 @@ Style guides are useless if they aren't enforced. We use a three-tiered approach
 Our custom tidy system focuses on what standard tools cannot catch:
 
 **Level 1: Critical Enforcement** (CI Breaking)
+
 - Memory safety (no `.unwrap()` without safety comments)
 - Public API clarity (unambiguous naming)
 - Architectural integrity (no anti-pattern modules)
 - Documentation completeness
 
 **Level 2: Quality Ratchets** (Prevent Regression)
+
 - Module size high-water mark (650 lines)
 - Struct field count limits (12 fields max)
 - Conscious growth with justification
 
 **Level 3: Guidelines** (Human Judgment)
+
 - Internal naming conventions
 - Code clarity suggestions
 - Professional discretion trusted
@@ -286,13 +319,12 @@ too-many-lines-threshold = 1000
 
 ```
 
-
-
 ## The Bottom Line
 
 Write code like someone else will maintain it. Because they will. And that someone might be you in six months wondering what you were thinking.
 
 When in doubt:
+
 - Make it correct first
 - Make it fast second (with proof)
 - Make it fancy never

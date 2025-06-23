@@ -24,8 +24,7 @@ const DEFAULT_IR_BUF_SIZE: usize = 64;
 /// - Attempts to establish FullContext using a known IR packet
 /// - Falls back to NoContext if setup fails
 ///
-/// # Parameters
-/// - `data`: Fuzzer-generated input treated as ROHC packet
+/// Fuzzer-generated input is treated as ROHC packet data.
 pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
     let p1_handler = Profile1Handler::new();
     let crc_calculators = CrcCalculators::new();

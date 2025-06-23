@@ -94,10 +94,6 @@ pub fn create_rfc_example_headers() -> RtpUdpIpv4Headers {
 
 /// Creates headers with specified sequence number.
 ///
-/// # Parameters
-/// - `sn`: RTP sequence number to set
-///
-/// # Returns
 /// Headers identical to [`create_rfc_example_headers`] except for sequence number.
 pub fn create_headers_with_sn(sn: u16) -> RtpUdpIpv4Headers {
     let mut headers = create_rfc_example_headers();
@@ -107,10 +103,6 @@ pub fn create_headers_with_sn(sn: u16) -> RtpUdpIpv4Headers {
 
 /// Creates headers with specified timestamp.
 ///
-/// # Parameters
-/// - `ts`: RTP timestamp to set
-///
-/// # Returns
 /// Headers identical to [`create_rfc_example_headers`] except for timestamp.
 pub fn create_headers_with_ts(ts: u32) -> RtpUdpIpv4Headers {
     let mut headers = create_rfc_example_headers();
@@ -119,13 +111,6 @@ pub fn create_headers_with_ts(ts: u32) -> RtpUdpIpv4Headers {
 }
 
 /// Creates headers with specified sequence number and timestamp.
-///
-/// # Parameters
-/// - `sn`: RTP sequence number to set
-/// - `ts`: RTP timestamp to set
-///
-/// # Returns
-/// Headers with both fields updated from baseline.
 pub fn create_headers_with_sn_ts(sn: u16, ts: u32) -> RtpUdpIpv4Headers {
     let mut headers = create_rfc_example_headers();
     headers.rtp_sequence_number = SequenceNumber::new(sn);
@@ -134,13 +119,6 @@ pub fn create_headers_with_sn_ts(sn: u16, ts: u32) -> RtpUdpIpv4Headers {
 }
 
 /// Establishes a compression context by sending an IR packet.
-///
-/// # Parameters
-/// - `engine`: The ROHC engine to use
-/// - `cid`: Context ID to establish
-///
-/// # Returns
-/// Number of bytes in the IR packet.
 pub fn establish_context(engine: &mut RohcEngine, cid: ContextId) -> usize {
     let headers = create_rfc_example_headers();
     let generic = GenericUncompressedHeaders::RtpUdpIpv4(headers);

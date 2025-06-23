@@ -66,7 +66,7 @@ enum CompressionPhase {
 }
 
 impl CompressionPhase {
-    #![allow(dead_code)] // Only used in debug asert, avoid warn in relase builds
+    #![allow(dead_code)] // Only used in debug assert, avoid warn in release builds
     /// Validates that phase transitions follow valid ROHC progression.
     fn debug_validate_transition(from: Self, to: Self) -> bool {
         match (from, to) {
@@ -115,6 +115,12 @@ impl PacketGenerator {
     }
 
     /// Creates a new packet generator with the specified configuration.
+    ///
+    /// # Parameters
+    /// - `config`: Simulation configuration containing packet parameters and phase setup
+    ///
+    /// # Returns
+    /// A new `PacketGenerator` ready to produce deterministic packet sequences.
     pub fn new(config: &SimConfig) -> Self {
         let generator = Self {
             rng: StdRng::seed_from_u64(config.seed),
@@ -259,6 +265,13 @@ pub struct SimulatedChannel {
 
 impl SimulatedChannel {
     /// Creates a new simulated network channel with packet loss.
+    ///
+    /// # Parameters
+    /// - `seed`: Random seed for deterministic packet loss simulation
+    /// - `packet_loss_probability`: Probability of packet loss (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// A new `SimulatedChannel` ready for packet transmission simulation.
     pub fn new(seed: u64, packet_loss_probability: f64) -> Self {
         debug_assert!((0.0..=1.0).contains(&packet_loss_probability));
         Self {
@@ -268,6 +281,12 @@ impl SimulatedChannel {
     }
 
     /// Simulates transmitting a packet through the channel.
+    ///
+    /// # Parameters
+    /// - `packet_bytes`: Packet data to transmit through the simulated channel
+    ///
+    /// # Returns
+    /// `Some(packet_bytes)` if packet survives transmission, `None` if lost.
     pub fn transmit(&mut self, packet_bytes: Vec<u8>) -> Option<Vec<u8>> {
         debug_assert!(!packet_bytes.is_empty());
         if self.packet_loss_probability > 0.0 && self.rng.random_bool(self.packet_loss_probability)
@@ -316,6 +335,12 @@ pub enum SimError {
 
 impl RohcSimulator {
     /// Creates a new high-performance ROHC simulation instance.
+    ///
+    /// # Parameters
+    /// - `config`: Simulation configuration containing packet parameters and behavior settings
+    ///
+    /// # Returns
+    /// A new `RohcSimulator` ready to execute high-performance ROHC simulation runs.
     pub fn new(config: SimConfig) -> Self {
         let mock_clock = Arc::new(MockClock::new(Instant::now()));
 
@@ -347,6 +372,20 @@ impl RohcSimulator {
     }
 
     /// Runs high-performance simulation with error classification.
+    ///
+    /// Executes the complete simulation scenario: generates packets, compresses them,
+    /// transmits through simulated channel, decompresses received packets, and verifies
+    /// correctness. Provides detailed error classification to distinguish implementation
+    /// bugs from expected network behavior effects.
+    ///
+    /// # Returns
+    /// `Ok(())` if simulation completes successfully, error details otherwise.
+    ///
+    /// # Errors
+    /// - [`SimError::CompressionError`] - Compression stage failed
+    /// - [`SimError::DecompressionError`] - Decompression stage failed  
+    /// - [`SimError::VerificationError`] - Header verification failed
+    /// - [`SimError::PacketGenerationExhausted`] - No more packets to generate
     pub fn run(&mut self) -> Result<(), SimError> {
         while let Some(original_headers) = self.packet_generator.next_packet() {
             let generic_headers = GenericUncompressedHeaders::RtpUdpIpv4(original_headers.clone());

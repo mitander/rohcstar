@@ -13,21 +13,12 @@ use super::super::serialization::ir_packets::deserialize_ir;
 use super::recovery::reconstruct_headers_from_context;
 use crate::protocol_types::RtpUdpIpv4Headers;
 
-/// Decompresses IR packet and reconstructs headers from static chain information (IP addresses, ports, SSRC) and dynamic chain elements
-/// (SN, TS, Marker, optional TS_STRIDE). It initializes the decompressor context
-/// based on the received IR packet and validates the profile ID.
+/// Decompresses IR packet and reconstructs headers from static chain information.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to be updated with information from the IR packet.
-/// - `packet`: Byte slice of the core IR packet (after Add-CID octet processing, if any).
-/// - `crc_calculators`: CRC calculator instances for verifying packet integrity.
-/// - `handler_profile_id`: Expected ROHC profile ID for this handler, used for validation.
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
+/// Initializes the decompressor context based on the received IR packet and validates the profile ID.
 ///
 /// # Errors
-/// - [`RohcError::Parsing`] - CRC mismatch, invalid profile ID, or decompression failure
+/// - `RohcError::Parsing` - CRC mismatch, invalid profile ID, or decompression failure
 pub fn decompress_as_ir(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],

@@ -7,23 +7,11 @@
 
 use crate::error::{Field, RohcParsingError};
 
-/// Checks if a value falls within the W-LSB interpretation window.
+/// Determines if a value falls within the W-LSB interpretation window.
 ///
 /// The interpretation window is defined as:
 /// `[reference_value - p_offset, reference_value - p_offset + (2^num_lsb_bits) - 1]`
-/// All calculations are performed modulo `2^N` where `N` is the bit-width of the value
-/// (implicitly 64 bits for `u64` parameters).
-///
-/// # Parameters
-/// - `value`: The value to check.
-/// - `reference_value`: The reference value (`v_ref`) around which the window is centered.
-/// - `num_lsb_bits`: The number of least significant bits (`k`) used for the encoding.
-///   Must be between 1 and 64, inclusive.
-/// - `p_offset`: The window offset parameter (`p`) from W-LSB. A positive `p_offset`
-///   shifts the window to the left (lower values) relative to `reference_value`.
-///
-/// # Returns
-/// `true` if `value` is within the W-LSB interpretation interval, `false` otherwise.
+/// All calculations are performed modulo `2^N` where `N` is the bit-width of the value.
 pub fn is_value_in_lsb_interval(
     value: u64,
     reference_value: u64,
@@ -51,17 +39,10 @@ pub fn is_value_in_lsb_interval(
     value.wrapping_sub(interval_base) < window_size
 }
 
-/// Encodes a value by extracting its N least significant bits.
-///
-/// # Parameters
-/// - `value`: The original value to encode.
-/// - `num_lsb_bits`: The number of LSBs (`k`) to extract. Must be between 1 and 64.
-///
-/// # Returns
-/// The LSB-encoded portion of the value.
+/// Extracts the N least significant bits from a value for W-LSB encoding.
 ///
 /// # Errors
-/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid `num_lsb_bits` parameter
+/// - `RohcParsingError::InvalidLsbOperation` - Invalid `num_lsb_bits` parameter
 pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError> {
     if num_lsb_bits == 0 {
         return Err(RohcParsingError::InvalidLsbOperation {
@@ -87,17 +68,9 @@ pub fn encode_lsb(value: u64, num_lsb_bits: u8) -> Result<u64, RohcParsingError>
     }
 }
 
-/// Fast path LSB decode for UO-0 sequence numbers (4 bits, p=0).
+/// Fast path W-LSB decode optimized for UO-0 sequence numbers (4 bits, p=0).
 ///
-/// Optimized version of decode_lsb for the most common case in ROHC Profile 1.
-/// This eliminates bounds checking and error handling for the hot path.
-///
-/// # Parameters
-/// - `received_lsbs`: 4-bit LSB value (0-15)
-/// - `reference_value`: Reference sequence number from context
-///
-/// # Returns
-/// The reconstructed sequence number (always succeeds for valid inputs)
+/// Eliminates bounds checking and error handling for the most common case in ROHC Profile 1.
 #[inline]
 pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
     debug_assert!(
@@ -124,26 +97,14 @@ pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
     }
 }
 
-/// Reconstructs an original value from its W-LSB encoded representation.
+/// Reconstructs the original value from its W-LSB encoded representation.
 ///
-/// This function implements the W-LSB decoding algorithm. It finds a candidate value (`v_cand`)
-/// such that `v_cand` has the same `k` least significant bits as `received_lsbs`, and
-/// `v_cand` falls within the W-LSB interpretation window:
+/// Finds a candidate value that has the same `k` least significant bits as `received_lsbs`
+/// and falls within the W-LSB interpretation window:
 /// `[reference_value - p_offset, reference_value - p_offset + (2^k) - 1]`.
 ///
-/// # Parameters
-/// - `received_lsbs`: The LSB-encoded part of the value that was received.
-/// - `reference_value`: The reference value (`v_ref`) from the context,
-///   used to disambiguate the LSBs.
-/// - `num_lsb_bits`: The number of LSBs (`k`) that were used for encoding.
-///   Must be between 1 and 63, inclusive, for meaningful W-LSB decoding.
-/// - `p_offset`: The window offset parameter (`p`) from W-LSB.
-///
-/// # Returns
-/// The reconstructed original value.
-///
 /// # Errors
-/// - [`RohcParsingError::InvalidLsbOperation`] - Invalid parameters, LSBs too large,
+/// - `RohcParsingError::InvalidLsbOperation` - Invalid parameters, LSBs too large,
 ///   or no unique resolution
 pub fn decode_lsb(
     received_lsb: u64,

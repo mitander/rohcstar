@@ -29,18 +29,9 @@ use crate::traits::RohcCompressorContext;
 /// UO-1-ID, or UO-1-RTP) based on RFC 3095 compression rules. Updates compressor context
 /// state including timestamp stride detection and scaled mode transitions.
 ///
-/// # Parameters
-/// - `context`: Mutable compressor context containing state and configuration.
-/// - `headers`: Uncompressed headers of the current packet to compress.
-/// - `crc_calculators`: CRC calculator instances for packet integrity checks.
-/// - `out`: Output buffer to write the compressed packet into.
-///
-/// # Returns
-/// The number of bytes written to the output buffer.
-///
 /// # Errors
-/// - [`RohcError::Building`] - No suitable UO packet type available or construction failed
-/// - [`RohcError::Internal`] - Internal logic error
+/// - `RohcError::Building` - No suitable UO packet type available or construction failed
+/// - `RohcError::Internal` - Internal logic error
 pub fn compress_as_uo(
     context: &mut Profile1CompressorContext,
     headers: &RtpUdpIpv4Headers,

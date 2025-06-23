@@ -37,12 +37,7 @@ impl ContextManager {
     /// Adds a new compressor context to the manager.
     ///
     /// If a context with the same CID already exists, it will be overwritten.
-    /// This method is typically called by the ROHC engine after a `ProfileHandler`
-    /// creates a new context.
-    ///
-    /// # Parameters
-    /// - `cid`: The Context ID for the context being added.
-    /// - `context`: The `Box<dyn RohcCompressorContext>` to add.
+    /// Typically called by the ROHC engine after a `ProfileHandler` creates a new context.
     pub fn add_compressor_context(
         &mut self,
         cid: ContextId,
@@ -54,10 +49,6 @@ impl ContextManager {
     /// Adds a new decompressor context to the manager.
     ///
     /// If a context with the same CID already exists, it will be overwritten.
-    ///
-    /// # Parameters
-    /// - `cid`: The Context ID for the context being added.
-    /// - `context`: The `Box<dyn RohcDecompressorContext>` to add.
     pub fn add_decompressor_context(
         &mut self,
         cid: ContextId,
@@ -68,14 +59,8 @@ impl ContextManager {
 
     /// Retrieves a mutable reference to a compressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the compressor context to retrieve.
-    ///
-    /// # Returns
-    /// A mutable reference to the compressor context.
-    ///
     /// # Errors
-    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
+    /// - `RohcError::ContextNotFound` - No context exists for the given CID
     pub fn get_compressor_context_mut(
         &mut self,
         cid: ContextId,
@@ -87,14 +72,8 @@ impl ContextManager {
 
     /// Retrieves a mutable reference to a decompressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the decompressor context to retrieve.
-    ///
-    /// # Returns
-    /// A mutable reference to the decompressor context.
-    ///
     /// # Errors
-    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
+    /// - `RohcError::ContextNotFound` - No context exists for the given CID
     pub fn get_decompressor_context_mut(
         &mut self,
         cid: ContextId,
@@ -106,14 +85,8 @@ impl ContextManager {
 
     /// Retrieves an immutable reference to a compressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the compressor context to retrieve.
-    ///
-    /// # Returns
-    /// An immutable reference to the compressor context.
-    ///
     /// # Errors
-    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
+    /// - `RohcError::ContextNotFound` - No context exists for the given CID
     pub fn get_compressor_context(
         &self,
         cid: ContextId,
@@ -129,14 +102,8 @@ impl ContextManager {
 
     /// Retrieves an immutable reference to a decompressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the decompressor context to retrieve.
-    ///
-    /// # Returns
-    /// An immutable reference to the decompressor context.
-    ///
     /// # Errors
-    /// - [`RohcError::ContextNotFound`] - No context exists for the given CID
+    /// - `RohcError::ContextNotFound` - No context exists for the given CID
     pub fn get_decompressor_context(
         &self,
         cid: ContextId,
@@ -151,11 +118,7 @@ impl ContextManager {
     }
     /// Removes a compressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the compressor context to remove.
-    ///
-    /// # Returns
-    /// The removed `Box<dyn RohcCompressorContext>` if it existed, otherwise `None`.
+    /// Returns the removed context if it existed, otherwise `None`.
     pub fn remove_compressor_context(
         &mut self,
         cid: ContextId,
@@ -165,11 +128,7 @@ impl ContextManager {
 
     /// Removes a decompressor context by its CID.
     ///
-    /// # Parameters
-    /// - `cid`: The Context ID of the decompressor context to remove.
-    ///
-    /// # Returns
-    /// The removed `Box<dyn RohcDecompressorContext>` if it existed, otherwise `None`.
+    /// Returns the removed context if it existed, otherwise `None`.
     pub fn remove_decompressor_context(
         &mut self,
         cid: ContextId,

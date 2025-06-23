@@ -20,13 +20,6 @@ use crate::protocol_types::RtpUdpIpv4Headers;
 /// IR packets are forced when the compressor needs to reset state, for periodic
 /// refresh, or when field changes would exceed LSB encoding capabilities,
 /// risking decompressor desynchronization.
-///
-/// # Parameters
-/// - `context`: Current compressor context containing state and configuration.
-/// - `headers`: Headers from the packet being compressed.
-///
-/// # Returns
-/// `true` if an IR packet must be sent, `false` if other UO packet types can be considered.
 pub fn should_force_ir(context: &Profile1CompressorContext, headers: &RtpUdpIpv4Headers) -> bool {
     debug_assert_ne!(
         context.rtp_ssrc, 0,
@@ -74,18 +67,9 @@ pub fn should_force_ir(context: &Profile1CompressorContext, headers: &RtpUdpIpv4
 /// initialization or refresh. Updates the compressor context state and optionally signals
 /// timestamp stride for scaled mode operation.
 ///
-/// # Parameters
-/// - `context`: Mutable compressor context to update after IR generation.
-/// - `headers`: Headers from the current packet to include in the IR packet.
-/// - `crc_calculators`: CRC calculator instances for packet integrity checks.
-/// - `out`: Output buffer to write the compressed packet into.
-///
-/// # Returns
-/// The number of bytes written to the output buffer.
-///
 /// # Errors
-/// - [`RohcError::Building`] - IR packet construction failed
-/// - [`RohcError::Internal`] - Internal logic error
+/// - `RohcError::Building` - IR packet serialization failed
+/// - `RohcError::Internal` - Internal logic error
 pub fn compress_as_ir(
     context: &mut Profile1CompressorContext,
     headers: &RtpUdpIpv4Headers,

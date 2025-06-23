@@ -53,14 +53,6 @@ pub trait ProfileHandler: Send + Sync + Debug {
     fn profile_id(&self) -> RohcProfile;
 
     /// Creates a new, profile-specific compressor context.
-    ///
-    /// # Parameters
-    /// - `cid`: The Context Identifier for the new flow.
-    /// - `ir_refresh_interval`: Suggested interval for IR refreshes.
-    /// - `creation_time`: The timestamp for the context's creation, used to initialize its `last_accessed` time.
-    ///
-    /// # Returns
-    /// A `Box` containing a new `RohcCompressorContext`.
     fn create_compressor_context(
         &self,
         cid: ContextId,
@@ -69,31 +61,16 @@ pub trait ProfileHandler: Send + Sync + Debug {
     ) -> Box<dyn RohcCompressorContext>;
 
     /// Creates a new, profile-specific decompressor context.
-    ///
-    /// # Parameters
-    /// - `cid`: The Context Identifier for the new flow.
-    /// - `creation_time`: The timestamp for the context's creation, used to initialize its `last_accessed` time.
-    ///
-    /// # Returns
-    /// A `Box` containing a new `RohcDecompressorContext`.
     fn create_decompressor_context(
         &self,
         cid: ContextId,
         creation_time: Instant,
     ) -> Box<dyn RohcDecompressorContext>;
 
-    /// Compresses uncompressed headers into provided buffer (zero-allocation hot path).
-    ///
-    /// # Parameters
-    /// - `context`: A mutable reference to a `RohcCompressorContext`.
-    /// - `headers`: The `GenericUncompressedHeaders` to be compressed.
-    /// - `out`: Output buffer to write the compressed packet into.
-    ///
-    /// # Returns
-    /// The number of bytes written to the output buffer.
+    /// Compresses uncompressed headers into ROHC packet (zero-allocation hot path).
     ///
     /// # Errors
-    /// - [`RohcError`] - Compression fails due to context or profile-specific issues
+    /// - `RohcError` - Compression fails due to context or profile-specific issues
     fn compress(
         &self,
         context: &mut dyn RohcCompressorContext,
@@ -103,15 +80,8 @@ pub trait ProfileHandler: Send + Sync + Debug {
 
     /// Decompresses a ROHC packet using this profile's logic.
     ///
-    /// # Parameters
-    /// - `context`: A mutable reference to a `RohcDecompressorContext`.
-    /// - `packet`: A slice containing the ROHC packet data to decompress.
-    ///
-    /// # Returns
-    /// The reconstructed uncompressed headers.
-    ///
     /// # Errors
-    /// - [`RohcError`] - Decompression fails due to parsing, CRC, or context issues
+    /// - `RohcError` - Decompression fails due to parsing, CRC, or context issues
     fn decompress(
         &self,
         context: &mut dyn RohcDecompressorContext,

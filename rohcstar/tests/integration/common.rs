@@ -44,12 +44,6 @@ pub fn create_default_test_engine() -> RohcEngine {
 }
 
 /// Creates a ROHC engine with custom IR refresh interval for testing.
-///
-/// # Parameters
-/// - `ir_refresh_interval`: Custom IR refresh interval in number of packets
-///
-/// # Returns
-/// A new `RohcEngine` instance with the specified IR refresh interval.
 pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEngine {
     RohcEngine::new(
         ir_refresh_interval,
@@ -58,22 +52,10 @@ pub fn create_test_engine_with_system_clock(ir_refresh_interval: u32) -> RohcEng
     )
 }
 
-/// Creates a `RohcEngine` with a controllable `MockClock` for time-sensitive tests.
-///
-/// This allows tests to precisely control the passage of time, which is crucial for
-/// verifying context timeout logic and other time-dependent behaviors.
 /// Creates a ROHC engine with a mock clock for deterministic testing.
 ///
 /// Useful for testing time-dependent behavior like context timeouts
 /// in a controlled manner.
-///
-/// # Parameters
-/// - `ir_refresh_interval`: IR refresh interval in number of packets
-/// - `timeout`: Context timeout duration
-/// - `initial_mock_time`: Starting time for the mock clock
-///
-/// # Returns
-/// A tuple containing the configured engine and the mock clock reference.
 pub fn create_test_engine_with_mock_clock(
     ir_refresh_interval: u32,
     timeout: Duration,
@@ -668,7 +650,7 @@ pub fn create_profile1_decompressor_context(
 /// - `cid`: Context identifier
 /// - `ssrc`: RTP SSRC value
 /// - `base_sn`: Starting sequence number (from IR packet)
-/// - `base_ts_val`: Starting timestamp value (from IR packet)  
+/// - `base_ts_val`: Starting timestamp value (from IR packet)
 /// - `base_marker`: Starting marker bit value (from IR packet)
 /// - `base_ip_id`: Starting IP identification value (from IR packet)
 /// - `stride_to_establish`: The timestamp stride value to establish

@@ -36,16 +36,8 @@ pub use self::uo1_decompression::{
 /// corresponding specific decompression function. This matches the abstraction level of
 /// the compressor's `compress_as_uo()` function.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context with established state.
-/// - `packet`: Core UO packet data (after Add-CID processing, if any).
-/// - `crc_calculators`: CRC calculator instances for verification.
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - Unknown packet type or decompression failure from specific function
+/// - `RohcError::Parsing` - Unknown packet type or decompression failure from specific function
 pub fn decompress_as_uo(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],

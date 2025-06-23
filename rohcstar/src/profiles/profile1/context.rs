@@ -149,14 +149,8 @@ impl Profile1CompressorContext {
     /// The context starts in `InitializationAndRefresh` mode.
     /// TS Stride related fields are initialized to a state indicating no stride detected.
     ///
-    /// # Parameters
-    /// - `cid`: The Context Identifier (CID) for this flow.
-    /// - `ir_refresh_interval`: The packet interval for sending IR refresh packets. A value of 0
-    ///   disables periodic refresh based on packet count, though IRs may still be sent for other reasons.
-    /// - `creation_time`: The `Instant` at which this context is being created, used for `last_accessed`.
-    ///
-    /// # Returns
-    /// A new `Profile1CompressorContext` instance ready for packet compression.
+    /// An `ir_refresh_interval` of 0 disables periodic refresh based on packet count,
+    /// though IRs may still be sent for other reasons.
     pub fn new(cid: ContextId, ir_refresh_interval: u32, creation_time: Instant) -> Self {
         let context = Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -202,9 +196,6 @@ impl Profile1CompressorContext {
     /// Static fields are updated, dynamic fields are set from the current packet,
     /// and the compressor mode is forced to `InitializationAndRefresh`.
     /// TS Stride detection state is also reset.
-    ///
-    /// # Parameters
-    /// - `headers`: The uncompressed `RtpUdpIpv4Headers` of the current packet.
     pub fn initialize_context_from_uncompressed_headers(&mut self, headers: &RtpUdpIpv4Headers) {
         self.ip_source = headers.ip_src;
         self.ip_destination = headers.ip_dst;
@@ -261,12 +252,7 @@ impl Profile1CompressorContext {
     /// a consistent stride value, enabling TS_SCALED compression mode when a pattern
     /// is established for `P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD` packets.
     ///
-    /// # Parameters
-    /// - `current_packet_ts`: The RTP timestamp of the current packet being processed
-    /// - `current_packet_sn`: The RTP sequence number of the current packet being processed
-    ///
-    /// # Returns
-    /// Currently always returns `false`. Reserved for future stride detection signaling.
+    /// Returns `false` (reserved for future stride detection signaling).
     pub fn detect_ts_stride(
         &mut self,
         current_packet_ts: Timestamp,
@@ -355,11 +341,7 @@ impl Profile1CompressorContext {
     /// `ts_offset` is the timestamp of the packet that occurred *before* the
     /// sequence of N packets that established the stride.
     ///
-    /// # Parameters
-    /// - `current_packet_ts`: The timestamp of the packet for which TS_SCALED is to be calculated.
-    ///
-    /// # Returns
-    /// The TS_SCALED value if calculation succeeds and fits in 8 bits, otherwise `None`.
+    /// Returns `None` if stride is not established or result exceeds 8 bits.
     pub fn calculate_ts_scaled(&self, current_packet_ts: Timestamp) -> Option<u8> {
         if !self.ts_scaled_mode {
             return None;
@@ -547,14 +529,8 @@ impl Profile1DecompressorContext {
 
     /// Creates a new decompressor context for ROHC Profile 1.
     ///
-    /// Initializes all fields to their default values. The context starts
+    /// Initializes all fields to their default or unspecified startup values. The context starts
     /// in `NoContext` mode. TS Stride fields are initialized to indicate no active stride.
-    ///
-    /// # Parameters
-    /// - `cid`: The Context Identifier (CID) for this flow.
-    ///
-    /// # Returns
-    /// A new `Profile1DecompressorContext` instance ready for packet decompression.
     pub fn new(cid: ContextId) -> Self {
         let context = Self {
             profile_id: RohcProfile::RtpUdpIp,
@@ -600,9 +576,6 @@ impl Profile1DecompressorContext {
     /// If the IR packet contains a TS_STRIDE extension, the decompressor's
     /// TS stride information (`ts_stride`, `ts_offset`, `ts_scaled_mode`) is updated accordingly.
     /// The `last_accessed` time is **not** updated by this method; the caller should handle that.
-    ///
-    /// # Parameters
-    /// - `ir_packet`: A reference to the parsed `IrPacket` data.
     pub fn initialize_from_ir_packet(&mut self, ir_packet: &IrPacket) {
         debug_assert_eq!(
             ir_packet.profile_id, self.profile_id,
@@ -645,11 +618,7 @@ impl Profile1DecompressorContext {
     /// This method relies on `ts_stride` being `Some` and `ts_offset` being correctly set,
     /// typically after an IR-DYN packet with TS_STRIDE was processed or from inference.
     ///
-    /// # Parameters
-    /// - `ts_scaled_received`: The 8-bit TS_SCALED value from a UO-1-RTP packet.
-    ///
-    /// # Returns
-    /// The reconstructed timestamp if `ts_stride` is established, otherwise `None`.
+    /// Returns `None` if TS_STRIDE is not established.
     pub fn reconstruct_ts_from_scaled(&self, ts_scaled_received: u8) -> Option<Timestamp> {
         let stride_val = self.ts_stride?;
         debug_assert!(
@@ -698,10 +667,6 @@ impl Profile1DecompressorContext {
     ///
     /// Updates potential stride for consecutive packets and breaks established stride
     /// if inconsistent patterns are detected. Called after successful decompression.
-    ///
-    /// # Parameters
-    /// - `new_ts`: Timestamp of newly decompressed packet
-    /// - `new_sn`: Sequence number of newly decompressed packet
     pub fn infer_ts_stride_from_decompressed_ts(
         &mut self,
         new_ts: Timestamp,

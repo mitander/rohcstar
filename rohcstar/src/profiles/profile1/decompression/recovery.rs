@@ -25,21 +25,8 @@ pub(super) struct LsbConstraint {
 /// Performs forward and backward search around the expected sequence number to find
 /// a candidate that produces the correct CRC, using configurable search windows.
 ///
-/// # Parameters
-/// - `context`: Decompressor context with current state
-/// - `received_crc`: CRC value from the received packet
-/// - `crc_type`: Type of CRC calculation being performed
-/// - `forward_window`: Maximum packets to search forward from current SN
-/// - `backward_window`: Maximum packets to search backward from current SN
-/// - `lsb_constraint`: Optional LSB constraint for SN validation
-/// - `crc_calculator`: Closure for CRC calculation
-/// - `crc_input_generator`: Closure to generate CRC input
-///
-/// # Returns
-/// The recovered sequence number that matches the received CRC.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - No valid sequence number found within search windows
+/// - `RohcError::Parsing` - No valid sequence number found within search windows
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_sn_recovery<F, G>(
     context: &Profile1DecompressorContext,
@@ -125,16 +112,6 @@ where
 ///
 /// Populates an RtpUdpIpv4Headers struct using static fields from the decompressor
 /// context and the provided dynamic values from the current packet.
-///
-/// # Parameters
-/// - `context`: Decompressor context containing static header fields
-/// - `sn`: RTP sequence number for the current packet
-/// - `ts`: RTP timestamp for the current packet
-/// - `marker`: RTP marker bit for the current packet
-/// - `ip_id`: IP identification field for the current packet
-///
-/// # Returns
-/// Complete RTP/UDP/IPv4 headers ready for network transmission.
 pub(super) fn reconstruct_headers_from_context(
     context: &Profile1DecompressorContext,
     sn: SequenceNumber,

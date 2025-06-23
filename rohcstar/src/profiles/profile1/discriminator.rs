@@ -38,11 +38,8 @@ impl Profile1PacketType {
     /// *after* any Add-CID octet processing has been handled by the ROHC engine.
     /// The order of checks is important to correctly discriminate between UO-1 variants.
     ///
-    /// # Parameters
-    /// - `byte`: The first byte of the core ROHC Profile 1 packet.
     ///
-    /// # Returns
-    /// The corresponding `Profile1PacketType` based on the packet discriminator.
+    /// Returns the corresponding `Profile1PacketType` based on the packet discriminator.
     pub fn from_first_byte(byte: u8) -> Self {
         // Check for IR / IR-DYN packets (Type: 1111110D)
         if (byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {

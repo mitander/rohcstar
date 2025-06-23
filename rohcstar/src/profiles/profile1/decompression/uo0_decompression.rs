@@ -29,16 +29,8 @@ use crate::protocol_types::RtpUdpIpv4Headers;
 /// The RTP Timestamp is implicitly reconstructed based on the context's TS stride.
 /// The RTP Marker bit is assumed to be unchanged from the context.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to update with new state
-/// - `packet`: Core UO-0 packet data (after Add-CID processing, if any)
-/// - `crc_calculators`: CRC calculator instances for verification
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - CRC mismatch or unreasonable sequence number jump
+/// - `RohcError::Parsing` - CRC mismatch, LSB decoding failure, or insufficient data
 pub fn decompress_as_uo0(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],

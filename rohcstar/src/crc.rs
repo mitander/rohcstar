@@ -39,25 +39,13 @@ impl CrcCalculators {
         }
     }
 
-    /// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) using the pre-initialized instance.
-    ///
-    /// # Parameters
-    /// - `input`: A slice of bytes over which the CRC will be calculated.
-    ///
-    /// # Returns
-    /// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
+    /// Calculates ROHC 3-bit CRC for packet integrity verification.
     #[inline]
     pub fn crc3(&self, input: &[u8]) -> u8 {
         self.crc3_calculator.checksum(input)
     }
 
-    /// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) using the pre-initialized instance.
-    ///
-    /// # Parameters
-    /// - `input`: A slice of bytes over which the CRC will be calculated.
-    ///
-    /// # Returns
-    /// The calculated 8-bit CRC value (ranging from `0x00` to `0xFF`).
+    /// Calculates ROHC 8-bit CRC for packet integrity verification.
     #[inline]
     pub fn crc8(&self, input: &[u8]) -> u8 {
         self.crc8_calculator.checksum(input)
@@ -83,19 +71,17 @@ impl Default for CrcCalculators {
 /// - Reflect Output: `false`
 /// - XOR Output: `0x00`
 ///
-/// # Parameters
-/// - `input`: A slice of bytes over which the CRC will be calculated.
-///
-/// # Returns
-/// The calculated 8-bit CRC value (0x00 to 0xFF).
+/// Creates a new `Crc<u8>` instance on each call - prefer using `CrcCalculators`
+/// for performance when calculating multiple CRCs.
 pub fn calculate_rohc_crc8(input: &[u8]) -> u8 {
     let crc_calc: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
     crc_calc.checksum(input)
 }
 
-/// Calculates the ROHC 3-bit CRC (CRC-3/ROHC) directly.
+/// Calculates ROHC 3-bit CRC for packet integrity verification.
 ///
-/// This function creates a new `Crc<u8>` instance on each call.
+/// Creates a new `Crc<u8>` instance on each call - prefer using `CrcCalculators`
+/// for performance when calculating multiple CRCs.
 ///
 /// The ROHC CRC-3 parameters are:
 /// - Polynomial: `0x03` (equivalent to `x^3 + x^1 + 1`)
@@ -103,12 +89,6 @@ pub fn calculate_rohc_crc8(input: &[u8]) -> u8 {
 /// - Reflect Input: `false`
 /// - Reflect Output: `false`
 /// - XOR Output: `0x00`
-///
-/// # Parameters
-/// - `input`: A slice of bytes over which the CRC will be calculated.
-///
-/// # Returns
-/// The calculated 3-bit CRC value (ranging from `0x00` to `0x07`).
 pub fn calculate_rohc_crc3(input: &[u8]) -> u8 {
     let crc_calc: Crc<u8> = Crc::<u8>::new(&CRC_3_ROHC);
     crc_calc.checksum(input)

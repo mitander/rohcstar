@@ -31,16 +31,8 @@ use crate::protocol_types::RtpUdpIpv4Headers;
 /// UO-1-SN packets carry LSB-encoded RTP Sequence Number and the current RTP Marker bit.
 /// The RTP Timestamp is implicitly reconstructed using the context's TS stride.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to update with new state
-/// - `packet`: Core UO-1-SN packet data (after Add-CID processing, if any)
-/// - `crc_calculators`: CRC calculator instances for verification
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - CRC mismatch or unreasonable sequence number jump
+/// - `RohcError::Parsing` - CRC mismatch or unreasonable sequence number jump
 pub fn decompress_as_uo1_sn(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -181,16 +173,8 @@ pub fn decompress_as_uo1_sn(
 /// implicitly reconstructed as `last_reconstructed_sn + 1`.
 /// The RTP Marker bit is assumed to be unchanged from the context.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to update with new state
-/// - `packet`: Core UO-1-TS packet data (after Add-CID processing, if any)
-/// - `crc_calculators`: CRC calculator instances for verification
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - Missing mandatory fields or CRC mismatch
+/// - `RohcError::Parsing` - Missing mandatory fields or CRC mismatch
 pub fn decompress_as_uo1_ts(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -272,16 +256,8 @@ pub fn decompress_as_uo1_ts(
 /// The RTP Timestamp is implicitly reconstructed using the context's TS stride (SN delta is 1).
 /// The RTP Marker bit is assumed to be unchanged from the context.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to update with new state
-/// - `packet`: Core UO-1-ID packet data (after Add-CID processing, if any)
-/// - `crc_calculators`: CRC calculator instances for verification
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - Missing mandatory fields or CRC mismatch
+/// - `RohcError::Parsing` - Missing mandatory fields or CRC mismatch
 pub fn decompress_as_uo1_id(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
@@ -375,17 +351,9 @@ pub fn decompress_as_uo1_id(
 /// The RTP Sequence Number is implicitly reconstructed as `last_reconstructed_sn + 1`.
 /// Successful decompression requires an established TS stride and offset in the context.
 ///
-/// # Parameters
-/// - `context`: Mutable decompressor context to update with new state
-/// - `packet`: Core UO-1-RTP packet data (after Add-CID processing, if any)
-/// - `crc_calculators`: CRC calculator instances for verification
-///
-/// # Returns
-/// The reconstructed RTP/UDP/IPv4 headers.
-///
 /// # Errors
-/// - [`RohcError::Parsing`] - Missing mandatory fields or CRC mismatch
-/// - [`RohcError::Decompression`] - LSB decoding failed for TS_SCALED
+/// - `RohcError::Parsing` - Missing mandatory fields or CRC mismatch
+/// - `RohcError::Decompression` - LSB decoding failed for TS_SCALED
 pub fn decompress_as_uo1_rtp(
     context: &mut Profile1DecompressorContext,
     packet: &[u8],
