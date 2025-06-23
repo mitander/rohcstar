@@ -103,7 +103,8 @@ pub const P1_DEFAULT_P_IP_ID_OFFSET: i64 = 0;
 /// Static chain length (IP_Src/Dst, UDP_Src/Dst, RTP_SSRC, RTP_PayloadType, RTP_Extension,
 /// RTP_Padding) in bytes. (19 bytes)
 pub const P1_STATIC_CHAIN_LENGTH_BYTES: usize = 19;
-/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, IP_TTL, IP_ID, RTP_Flags) in bytes. (10 bytes)
+/// Base dynamic chain length for IR-DYN (RTP_SN, RTP_TS, IP_TTL, IP_ID, RTP_Flags) in bytes. (10
+/// bytes)
 pub const P1_BASE_DYNAMIC_CHAIN_LENGTH_BYTES: usize = 10;
 /// Length of TS_STRIDE extension in IR-DYN dynamic chain, in bytes. (4 bytes)
 pub const P1_TS_STRIDE_EXTENSION_LENGTH_BYTES: usize = 4;

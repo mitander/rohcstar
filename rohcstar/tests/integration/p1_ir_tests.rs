@@ -7,12 +7,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::common::{
-    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers,
-    create_test_engine_with_system_clock, establish_ir_context, get_compressor_context,
-    get_decompressor_context, get_ip_id_established_by_ir,
-};
-
 use rohcstar::ProfileHandler;
 use rohcstar::crc::CrcCalculators;
 use rohcstar::engine::RohcEngine;
@@ -22,12 +16,17 @@ use rohcstar::profiles::profile1::context::{
     Profile1CompressorContext, Profile1CompressorMode, Profile1DecompressorContext,
     Profile1DecompressorMode,
 };
-use rohcstar::profiles::profile1::serialize_ir;
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_STATIC_ONLY, P1_ROHC_IR_PACKET_TYPE_WITH_DYN,
-    P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler,
+    P1_STATIC_CHAIN_LENGTH_BYTES, Profile1Handler, serialize_ir,
 };
 use rohcstar::time::SystemClock;
+
+use super::common::{
+    DEFAULT_ENGINE_TEST_TIMEOUT, create_ir_packet_data, create_rtp_headers,
+    create_test_engine_with_system_clock, establish_ir_context, get_compressor_context,
+    get_decompressor_context, get_ip_id_established_by_ir,
+};
 
 /// Verifies that an IR packet with a modified CRC fails parsing with a CrcMismatch error.
 #[test]
@@ -108,7 +107,8 @@ fn p1_ir_packet_too_short_fails() {
             match result {
                 Err(RohcError::Parsing(RohcParsingError::NotEnoughData { .. })) => {}
                 _ => panic!(
-                    "Expected NotEnoughData for truncated packet of len {}, got: {:?}. Packet: {:?}",
+                    "Expected NotEnoughData for truncated packet of len {}, got: {:?}. Packet: \
+                     {:?}",
                     len, result, truncated_packet
                 ),
             }
@@ -582,8 +582,8 @@ fn p1_ir_packet_with_static_only_d_bit_0_parse_successfully() {
     }
 }
 
-/// Verifies that the decompressor context correctly updates and persists across multiple IR packets,
-/// reflecting the latest received static and dynamic information.
+/// Verifies that the decompressor context correctly updates and persists across multiple IR
+/// packets, reflecting the latest received static and dynamic information.
 #[test]
 fn p1_decompressor_context_persistence_across_ir_packets() {
     let mut engine = create_test_engine_with_system_clock(10);

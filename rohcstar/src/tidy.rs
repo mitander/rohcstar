@@ -22,8 +22,8 @@
 //! - Struct field count limits.
 //!
 //! **Level 3: Style Guidelines** (Human-centric, no CI failure)
-//! - Internal naming conventions are left to professional judgment and code review.
-//!   This is an explicit choice to trust developers and avoid noisy, restrictive rules.
+//! - Internal naming conventions are left to professional judgment and code review. This is an
+//!   explicit choice to trust developers and avoid noisy, restrictive rules.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -216,7 +216,8 @@ impl<'ast> Visit<'ast> for TidyVisitor<'_> {
                     self.add_violation(
                         Severity::Critical,
                         span,
-                        "Do not use .unwrap() in production code; use proper error handling or document safety."
+                        "Do not use .unwrap() in production code; use proper error handling or \
+                         document safety.",
                     );
                 }
             }
@@ -336,7 +337,11 @@ mod tests {
                 severity: Severity::Ratchet,
                 path: "Project-wide".to_string(),
                 line: 0,
-                message: format!("A module has grown to {} lines, exceeding the high-water mark of {}. Justify and update the constant.", max_module_loc, MODULE_SIZE_HIGH_WATER_MARK),
+                message: format!(
+                    "A module has grown to {} lines, exceeding the high-water mark of {}. Justify \
+                     and update the constant.",
+                    max_module_loc, MODULE_SIZE_HIGH_WATER_MARK
+                ),
             });
         }
 
@@ -388,9 +393,9 @@ mod tests {
                     severity: Severity::Critical,
                     path: entry.path().display().to_string(),
                     line: 0,
-                    message:
-                        "Anti-pattern module name found. Use focused, descriptive module names."
-                            .to_string(),
+                    message: "Anti-pattern module name found. Use focused, descriptive module \
+                              names."
+                        .to_string(),
                 });
             }
         }

@@ -1,12 +1,13 @@
 //! Debug test to examine CID 1 compression behavior
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use rohcstar::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::SystemClock;
 use rohcstar::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
-use std::sync::Arc;
-use std::time::Duration;
 
 fn create_test_engine() -> RohcEngine {
     let mut engine = RohcEngine::new(20, Duration::from_secs(300), Arc::new(SystemClock));

@@ -4,16 +4,15 @@
 //! number encoding and marker bit transmission. Tests cover sequence number jumps,
 //! marker bit changes, wraparound scenarios, and packet type selection logic.
 
+use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
+use rohcstar::profiles::profile1::{
+    P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, Profile1Handler, RtpUdpIpv4Headers,
+};
+
 use super::common::{
     create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
     establish_stride_after_ir, get_compressor_context, get_decompressor_context,
     get_ip_id_established_by_ir,
-};
-
-use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
-use rohcstar::profiles::profile1::RtpUdpIpv4Headers;
-use rohcstar::profiles::profile1::{
-    P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, Profile1Handler,
 };
 
 /// Tests UO-1-SN with SN wraparound and marker bit handling.
@@ -286,7 +285,8 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let initial_ip_id = get_ip_id_established_by_ir(initial_sn_ir, ssrc);
 
     let stride_val = 160u32;
-    // After this, comp context: last_sn=1001, last_ts=10160, last_marker=false, last_ip_id=initial_ip_id, stride=Some(160)
+    // After this, comp context: last_sn=1001, last_ts=10160, last_marker=false,
+    // last_ip_id=initial_ip_id, stride=Some(160)
     establish_stride_after_ir(
         &mut engine,
         cid,
@@ -308,7 +308,8 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     let target_sn_pos = base_sn_for_pos_jump.wrapping_add(sn_delta_large_pos); // 1101
     let target_marker_pos = !base_marker_for_pos_jump; // true (marker changes)
 
-    // TS and IP-ID same as context to ensure UO-1-SN is chosen due to SN delta & marker change, not other IR reasons
+    // TS and IP-ID same as context to ensure UO-1-SN is chosen due to SN delta & marker change, not
+    // other IR reasons
     let target_ts_val_pos = base_ts_val_for_pos_jump; // 10160
     let target_ip_id_pos = base_ip_id_for_pos_jump;
 
@@ -342,7 +343,8 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     assert_eq!(
         compressed_positive_jump.len(),
         3,
-        "Positive jump should be UO-1-SN (len 3). Got len {}. Pkt: {:02X?}. Header SN={}, TS={}, M={}",
+        "Positive jump should be UO-1-SN (len 3). Got len {}. Pkt: {:02X?}. Header SN={}, TS={}, \
+         M={}",
         compressed_positive_jump.len(),
         compressed_positive_jump,
         target_sn_pos,
@@ -369,7 +371,8 @@ fn p1_uo1_sn_max_sn_jump_encodable() {
     );
 
     let comp_ctx_before_neg_jump = get_compressor_context(&engine, cid);
-    // State after positive jump: last_sn=1101, last_ts=26160 (implicit from UO-1-SN), last_marker=true
+    // State after positive jump: last_sn=1101, last_ts=26160 (implicit from UO-1-SN),
+    // last_marker=true
     assert_eq!(
         comp_ctx_before_neg_jump.last_sent_rtp_sn_full,
         target_sn_pos
@@ -513,7 +516,8 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
     assert_eq!(
         decomp_ctx_after_uo1.potential_ts_stride,
         Some(stride_val),
-        "Decompressor potential stride should remain {} after UO-1-SN with SN delta {}. Got {:?}. Prev D state: sn={}, ts={}",
+        "Decompressor potential stride should remain {} after UO-1-SN with SN delta {}. Got {:?}. \
+         Prev D state: sn={}, ts={}",
         stride_val,
         sn_delta_uo1,
         decomp_ctx_after_uo1.potential_ts_stride,
@@ -547,8 +551,17 @@ fn p1_uo1_sn_prefered_over_uo0_for_larger_sn_delta() {
             &GenericUncompressedHeaders::RtpUdpIpv4(headers_uo1.clone()),
             &mut compress_buf_uo1,
         )
-        .unwrap_or_else(|e| panic!("Compress failed for UO-1-SN (delta > 15): {:?}. Header SN: {}, TS: {}. Prev Comp SN: {}, TS: {}",
-                                    e, sn_force_uo1_target, ts_compressor_will_use_for_uo1_crc, prev_sn_for_uo1, prev_ts_for_uo1));
+        .unwrap_or_else(|e| {
+            panic!(
+                "Compress failed for UO-1-SN (delta > 15): {:?}. Header SN: {}, TS: {}. Prev Comp \
+                 SN: {}, TS: {}",
+                e,
+                sn_force_uo1_target,
+                ts_compressor_will_use_for_uo1_crc,
+                prev_sn_for_uo1,
+                prev_ts_for_uo1
+            )
+        });
     let compressed_uo1 = &compress_buf_uo1[..compressed_uo1_len];
     assert_eq!(
         compressed_uo1.len(),

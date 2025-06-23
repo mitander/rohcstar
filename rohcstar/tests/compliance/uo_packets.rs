@@ -4,9 +4,10 @@
 //! Section 5.7. These compressed packet types form the core of ROHC's
 //! efficiency, encoding only changed fields with minimal overhead.
 
-use crate::compliance::common::*;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::types::ContextId;
+
+use crate::compliance::common::*;
 
 /// UO-0 packet discriminator pattern (0XXXXXXX).
 const UO0_DISCRIMINATOR_MASK: u8 = 0x80;

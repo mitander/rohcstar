@@ -5,11 +5,6 @@
 //! RTP TS and Marker bit remain unchanged from the context.
 //! (RFC 3095, Section 5.7.5)
 
-use super::common::{
-    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    get_compressor_context, get_decompressor_context, get_ip_id_established_by_ir,
-};
-
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::Profile1CompressorContext;
 use rohcstar::profiles::profile1::{
@@ -17,6 +12,11 @@ use rohcstar::profiles::profile1::{
     P1_UO_1_TS_DISCRIMINATOR, Profile1Handler,
 };
 use rohcstar::{EngineError, RohcError, RohcParsingError};
+
+use super::common::{
+    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
+    get_compressor_context, get_decompressor_context, get_ip_id_established_by_ir,
+};
 
 /// Tests UO-1-ID packet when IP-ID changes with SN+1 and stable TS/marker.
 #[test]

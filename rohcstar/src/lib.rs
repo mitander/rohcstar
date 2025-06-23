@@ -11,20 +11,17 @@
 //! ## Usage
 //!
 //! ```rust
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//!
 //! use rohcstar::packet_defs::GenericUncompressedHeaders;
 //! use rohcstar::profiles::profile1::Profile1Handler;
 //! use rohcstar::protocol_types::RtpUdpIpv4Headers;
 //! use rohcstar::time::SystemClock;
 //! use rohcstar::{RohcEngine, RohcProfile};
-//! use std::sync::Arc;
-//! use std::time::Duration;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut engine = RohcEngine::new(
-//!         20,
-//!         Duration::from_secs(300),
-//!         Arc::new(SystemClock),
-//!     );
+//!     let mut engine = RohcEngine::new(20, Duration::from_secs(300), Arc::new(SystemClock));
 //!     engine.register_profile_handler(Box::new(Profile1Handler::new()))?;
 //!
 //!     let headers = RtpUdpIpv4Headers {

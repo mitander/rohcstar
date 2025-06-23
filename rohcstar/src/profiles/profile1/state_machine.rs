@@ -1,19 +1,18 @@
 //! ROHC (Robust Header Compression) Profile 1 decompressor state machine logic.
 //!
-//! This module implements the state transitions (NoContext, StaticContext, FullContext, SecondOrder)
-//! for the ROHC Profile 1 decompressor, as defined in RFC 3095, Section 5.3.
+//! This module implements the state transitions (NoContext, StaticContext, FullContext,
+//! SecondOrder) for the ROHC Profile 1 decompressor, as defined in RFC 3095, Section 5.3.
 //! It works in conjunction with the `decompression` module which handles packet parsing
 //! and header reconstruction.
-
-use crate::crc::CrcCalculators;
-use crate::error::{DecompressionError, RohcError, RohcParsingError};
-use crate::packet_defs::RohcProfile;
-use crate::protocol_types::RtpUdpIpv4Headers;
 
 use super::context::{Profile1DecompressorContext, Profile1DecompressorMode};
 use super::decompression;
 use super::discriminator::Profile1PacketType;
 use super::state_transitions::{TransitionEvent, process_transition};
+use crate::crc::CrcCalculators;
+use crate::error::{DecompressionError, RohcError, RohcParsingError};
+use crate::packet_defs::RohcProfile;
+use crate::protocol_types::RtpUdpIpv4Headers;
 
 /// Processes a received IR packet and transitions decompressor to FullContext mode.
 ///
@@ -294,8 +293,9 @@ mod tests {
     use crate::profiles::profile1::packet_types::{IrPacket, Uo0Packet, Uo1Packet};
     use crate::profiles::profile1::serialization::ir_packets::serialize_ir;
     use crate::profiles::profile1::serialization::uo0_packets::serialize_uo0;
-    use crate::profiles::profile1::serialization::uo1_packets::prepare_generic_uo_crc_input_payload;
-    use crate::profiles::profile1::serialization::uo1_packets::serialize_uo1_sn;
+    use crate::profiles::profile1::serialization::uo1_packets::{
+        prepare_generic_uo_crc_input_payload, serialize_uo1_sn,
+    };
     use crate::types::{ContextId, SequenceNumber, Timestamp};
 
     // Helper to create a basic decompressor context in a given mode
@@ -524,7 +524,8 @@ mod tests {
                 break;
             }
 
-            // Create different corrupted packets each iteration to avoid pattern matching in recovery
+            // Create different corrupted packets each iteration to avoid pattern matching in
+            // recovery
             let bad_packet = Uo0Packet {
                 crc3: (iteration % 8) as u8, // Cycle through different CRC values
                 sn_lsb: ((50 + iteration * 37) & 0x0F) as u8, // Use prime offset to avoid patterns
@@ -560,7 +561,8 @@ mod tests {
         assert!(
             context.mode == Profile1DecompressorMode::NoContext
                 || context.mode == Profile1DecompressorMode::SecondOrder,
-            "Context should be either NoContext (after consecutive failures) or SecondOrder (recovery working)"
+            "Context should be either NoContext (after consecutive failures) or SecondOrder \
+             (recovery working)"
         );
 
         // Verify counter consistency with the final state

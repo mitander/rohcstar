@@ -3,15 +3,6 @@
 //! Handles decompression of UO-1 packet variants (UO-1-SN, UO-1-TS, UO-1-ID, UO-1-RTP)
 //! which carry different combinations of sequence number, timestamp, and IP-ID information.
 
-use crate::CrcType;
-use crate::Field;
-use crate::StructureType;
-use crate::crc::CrcCalculators;
-use crate::encodings::decode_lsb;
-use crate::error::{DecompressionError, RohcError, RohcParsingError};
-use crate::traits::RohcDecompressorContext;
-use crate::types::{IpId, Timestamp};
-
 use super::super::constants::P1_MAX_REASONABLE_SN_JUMP;
 use super::super::context::Profile1DecompressorContext;
 use super::super::serialization::uo1_packets::{
@@ -24,7 +15,13 @@ use super::recovery::{
     calculate_reconstructed_ts_implicit_sn_plus_one, reconstruct_headers_from_context,
     try_sn_recovery,
 };
+use crate::crc::CrcCalculators;
+use crate::encodings::decode_lsb;
+use crate::error::{DecompressionError, RohcError, RohcParsingError};
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::traits::RohcDecompressorContext;
+use crate::types::{IpId, Timestamp};
+use crate::{CrcType, Field, StructureType};
 
 /// Decompresses a UO-1-SN packet, validates CRC, updates context, and reconstructs headers.
 ///

@@ -21,9 +21,10 @@ impl Clock for SystemClock {
 
 /// Test utilities for mocking time.
 pub mod mock_clock {
-    use super::*;
     use std::sync::Mutex;
     use std::time::Duration;
+
+    use super::*;
 
     /// A mock clock that allows for manual control over the current time in tests.
     #[derive(Debug)]

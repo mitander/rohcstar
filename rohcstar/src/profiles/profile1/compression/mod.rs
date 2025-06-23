@@ -4,9 +4,8 @@
 //! ROHC Profile 1 packets. It implements the core compression algorithms for
 //! RTP/UDP/IPv4 header compression as defined in RFC 3095.
 
-use crate::types::Timestamp;
-
 use super::context::Profile1CompressorContext;
+use crate::types::Timestamp;
 
 mod ir_compression;
 mod uo_compression;

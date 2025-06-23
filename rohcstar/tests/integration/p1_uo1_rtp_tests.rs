@@ -3,17 +3,17 @@
 //! Tests UO-1-RTP packet format with TS_SCALED when stride is established.
 //! Covers TS_SCALED calculation, stride detection, marker bit, and IR-DYN TS_STRIDE signaling.
 
-use super::common::{
-    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    establish_ts_stride_context_for_uo1_rtp, get_compressor_context, get_decompressor_context,
-    get_ip_id_established_by_ir,
-};
-
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_WITH_DYN, P1_TS_SCALED_MAX_VALUE, P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD,
     P1_UO_1_RTP_DISCRIMINATOR_BASE, P1_UO_1_RTP_MARKER_BIT_MASK, P1_UO_1_TS_DISCRIMINATOR,
     Profile1Handler,
+};
+
+use super::common::{
+    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
+    establish_ts_stride_context_for_uo1_rtp, get_compressor_context, get_decompressor_context,
+    get_ip_id_established_by_ir,
 };
 
 const TEST_SSRC_UO1_RTP: u32 = 0x7788AADD;
@@ -111,7 +111,8 @@ fn p1_uo1_rtp_basic_compression_decompression_marker_false_succeeds() {
     // After establish_ts_stride_context, C and D ts_offset are TS of the final IR.
     // last_ts_from_ctx is also TS of final IR.
     // So, next_ts_val = (TS of final IR) + stride.
-    // TS_SCALED = (next_ts_val - comp_ts_offset) / stride = ( (TS_final_IR + stride) - TS_final_IR ) / stride = 1
+    // TS_SCALED = (next_ts_val - comp_ts_offset) / stride = ( (TS_final_IR + stride) - TS_final_IR
+    // ) / stride = 1
     assert_eq!(
         compressed_packet[1], 1,
         "TS_SCALED value mismatch, expected 1. Comp offset: {}, Packet TS: {}",
@@ -193,8 +194,8 @@ fn p1_uo1_rtp_basic_compression_decompression_marker_true_succeeds() {
     assert!(decomp_headers.rtp_marker);
 }
 
-/// Tests TS_SCALED for the packet immediately after stride context is established via common helper.
-/// The first UO-1-RTP sent after this helper should have TS_SCALED = 1.
+/// Tests TS_SCALED for the packet immediately after stride context is established via common
+/// helper. The first UO-1-RTP sent after this helper should have TS_SCALED = 1.
 #[test]
 fn p1_uo1_rtp_ts_scaled_at_establishment_threshold_succeeds() {
     let mut engine = create_test_engine_with_system_clock(50);
@@ -219,7 +220,8 @@ fn p1_uo1_rtp_ts_scaled_at_establishment_threshold_succeeds() {
     assert_eq!(
         comp_ctx.ts_offset,
         final_ir_ts_val,
-        "Compressor ts_offset (left) should be TS of final IR (right). Actual comp_offset: {}, expected final_ir_ts: {}",
+        "Compressor ts_offset (left) should be TS of final IR (right). Actual comp_offset: {}, \
+         expected final_ir_ts: {}",
         comp_ctx.ts_offset.value(),
         final_ir_ts_val
     );
@@ -550,7 +552,8 @@ fn p1_uo1_rtp_ts_stride_change_forces_ir() {
     );
     assert_eq!(
         comp_ctx2.ts_offset, ts1_val_uo1rtp,
-        "Compressor ts_offset should be the base of the new stride detection (TS of previous packet)"
+        "Compressor ts_offset should be the base of the new stride detection (TS of previous \
+         packet)"
     );
     assert_eq!(
         comp_ctx2.ts_stride_packets, 1,

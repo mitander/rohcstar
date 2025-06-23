@@ -1,14 +1,13 @@
-use clap::{Arg, Command};
-use rohcstar_sim::{
-    RohcSimulator, SimConfig,
-    error_analyzer::{ErrorAnalysis, ErrorAnalyzer, ErrorCategory},
-};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use clap::{Arg, Command};
+use rohcstar_sim::error_analyzer::{ErrorAnalysis, ErrorAnalyzer, ErrorCategory};
+use rohcstar_sim::{RohcSimulator, SimConfig};
 
 struct FuzzStats {
     runs_completed: AtomicU64,

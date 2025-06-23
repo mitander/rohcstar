@@ -293,7 +293,8 @@ pub enum RohcBuildingError {
 
     /// Invalid value provided for a field during packet construction.
     #[error(
-        "Invalid value for field '{field}' during packet building: {value} exceeds {max_bits}-bit limit"
+        "Invalid value for field '{field}' during packet building: {value} exceeds {max_bits}-bit \
+         limit"
     )]
     InvalidFieldValueForBuild {
         field: Field,
@@ -354,7 +355,8 @@ pub enum DecompressionError {
 
     /// CRC recovery failed because sequence number distance exceeded safe limits.
     #[error(
-        "CRC recovery limit exceeded in context {cid}: expected SN{expected_sn}, recovered SN{recovered_sn} (distance {distance} > limit {limit})"
+        "CRC recovery limit exceeded in context {cid}: expected SN{expected_sn}, recovered \
+         SN{recovered_sn} (distance {distance} > limit {limit})"
     )]
     CrcRecoveryLimitExceeded {
         cid: ContextId,
@@ -425,7 +427,8 @@ pub enum RohcError {
     ContextNotFound(u16),
 
     /// Legacy support for existing code (temporary).
-    // TODO: Refactor callsites to use EngineError::ProfileHandlerNotRegistered and remove this variant.
+    // TODO: Refactor callsites to use EngineError::ProfileHandlerNotRegistered and remove this
+    // variant.
     #[error("Unsupported ROHC profile: 0x{0:02X}")]
     UnsupportedProfile(u8),
 
@@ -500,7 +503,8 @@ mod tests {
         };
         assert_eq!(
             format!("{}", err),
-            "Incomplete packet data: needed 10 bytes, got 5 for IR Packet (CRC field and defined payload)"
+            "Incomplete packet data: needed 10 bytes, got 5 for IR Packet (CRC field and defined \
+             payload)"
         );
     }
 

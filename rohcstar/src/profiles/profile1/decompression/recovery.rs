@@ -3,13 +3,12 @@
 //! Implements sequence number recovery, header reconstruction, and timestamp
 //! calculation functions used by packet type decompression modules.
 
+use super::super::context::Profile1DecompressorContext;
 use crate::CrcType;
 use crate::constants::{IP_PROTOCOL_UDP, IPV4_STANDARD_IHL, RTP_VERSION};
 use crate::error::{RohcError, RohcParsingError};
-use crate::types::{IpId, SequenceNumber, Timestamp};
-
-use super::super::context::Profile1DecompressorContext;
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::types::{IpId, SequenceNumber, Timestamp};
 
 /// LSB constraint for sequence number recovery validation.
 #[derive(Debug, Clone, Copy)]

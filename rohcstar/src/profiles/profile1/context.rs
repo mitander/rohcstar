@@ -8,11 +8,6 @@ use std::fmt::Debug;
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
-use crate::constants::{DEFAULT_IPV4_TTL, DEFAULT_IR_REFRESH_INTERVAL};
-use crate::packet_defs::RohcProfile;
-use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
-use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
-
 use super::constants::{
     P1_DEFAULT_P_IP_ID_OFFSET, P1_DEFAULT_P_SN_OFFSET, P1_DEFAULT_P_TS_OFFSET,
     P1_TS_SCALED_MAX_VALUE, P1_TS_STRIDE_ESTABLISHMENT_THRESHOLD, P1_UO0_SN_LSB_WIDTH_DEFAULT,
@@ -20,7 +15,11 @@ use super::constants::{
 };
 use super::packet_types::IrPacket;
 use super::state_types::StateCounters;
+use crate::constants::{DEFAULT_IPV4_TTL, DEFAULT_IR_REFRESH_INTERVAL};
+use crate::packet_defs::RohcProfile;
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
+use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
 
 /// Operational modes for the ROHC Profile 1 compressor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -79,7 +78,8 @@ pub struct Profile1CompressorContext {
     pub current_lsb_ip_id_width: u8,
     /// Number of First Order (FO) packets sent since the last IR packet.
     pub fo_packets_sent_since_ir: u32,
-    /// Configured interval for sending IR refresh packets (0 means no periodic refresh based on count).
+    /// Configured interval for sending IR refresh packets (0 means no periodic refresh based on
+    /// count).
     pub ir_refresh_interval: u32,
     /// Number of consecutive FO packets sent (used for FO -> SO transition).
     pub consecutive_fo_packets_sent: u32,
@@ -88,7 +88,8 @@ pub struct Profile1CompressorContext {
     /// Detected timestamp stride (constant TS increment); `None` if no stride active.
     pub ts_stride: Option<u32>,
     /// Base timestamp (`TS_Offset`) for TS_SCALED calculation. This is the RTP Timestamp
-    /// of the packet immediately *preceding* the first packet that established the current `ts_stride`.
+    /// of the packet immediately *preceding* the first packet that established the current
+    /// `ts_stride`.
     pub ts_offset: Timestamp,
     /// Number of consecutive packets observed with the current `ts_stride`.
     pub ts_stride_packets: u32,
@@ -392,18 +393,23 @@ impl RohcCompressorContext for Profile1CompressorContext {
     fn profile_id(&self) -> RohcProfile {
         self.profile_id
     }
+
     fn cid(&self) -> ContextId {
         self.cid
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn last_accessed(&self) -> Instant {
         self.last_accessed
     }
+
     fn update_access_time(&mut self, now: Instant) {
         self.last_accessed = now;
     }
@@ -481,7 +487,8 @@ pub struct Profile1DecompressorContext {
     pub last_accessed: Instant,
     /// Timestamp stride established from an IR-DYN packet or inferred; `None` if not active.
     pub ts_stride: Option<u32>,
-    /// Base timestamp (`TS_Offset`) for reconstructing TS from TS_SCALED. Set by IR-DYN or inference.
+    /// Base timestamp (`TS_Offset`) for reconstructing TS from TS_SCALED. Set by IR-DYN or
+    /// inference.
     pub ts_offset: Timestamp,
     /// Flag indicating if the decompressor expects/uses TS_SCALED values.
     /// Activated by IR-DYN with TS_STRIDE or successful UO-1-RTP decoding.
@@ -734,21 +741,27 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
     fn profile_id(&self) -> RohcProfile {
         self.profile_id
     }
+
     fn cid(&self) -> ContextId {
         self.cid
     }
+
     fn assign_cid(&mut self, cid: ContextId) {
         self.cid = cid;
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn last_accessed(&self) -> Instant {
         self.last_accessed
     }
+
     fn update_access_time(&mut self, now: Instant) {
         self.last_accessed = now;
     }
@@ -756,6 +769,8 @@ impl RohcDecompressorContext for Profile1DecompressorContext {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::constants::DEFAULT_IR_REFRESH_INTERVAL;
     use crate::packet_defs::RohcProfile;
@@ -767,7 +782,6 @@ mod tests {
     use crate::profiles::profile1::packet_types::IrPacket;
     use crate::protocol_types::RtpUdpIpv4Headers;
     use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
-    use std::time::Instant;
 
     #[test]
     fn compressor_context_new_initializes_fields_and_mode() {
@@ -1021,7 +1035,8 @@ mod tests {
         ctx.infer_ts_stride_from_decompressed_ts(1171.into(), 102.into()); // 171 % 2 != 0
         assert_eq!(
             ctx.ts_stride, None,
-            "Stride should be None if TS change is not a clean multiple of SN change for unit stride"
+            "Stride should be None if TS change is not a clean multiple of SN change for unit \
+             stride"
         );
         assert_eq!(ctx.ts_offset, Timestamp::new(0)); // Offset reset when stride becomes None
         assert!(!ctx.ts_scaled_mode);
@@ -1087,9 +1102,9 @@ mod tests {
             ctx.infer_ts_stride_from_decompressed_ts(1160.into(), 101.into());
             assert_eq!(ctx.ts_stride, None);
         } else {
-            // If new() doesn't guarantee SSRC 0, this test might need adjustment or a more direct setup.
-            // For now, assuming default ssrc is 0 or can be set to 0 before other fields for this test.
-            // A more robust way would be:
+            // If new() doesn't guarantee SSRC 0, this test might need adjustment or a more direct
+            // setup. For now, assuming default ssrc is 0 or can be set to 0 before
+            // other fields for this test. A more robust way would be:
             let mut ctx_ssrc_zero = Profile1DecompressorContext::new(0.into());
             ctx_ssrc_zero.rtp_ssrc = 0.into(); // Explicitly set SSRC to 0
             ctx_ssrc_zero.last_reconstructed_rtp_sn_full = 100.into();

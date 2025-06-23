@@ -5,11 +5,12 @@
 //! compression, establishing initial context state between compressor and
 //! decompressor.
 
-use crate::compliance::common::*;
 use rohcstar::constants::ROHC_SMALL_CID_MASK;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
 use rohcstar::types::ContextId;
+
+use crate::compliance::common::*;
 
 /// Minimum IR packet size: type(1) + profile(1) + static_chain(16) + dynamic_chain(9) + CRC(1).
 /// RFC 3095 IR packets contain compressed header info, not full uncompressed headers.

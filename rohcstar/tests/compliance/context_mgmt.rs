@@ -4,14 +4,16 @@
 //! according to RFC 3095 requirements. Context management is critical for
 //! maintaining compression state consistency between endpoints.
 
-use crate::compliance::common::*;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use rohcstar::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{P1_ROHC_IR_PACKET_TYPE_WITH_DYN, Profile1Handler};
 use rohcstar::time::mock_clock::MockClock;
 use rohcstar::types::ContextId;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+
+use crate::compliance::common::*;
 
 /// Short timeout for testing context expiration.
 const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(100);

@@ -3,8 +3,9 @@
 //! Helps distinguish real implementation bugs from expected network behavior
 //! by analyzing error patterns and simulation context.
 
-use crate::{SimConfig, SimError};
 use rohcstar::error::{EngineError, RohcError, RohcParsingError};
+
+use crate::{SimConfig, SimError};
 
 /// Classification of simulation errors for better debugging.
 #[derive(Debug, Clone, Copy, PartialEq)]

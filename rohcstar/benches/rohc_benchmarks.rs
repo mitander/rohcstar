@@ -1,17 +1,15 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-
+use rohcstar::crc::CrcCalculators;
+use rohcstar::encodings::{decode_lsb, encode_lsb};
+use rohcstar::engine::RohcEngine;
+use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::serialization::headers::deserialize_rtp_udp_ipv4_headers;
-use rohcstar::{
-    crc::CrcCalculators,
-    encodings::{decode_lsb, encode_lsb},
-    engine::RohcEngine,
-    packet_defs::{GenericUncompressedHeaders, RohcProfile},
-    profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers},
-    time::SystemClock,
-    types::{IpId, SequenceNumber, Timestamp},
-};
+use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
+use rohcstar::time::SystemClock;
+use rohcstar::types::{IpId, SequenceNumber, Timestamp};
 
 const BENCH_COMPRESS_BUF_SIZE: usize = 256;
 
@@ -666,7 +664,8 @@ fn bench_burst_processing(c: &mut Criterion) {
                             decompressed_packets.push(headers);
                         }
                         _ => {
-                            // If decompression fails or returns unexpected type, use the original header
+                            // If decompression fails or returns unexpected type, use the original
+                            // header
                             decompressed_packets.push(first_header.clone());
                         }
                     }

@@ -3,19 +3,19 @@
 //! This module handles the decompression of IR (Initialization and Refresh) packets,
 //! which establish and refresh compression contexts with static and dynamic chain information.
 
-use crate::crc::CrcCalculators;
-use crate::error::{RohcError, RohcParsingError};
-use crate::packet_defs::RohcProfile;
-use crate::traits::RohcDecompressorContext;
-
 use super::super::context::Profile1DecompressorContext;
 use super::super::serialization::ir_packets::deserialize_ir;
 use super::recovery::reconstruct_headers_from_context;
+use crate::crc::CrcCalculators;
+use crate::error::{RohcError, RohcParsingError};
+use crate::packet_defs::RohcProfile;
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::traits::RohcDecompressorContext;
 
 /// Decompresses IR packet and reconstructs headers from static chain information.
 ///
-/// Initializes the decompressor context based on the received IR packet and validates the profile ID.
+/// Initializes the decompressor context based on the received IR packet and validates the profile
+/// ID.
 ///
 /// # Errors
 /// - `RohcError::Parsing` - CRC mismatch, invalid profile ID, or decompression failure

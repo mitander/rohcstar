@@ -9,8 +9,7 @@ use std::time::Instant;
 
 use crate::crc::CrcCalculators;
 use crate::packet_defs::RohcProfile;
-use crate::profiles::profile1::serialize_ir;
-use crate::profiles::profile1::{IrPacket, Profile1Handler};
+use crate::profiles::profile1::{IrPacket, Profile1Handler, serialize_ir};
 use crate::traits::ProfileHandler;
 
 const DEFAULT_IR_BUF_SIZE: usize = 64;
@@ -75,7 +74,8 @@ pub fn rohc_profile1_umode_decompressor_harness(data: &[u8]) {
                 let _ = p1_handler.decompress(decompressor_context_dyn.as_mut(), data);
             } else {
                 eprintln!(
-                    "WARN: Harness failed to decompress sample IR. Fuzzing against default context."
+                    "WARN: Harness failed to decompress sample IR. Fuzzing against default \
+                     context."
                 );
                 let mut fresh_context_dyn =
                     p1_handler.create_decompressor_context(cid, Instant::now());

@@ -8,6 +8,12 @@
 
 use std::time::Instant;
 
+use super::compression::{compress_as_ir, compress_as_uo, should_force_ir};
+use super::context::{
+    Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
+};
+use super::discriminator::Profile1PacketType;
+use super::state_machine;
 use crate::crc::CrcCalculators;
 use crate::error::{
     CompressionError, DecompressionError, EngineError, Field, ParseContext, RohcError,
@@ -16,13 +22,6 @@ use crate::error::{
 use crate::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use crate::traits::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
 use crate::types::ContextId;
-
-use super::compression::{compress_as_ir, compress_as_uo, should_force_ir};
-use super::context::{
-    Profile1CompressorContext, Profile1DecompressorContext, Profile1DecompressorMode,
-};
-use super::discriminator::Profile1PacketType;
-use super::state_machine;
 
 /// ROHC Profile 1 handler for RTP/UDP/IP packet compression.
 ///
@@ -253,14 +252,13 @@ impl ProfileHandler for Profile1Handler {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::packet_defs::GenericUncompressedHeaders;
     use crate::profiles::profile1::constants::P1_ROHC_IR_PACKET_TYPE_WITH_DYN;
     use crate::profiles::profile1::context::Profile1CompressorMode;
     use crate::profiles::profile1::packet_types::IrPacket;
     use crate::profiles::profile1::serialization::ir_packets::serialize_ir;
     use crate::protocol_types::RtpUdpIpv4Headers;
-
-    use super::*;
 
     #[test]
     fn handler_calls_compressor_for_ir() {

@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng, random};
-
 use rohcstar_sim::{RohcSimulator, SimConfig, SimError};
 
 #[derive(Parser, Debug)]
@@ -29,7 +28,8 @@ struct CliArgs {
     #[arg(value_enum)]
     mode: RunMode,
 
-    /// Seed for the simulation. Required for 'replay', used as master seed for 'fuzz' loop if provided.
+    /// Seed for the simulation. Required for 'replay', used as master seed for 'fuzz' loop if
+    /// provided.
     #[arg(short, long)]
     seed: Option<u64>,
 
@@ -263,12 +263,13 @@ fn check_for_git_updates() -> Result<bool, String> {
 ///
 /// # Error Classification
 /// - **Critical Failures**: Unexpected errors that indicate real bugs
-/// - **Tolerated Errors**: Expected errors due to configuration (e.g., timestamp
-///   mismatches with packet loss, parsing errors with high loss rates)
+/// - **Tolerated Errors**: Expected errors due to configuration (e.g., timestamp mismatches with
+///   packet loss, parsing errors with high loss rates)
 ///
 /// # Exit Behavior
 /// - Returns 0 (success) if no critical failures found
-/// - Returns 1 (failure) if any critical failures detected (Note: this CLI doesn't exit with 1, relies on logs/notifications)
+/// - Returns 1 (failure) if any critical failures detected (Note: this CLI doesn't exit with 1,
+///   relies on logs/notifications)
 /// - Supports graceful shutdown via Ctrl+C
 fn run_fuzz_mode(args: CliArgs) {
     let mode_desc = if args.infinite {
@@ -458,11 +459,14 @@ fn run_fuzz_mode(args: CliArgs) {
                                     0.0
                                 };
                                 println!(
-                                    "[{:>7.1}s] {} iters @ {:.0}/sec | {} critical, {} tolerated (New Critical!)",
+                                    "[{:>7.1}s] {} iters @ {:.0}/sec | {} critical, {} tolerated \
+                                     (New Critical!)",
                                     elapsed_snap.as_secs_f64(),
                                     total_done_snap,
                                     rate_snap,
-                                    crit_fail_by_worker.load(Ordering::Relaxed), // Use current counts for summary
+                                    crit_fail_by_worker.load(Ordering::Relaxed), /* Use current
+                                                                                  * counts for
+                                                                                  * summary */
                                     tol_err_by_worker.load(Ordering::Relaxed)
                                 );
 
@@ -487,7 +491,8 @@ fn run_fuzz_mode(args: CliArgs) {
                                             ..
                                         } => {
                                             format!(
-                                                "CRC recovery exceeded: expected SN{}, got SN{}, distance {}",
+                                                "CRC recovery exceeded: expected SN{}, got SN{}, \
+                                                 distance {}",
                                                 expected_sn, recovered_sn, distance
                                             )
                                         }
@@ -535,13 +540,16 @@ fn run_fuzz_mode(args: CliArgs) {
                     && running_worker.load(Ordering::Relaxed)
                 {
                     // Check if not already stopping
-                    // This condition might be hit by multiple workers if iterations_per_worker is not perfectly aligned
-                    // but running_main_thread store is atomic.
+                    // This condition might be hit by multiple workers if iterations_per_worker is
+                    // not perfectly aligned but running_main_thread store is
+                    // atomic.
                     println!(
-                        "Worker {} reached target iterations {}. Signaling main thread if not already done.",
+                        "Worker {} reached target iterations {}. Signaling main thread if not \
+                         already done.",
                         _i, iterations_arg
                     );
-                    // running_worker.store(false, Ordering::Relaxed); // Let main loop detect via total_iterations
+                    // running_worker.store(false, Ordering::Relaxed); // Let main loop detect via
+                    // total_iterations
                 }
 
                 // Periodic progress updates (try_lock to avoid contention)
@@ -581,9 +589,10 @@ fn run_fuzz_mode(args: CliArgs) {
                 && !infinite_arg
                 && completed_by_worker.load(Ordering::Relaxed) < iterations_arg
             {
-                // This case should ideally not be hit if iterations_per_worker is calculated correctly
-                // and the main loop condition works.
-                // println!("Worker finished its loop but global iterations not met. This might indicate an issue or end of worker's share.");
+                // This case should ideally not be hit if iterations_per_worker is calculated
+                // correctly and the main loop condition works.
+                // println!("Worker finished its loop but global iterations not met. This might
+                // indicate an issue or end of worker's share.");
             }
         });
 
@@ -605,7 +614,8 @@ fn run_fuzz_mode(args: CliArgs) {
                 Ok(true) => {
                     // Updates found
                     println!(
-                        "[GIT CHECK] Updates found via 'git pull'. Signaling shutdown to allow restart."
+                        "[GIT CHECK] Updates found via 'git pull'. Signaling shutdown to allow \
+                         restart."
                     );
                     running_main_thread.store(false, Ordering::Relaxed); // Signal workers
                     gracefully_stopped.store(true, Ordering::Relaxed); // Mark as graceful stop for summary
@@ -747,7 +757,8 @@ fn run_replay_mode(args: CliArgs) {
 /// - Reports timing information for performance analysis
 fn run_stress_mode(args: CliArgs) {
     println!(
-        "Stress Test Mode (fixed 1,000,000 packets, {} iterations for phase counts, interrupt with Ctrl+C):",
+        "Stress Test Mode (fixed 1,000,000 packets, {} iterations for phase counts, interrupt \
+         with Ctrl+C):",
         args.iterations // iterations arg used for phase count here
     );
 
@@ -757,7 +768,8 @@ fn run_stress_mode(args: CliArgs) {
         num_packets: 1_000_000,                // Large number of packets
         channel_packet_loss_probability: 0.01, // Some loss
         marker_probability: 0.05,              // Some marker changes
-        stable_phase_count: args.iterations.max(100), // Can tie this to CLI arg for stress duration control
+        stable_phase_count: args.iterations.max(100), /* Can tie this to CLI arg for stress duration
+                                                * control */
         uo0_phase_count: args.iterations.max(100),
         // Default other SimConfig fields reasonable for stress:
         start_sn: 0,

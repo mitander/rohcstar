@@ -3,14 +3,6 @@
 //! Handles decompression of UO-0 (Unidirectional Optimistic, Order 0) packets,
 //! the most compressed packet type carrying only sequence number LSBs and CRC.
 
-use crate::CrcType;
-use crate::CrcType::Crc3Uo0;
-use crate::crc::CrcCalculators;
-use crate::encodings::decode_lsb_uo0_sn;
-use crate::error::{RohcError, RohcParsingError};
-use crate::traits::RohcDecompressorContext;
-use crate::types::SequenceNumber;
-
 use super::super::constants::P1_MAX_REASONABLE_UO0_SN_JUMP;
 use super::super::context::Profile1DecompressorContext;
 use super::super::serialization::uo0_packets::deserialize_uo0;
@@ -21,7 +13,14 @@ use super::recovery::{
     LsbConstraint, calculate_reconstructed_ts_implicit, reconstruct_headers_from_context,
     try_sn_recovery,
 };
+use crate::CrcType;
+use crate::CrcType::Crc3Uo0;
+use crate::crc::CrcCalculators;
+use crate::encodings::decode_lsb_uo0_sn;
+use crate::error::{RohcError, RohcParsingError};
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::traits::RohcDecompressorContext;
+use crate::types::SequenceNumber;
 
 /// Decompresses UO-0 packet with SN LSB and implicit TS reconstruction.
 ///
@@ -341,8 +340,9 @@ mod tests {
 
         // Note: UO-0 uses 4-bit LSBs with window [ref, ref+15], so max jump is 15
         // To test rejection logic, we'd need CRC to pass but distance check to fail
-        // However, within UO-0's 16-value window, all jumps are ≤ 15 < P1_MAX_REASONABLE_UO0_SN_JUMP (16)
-        // So this test verifies that normal UO-0 operations don't trigger distance rejection
+        // However, within UO-0's 16-value window, all jumps are ≤ 15 <
+        // P1_MAX_REASONABLE_UO0_SN_JUMP (16) So this test verifies that normal UO-0
+        // operations don't trigger distance rejection
         let uo0_packet = Uo0Packet {
             sn_lsb: 15, // Maximum possible jump in UO-0 window (100 → 115)
             crc3: 0x0,  // Let CRC validation determine success/failure

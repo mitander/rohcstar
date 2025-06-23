@@ -5,6 +5,9 @@
 
 #![allow(dead_code)] // Allow dead code for unused test helpers during development
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use rohcstar::engine::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::constants::{
@@ -16,11 +19,9 @@ use rohcstar::profiles::profile1::context::{
     Profile1DecompressorMode,
 };
 use rohcstar::profiles::profile1::{IrPacket, Profile1Handler, RtpUdpIpv4Headers};
-use rohcstar::time::{SystemClock, mock_clock::MockClock};
+use rohcstar::time::SystemClock;
+use rohcstar::time::mock_clock::MockClock;
 use rohcstar::{ProfileHandler, RohcCompressorContext, RohcDecompressorContext};
-
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// Default timeout for RohcEngine instances in tests where specific timing isn't critical.
 pub const DEFAULT_ENGINE_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
@@ -78,8 +79,8 @@ pub fn create_test_engine_with_mock_clock(
 /// - `cid`: Context ID for the flow.
 /// - `ssrc`: SSRC for the RTP flow.
 /// - `final_ir_sn_val`: The RTP sequence number for the final, definitive IR-DYN packet.
-/// - `final_ir_ts_val`: The RTP timestamp for the final IR-DYN packet. This value will
-///   become the `ts_offset` in both contexts after this function.
+/// - `final_ir_ts_val`: The RTP timestamp for the final IR-DYN packet. This value will become the
+///   `ts_offset` in both contexts after this function.
 /// - `stride`: The desired RTP timestamp stride to establish.
 ///
 /// # Panics
@@ -263,8 +264,8 @@ pub fn create_rtp_headers(sn: u16, ts_val: u32, marker: bool, ssrc: u32) -> RtpU
 ///
 /// Useful for tests where SSRC and IP-ID variations are not the primary focus.
 /// Accepts `ts_val` as `u32` and converts to `Timestamp` internally.
-/// Static fields (IP addresses, ports) are set to predefined values different from `create_rtp_headers`.
-/// Creates RTP/UDP/IPv4 headers with a fixed SSRC for consistent testing.
+/// Static fields (IP addresses, ports) are set to predefined values different from
+/// `create_rtp_headers`. Creates RTP/UDP/IPv4 headers with a fixed SSRC for consistent testing.
 ///
 /// Similar to `create_rtp_headers` but uses a fixed SSRC and different
 /// port numbers for testing scenarios requiring consistent SSRC values.
@@ -639,7 +640,8 @@ pub fn create_profile1_decompressor_context(
     handler.create_decompressor_context(cid.into(), Instant::now())
 }
 
-/// Establishes TS stride by sending 3 UO-1-TS packets after IR context for RFC-compliant confirmation.
+/// Establishes TS stride by sending 3 UO-1-TS packets after IR context for RFC-compliant
+/// confirmation.
 ///
 /// This helper function sends the minimum number of packets required to establish a timestamp
 /// stride according to RFC 3095, which requires 3 confirmations before the stride is considered

@@ -104,8 +104,8 @@ pub fn decode_lsb_uo0_sn(received_lsbs: u8, reference_value: u16) -> u16 {
 /// `[reference_value - p_offset, reference_value - p_offset + (2^k) - 1]`.
 ///
 /// # Errors
-/// - `RohcParsingError::InvalidLsbOperation` - Invalid parameters, LSBs too large,
-///   or no unique resolution
+/// - `RohcParsingError::InvalidLsbOperation` - Invalid parameters, LSBs too large, or no unique
+///   resolution
 pub fn decode_lsb(
     received_lsb: u64,
     reference_value: u64,
@@ -165,9 +165,9 @@ pub fn decode_lsb(
             Err(RohcParsingError::InvalidLsbOperation {
                 field: Field::ReceivedLsbs,
                 description: format!(
-                    "Cannot be uniquely resolved to a value in the interpretation window. \
-                    LSBs: {:#x}, ref: {:#x}, k: {}, p: {}. \
-                    Candidates: ({:#x}, {:#x}). Window base: {:#x}, Window size: {:#x}.",
+                    "Cannot be uniquely resolved to a value in the interpretation window. LSBs: \
+                     {:#x}, ref: {:#x}, k: {}, p: {}. Candidates: ({:#x}, {:#x}). Window base: \
+                     {:#x}, Window size: {:#x}.",
                     received_lsb,
                     reference_value,
                     num_lsb_bits,

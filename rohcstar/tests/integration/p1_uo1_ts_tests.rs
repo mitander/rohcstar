@@ -4,16 +4,16 @@
 //! when the RTP Timestamp changes, the RTP Sequence Number increments by one,
 //! and the RTP Marker bit remains unchanged from the context.
 
-use super::common::{
-    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
-    get_decompressor_context,
-};
-
 use rohcstar::constants::ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{
     P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_SN_PACKET_TYPE_PREFIX, P1_UO_1_TS_DISCRIMINATOR,
     Profile1Handler,
+};
+
+use super::common::{
+    create_rtp_headers, create_test_engine_with_system_clock, establish_ir_context,
+    get_decompressor_context,
 };
 
 /// Tests UO-1-TS packet when TS changes with SN+1 and stable marker.
@@ -205,8 +205,9 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert!(decomp2.rtp_marker);
     assert_eq!(decomp2.rtp_timestamp, 5000);
 
-    // Packet 3: SN=303 (ctx_sn+1), TS=6000 (changed but follows stride), Marker=false (changed from P2 context), IP-ID=same
-    // Expected: UO-1-SN (Marker change forces UO-1-SN even though TS follows stride)
+    // Packet 3: SN=303 (ctx_sn+1), TS=6000 (changed but follows stride), Marker=false (changed from
+    // P2 context), IP-ID=same Expected: UO-1-SN (Marker change forces UO-1-SN even though TS
+    // follows stride)
     let headers3 = create_rtp_headers(303, 6000, false, ssrc).with_ip_id(ip_id_in_context);
     let mut compress_buf3 = [0u8; 1500];
     let compressed3_len = engine
@@ -243,8 +244,8 @@ fn p1_uo1_ts_vs_uo1_sn_selection_priority() {
     assert_eq!(decomp3.rtp_timestamp, 6000);
     assert!(!decomp3.rtp_marker);
 
-    // Packet 4: SN=305 (ctx_sn+2), TS=6000 (changed), Marker=false (same as P3 context), IP-ID changes
-    // Expected: UO-1-SN (SN jump > 1, overrides UO-1-TS/ID consideration)
+    // Packet 4: SN=305 (ctx_sn+2), TS=6000 (changed), Marker=false (same as P3 context), IP-ID
+    // changes Expected: UO-1-SN (SN jump > 1, overrides UO-1-TS/ID consideration)
     let headers4 =
         create_rtp_headers(305, 6000, false, ssrc).with_ip_id(ip_id_in_context.wrapping_add(1));
 

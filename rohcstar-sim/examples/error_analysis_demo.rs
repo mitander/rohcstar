@@ -1,9 +1,7 @@
 //! Demonstrates error analysis capabilities to distinguish real bugs from network effects.
 
-use rohcstar_sim::{
-    RohcSimulator, SimConfig,
-    error_analyzer::{ErrorAnalyzer, ErrorCategory},
-};
+use rohcstar_sim::error_analyzer::{ErrorAnalyzer, ErrorCategory};
+use rohcstar_sim::{RohcSimulator, SimConfig};
 
 fn main() {
     println!("ROHC Simulator Error Analysis Demo");

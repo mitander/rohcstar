@@ -6,14 +6,13 @@
 
 use std::net::Ipv4Addr;
 
+use super::super::constants::*;
+use super::super::packet_types::IrPacket;
 use crate::constants::{DEFAULT_IPV4_TTL, ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
 use crate::crc::CrcCalculators;
 use crate::error::{CrcType, Field, ParseContext, RohcBuildingError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::types::{ContextId, IpId, SequenceNumber, Ssrc, Timestamp};
-
-use super::super::constants::*;
-use super::super::packet_types::IrPacket;
 
 /// Serializes a ROHC Profile 1 IR (Initialization/Refresh) packet into a provided buffer.
 ///
@@ -323,18 +322,23 @@ impl<'a> PacketWriter<'a> {
     fn new(buf: &'a mut [u8]) -> Self {
         Self { buf, offset: 0 }
     }
+
     fn offset(&self) -> usize {
         self.offset
     }
+
     fn write_u8(&mut self, val: u8) {
         self.write_slice(&[val]);
     }
+
     fn write_u16_be(&mut self, val: u16) {
         self.write_slice(&val.to_be_bytes());
     }
+
     fn write_u32_be(&mut self, val: u32) {
         self.write_slice(&val.to_be_bytes());
     }
+
     fn write_slice(&mut self, slice: &[u8]) {
         let len = slice.len();
         debug_assert!(self.offset + len <= self.buf.len(), "PacketWriter overflow");

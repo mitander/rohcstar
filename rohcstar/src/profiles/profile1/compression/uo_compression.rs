@@ -4,24 +4,28 @@
 //! selection and building according to RFC 3095. It supports UO-0, UO-1-SN, UO-1-TS,
 //! UO-1-ID, and UO-1-RTP packet variants.
 
-use crate::crc::CrcCalculators;
-use crate::encodings::encode_lsb;
-use crate::error::{CompressionError, Field, RohcError};
-use crate::types::{IpId, SequenceNumber, Timestamp};
-
 use super::super::constants::*;
 use super::super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::super::packet_types::{Uo0Packet, Uo1Packet};
 use super::super::serialization::uo0_packets::serialize_uo0;
 use super::super::serialization::uo1_packets::{
     prepare_generic_uo_crc_input_payload, prepare_uo1_id_specific_crc_input_payload,
-};
-use super::super::serialization::uo1_packets::{
     serialize_uo1_id, serialize_uo1_rtp, serialize_uo1_sn, serialize_uo1_ts,
 };
 use super::compute_implicit_ts;
+use crate::crc::CrcCalculators;
+use crate::encodings::encode_lsb;
+use crate::error::{CompressionError, Field, RohcError};
 use crate::protocol_types::RtpUdpIpv4Headers;
 use crate::traits::RohcCompressorContext;
+use crate::types::{IpId, SequenceNumber, Timestamp};
+
+/// Parameters for building UO-1-RTP packets.
+struct Uo1RtpPacketData {
+    current_sn: SequenceNumber,
+    ts_scaled_val: u8,
+    current_marker: bool,
+}
 
 /// Compresses headers as a UO (Unidirectional Optimistic) packet into provided buffer.
 ///
@@ -102,14 +106,12 @@ fn select_and_build_uo_packet(
     out: &mut [u8],
 ) -> Result<(usize, Timestamp), RohcError> {
     if let Some(ts_scaled_val) = can_use_uo1_rtp(context, sn_delta, ip_id_changed, current_ts) {
-        let len = build_uo1_rtp_packet(
-            context,
+        let packet_data = Uo1RtpPacketData {
             current_sn,
             ts_scaled_val,
             current_marker,
-            crc_calculators,
-            out,
-        )?;
+        };
+        let len = build_uo1_rtp_packet(context, &packet_data, crc_calculators, out)?;
         return Ok((len, current_ts));
     } else if context.ts_scaled_mode {
         if context.ts_stride.is_none() {
@@ -226,13 +228,13 @@ fn build_uo0_packet(
     out: &mut [u8],
 ) -> Result<usize, RohcError> {
     let sn_lsb = encode_lsb(current_sn.as_u64(), P1_UO0_SN_LSB_WIDTH_DEFAULT)? as u8;
-    let crc_input_bytes = prepare_generic_uo_crc_input_payload(
+    let crc_input_payload = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
         current_sn,
         ts_for_crc,
         context.last_sent_rtp_marker,
     );
-    let crc3 = crc_calculators.crc3(&crc_input_bytes);
+    let crc3 = crc_calculators.crc3(&crc_input_payload);
 
     let uo0_data = Uo0Packet {
         cid: context.get_small_cid_for_packet(),
@@ -334,8 +336,8 @@ fn build_uo1_id_packet(
     let ip_id_lsb_for_packet =
         encode_lsb(current_ip_id.as_u64(), P1_UO1_IP_ID_LSB_WIDTH_DEFAULT)? as u8;
 
-    // UO-1-ID implies SN+1 and unchanged TS (or TS follows stride for implicit update if stride known).
-    // For CRC, it specifically uses the *last sent TS* from context if no stride,
+    // UO-1-ID implies SN+1 and unchanged TS (or TS follows stride for implicit update if stride
+    // known). For CRC, it specifically uses the *last sent TS* from context if no stride,
     // or implicit TS if stride is present.
     // This function's caller (`select_and_build_uo_packet`) already filters for `!ts_changed`
     // or ensures `implicit_ts_if_stride_set` is compatible before choosing UO-1-ID.
@@ -373,9 +375,7 @@ fn build_uo1_id_packet(
 // Builds a UO-1-RTP packet using TS_SCALED mode when TS follows the established stride.
 fn build_uo1_rtp_packet(
     context: &Profile1CompressorContext,
-    current_sn: SequenceNumber,
-    ts_scaled_val: u8, // The calculated TS_SCALED value.
-    current_marker: bool,
+    packet_data: &Uo1RtpPacketData,
     crc_calculators: &CrcCalculators,
     out: &mut [u8],
 ) -> Result<usize, RohcError> {
@@ -385,26 +385,27 @@ fn build_uo1_rtp_packet(
             field: Field::TsScaled,
         })
     })?;
-    debug_assert!(stride > 0, "Invalid stride: {} must be positive", stride);
+    debug_assert!(stride > 0, "Invalid stride: {stride} must be positive");
 
     // Reconstruct the full TS value from TS_Offset and TS_SCALED for CRC calculation.
     // current_sn for CRC is the SN of the packet (context.last_sn + 1).
     let full_ts_for_crc = context
         .ts_offset
-        .wrapping_add(ts_scaled_val as u32 * stride);
+        .wrapping_add(packet_data.ts_scaled_val as u32 * stride);
 
     let crc_input_bytes = prepare_generic_uo_crc_input_payload(
         context.rtp_ssrc,
-        current_sn, // UO-1-RTP implies SN+1.
+        packet_data.current_sn, // UO-1-RTP implies SN+1.
         full_ts_for_crc,
-        current_marker, // UO-1-RTP carries the current marker bit.
+        packet_data.current_marker, // UO-1-RTP carries the current marker bit.
     );
     let calculated_crc8 = crc_calculators.crc8(&crc_input_bytes);
 
     let uo1_rtp_data = Uo1Packet {
         cid: context.get_small_cid_for_packet(),
-        marker: current_marker, // This is the marker bit set in the UO-1-RTP type octet.
-        ts_scaled: Some(ts_scaled_val),
+        marker: packet_data.current_marker, /* This is the marker bit set in the UO-1-RTP type
+                                             * octet. */
+        ts_scaled: Some(packet_data.ts_scaled_val),
         crc8: calculated_crc8,
         ..Default::default() // Other LSB fields are not used by UO-1-RTP.
     };

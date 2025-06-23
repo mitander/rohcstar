@@ -4,19 +4,18 @@
 //! typical compression sequences. Tests cover the progression from IR packets through
 //! various UO (Uncompressed/Optimized) packet types under different conditions.
 
-use super::common::{
-    create_rtp_headers, create_rtp_headers_fixed_ssrc, create_test_engine_with_system_clock,
-    establish_ir_context, get_compressor_context, get_decompressor_context,
-    get_ip_id_established_by_ir,
-};
-use rohcstar::profiles::profile1::RtpUdpIpv4Headers;
-
 use rohcstar::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::context::Profile1DecompressorMode;
 use rohcstar::profiles::profile1::{
     P1_ROHC_IR_PACKET_TYPE_WITH_DYN, P1_UO_1_SN_MARKER_BIT_MASK, P1_UO_1_TS_DISCRIMINATOR,
-    Profile1Handler,
+    Profile1Handler, RtpUdpIpv4Headers,
+};
+
+use super::common::{
+    create_rtp_headers, create_rtp_headers_fixed_ssrc, create_test_engine_with_system_clock,
+    establish_ir_context, get_compressor_context, get_decompressor_context,
+    get_ip_id_established_by_ir,
 };
 
 /// SSRC used for flow tests in this module.
@@ -295,7 +294,8 @@ fn p1_umode_ir_to_fo_sequence_cid0() {
     assert_eq!(comp_ctx_after_p7.fo_packets_sent_since_ir, 0);
 }
 
-/// Tests packet sequence for small CID with Add-CID handling through IR→UO-1-TS→UO-1-SN→IR transitions.
+/// Tests packet sequence for small CID with Add-CID handling through IR→UO-1-TS→UO-1-SN→IR
+/// transitions.
 #[test]
 fn p1_umode_ir_to_fo_sequence_small_cid() {
     let small_cid: u16 = 5;
@@ -412,7 +412,8 @@ fn p1_umode_ir_to_fo_sequence_small_cid() {
     // Implicit TS update: 2320 + 160 = 2480
     assert_eq!(decomp_headers4.rtp_timestamp, 2480);
 
-    // P5: IR (SN+1 from P4, TS changes significantly, refresh interval met: 4 packets sent, interval 4)
+    // P5: IR (SN+1 from P4, TS changes significantly, refresh interval met: 4 packets sent,
+    // interval 4)
     let original_headers5 = create_rtp_headers_fixed_ssrc(204, 3000, false);
     let generic_headers5 = GenericUncompressedHeaders::RtpUdpIpv4(original_headers5.clone());
     let mut compress_buf5_framed = [0u8; 1500];

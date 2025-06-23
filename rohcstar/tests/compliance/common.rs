@@ -4,13 +4,14 @@
 //! matching RFC 3095 Section 5.7.7.4 examples. These utilities ensure consistent
 //! test environments across all compliance tests.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use rohcstar::RohcEngine;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::SystemClock;
 use rohcstar::types::{ContextId, SequenceNumber, Ssrc, Timestamp};
-use std::sync::Arc;
-use std::time::Duration;
 
 /// Default IR refresh interval for test engines.
 pub const TEST_IR_REFRESH_INTERVAL: u32 = 20;

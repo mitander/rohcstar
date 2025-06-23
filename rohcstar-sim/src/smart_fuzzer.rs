@@ -4,14 +4,14 @@
 //! to distinguish real bugs from expected network behavior, providing cleaner
 //! output and better signal-to-noise ratio for bug detection.
 
-use crate::{
-    RohcSimulator, SimConfig,
-    error_analyzer::{ErrorAnalyzer, ErrorCategory},
-};
-use rand::prelude::*;
-use rand::rngs::StdRng;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+use rand::prelude::*;
+use rand::rngs::StdRng;
+
+use crate::error_analyzer::{ErrorAnalyzer, ErrorCategory};
+use crate::{RohcSimulator, SimConfig};
 
 /// Configuration for smart fuzzing campaigns.
 #[derive(Debug, Clone)]

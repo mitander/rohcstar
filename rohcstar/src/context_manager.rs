@@ -112,6 +112,7 @@ impl ContextManager {
             })
             .ok_or(RohcError::ContextNotFound(cid.into()))
     }
+
     /// Removes a compressor context by its CID.
     pub fn remove_compressor_context(
         &mut self,
@@ -184,11 +185,12 @@ impl ContextManager {
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
+    use std::time::Instant;
+
     use super::*;
     use crate::packet_defs::RohcProfile;
     use crate::traits::{RohcCompressorContext, RohcDecompressorContext};
-    use std::any::Any;
-    use std::time::Instant;
 
     #[derive(Debug)]
     struct MockCompressorCtx {
@@ -201,18 +203,23 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::Uncompressed
         }
+
         fn cid(&self) -> ContextId {
             self.cid
         }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
+
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
+
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
+
         fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
@@ -229,21 +236,27 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             RohcProfile::RtpUdpIp
         }
+
         fn cid(&self) -> ContextId {
             self.cid
         }
+
         fn assign_cid(&mut self, new_cid: ContextId) {
             self.cid = new_cid;
         }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
+
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
+
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
+
         fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }

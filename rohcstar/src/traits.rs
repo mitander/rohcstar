@@ -91,11 +91,13 @@ pub trait ProfileHandler: Send + Sync + Debug {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use bytes::Bytes;
+
     use super::*;
     use crate::error::{ParseContext, RohcBuildingError, RohcError, RohcParsingError};
     use crate::packet_defs::RohcProfile;
-    use bytes::Bytes;
-    use std::time::{Duration, Instant};
 
     #[derive(Debug)]
     struct MockCompressorContext {
@@ -108,18 +110,23 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             self.profile
         }
+
         fn cid(&self) -> ContextId {
             self.cid
         }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
+
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
+
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
+
         fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
@@ -136,21 +143,27 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             self.profile
         }
+
         fn cid(&self) -> ContextId {
             self.cid
         }
+
         fn assign_cid(&mut self, cid: ContextId) {
             self.cid = cid;
         }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
+
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
+
         fn last_accessed(&self) -> Instant {
             self.last_accessed
         }
+
         fn update_access_time(&mut self, now: Instant) {
             self.last_accessed = now;
         }
@@ -165,6 +178,7 @@ mod tests {
         fn profile_id(&self) -> RohcProfile {
             self.profile
         }
+
         fn create_compressor_context(
             &self,
             cid: ContextId,
@@ -177,6 +191,7 @@ mod tests {
                 last_accessed: creation_time,
             })
         }
+
         fn create_decompressor_context(
             &self,
             cid: ContextId,
@@ -188,6 +203,7 @@ mod tests {
                 last_accessed: creation_time,
             })
         }
+
         fn compress(
             &self,
             _context: &mut dyn RohcCompressorContext,

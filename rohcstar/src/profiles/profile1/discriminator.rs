@@ -104,7 +104,8 @@ impl Profile1PacketType {
             | Profile1PacketType::Uo1Ts
             | Profile1PacketType::Uo1Id
             | Profile1PacketType::Uo1Rtp { .. } => true,
-            Profile1PacketType::Unknown(_) => true, // Conservatively assume unknown might have been an updater
+            Profile1PacketType::Unknown(_) => true, // Conservatively assume unknown might have
+            // been an updater
             Profile1PacketType::IrStatic | Profile1PacketType::Uo0 => false,
         }
     }
@@ -194,7 +195,8 @@ mod tests {
             Profile1PacketType::Unknown(0x80)
         );
         assert_eq!(
-            Profile1PacketType::from_first_byte(0xFF), // Not IR, UO-0. If 101xxxx, it's unknown variant
+            Profile1PacketType::from_first_byte(0xFF), /* Not IR, UO-0. If 101xxxx, it's unknown
+                                                        * variant */
             Profile1PacketType::Unknown(0xFF)
         );
         assert_eq!(

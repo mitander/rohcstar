@@ -3,9 +3,10 @@
 //! Provides zero-cost newtypes to prevent field mixups at compile time.
 //! All types use `#[repr(transparent)]` for guaranteed zero runtime cost.
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Add, AddAssign, Deref, Sub};
+
+use serde::{Deserialize, Serialize};
 
 /// Macro to generate ROHC newtype wrappers with common implementations
 macro_rules! rohc_newtype {

@@ -441,6 +441,8 @@ impl Default for RohcEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
     use crate::constants::{ROHC_ADD_CID_FEEDBACK_PREFIX_VALUE, ROHC_SMALL_CID_MASK};
     use crate::error::EngineError;
@@ -450,8 +452,6 @@ mod tests {
     };
     use crate::time::mock_clock::MockClock;
     use crate::types::SequenceNumber;
-    use std::time::Duration;
-    use std::time::Instant;
 
     const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 5);
     const TEST_COMPRESS_BUF_SIZE: usize = 128; // Sufficient for most ROHC test packets

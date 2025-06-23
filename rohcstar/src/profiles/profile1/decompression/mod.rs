@@ -6,13 +6,12 @@
 //! - UO-1 packet variants decompression
 //! - Recovery utilities and helper functions
 
+use super::context::Profile1DecompressorContext;
+use super::discriminator::Profile1PacketType;
 use crate::crc::CrcCalculators;
 use crate::error::{RohcError, RohcParsingError};
 use crate::packet_defs::RohcProfile;
 use crate::protocol_types::RtpUdpIpv4Headers;
-
-use super::context::Profile1DecompressorContext;
-use super::discriminator::Profile1PacketType;
 
 pub mod ir_decompression;
 pub mod recovery;
@@ -29,7 +28,8 @@ pub use self::uo1_decompression::{
     decompress_as_uo1_id, decompress_as_uo1_rtp, decompress_as_uo1_sn, decompress_as_uo1_ts,
 };
 
-/// Decompresses a UO (Unidirectional Optimistic) packet by auto-dispatching to the appropriate variant.
+/// Decompresses a UO (Unidirectional Optimistic) packet by auto-dispatching to the appropriate
+/// variant.
 ///
 /// This function provides a unified entry point for decompressing any UO packet type.
 /// It automatically determines the packet type from the first byte and dispatches to the

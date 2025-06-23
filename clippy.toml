@@ -1,25 +1,15 @@
-# ROHC Three-Tiered Quality Enforcement Configuration
-#
-# Level 1: Critical (CI failures) - Handled by tidy.rs
-# Level 2: Quality Ratchets - Module size handled by tidy.rs ratchet mechanism
-# Level 3: Style Guidelines - Handled by clippy warnings
+# Riptide-inspired Clippy Configuration
+# Enforces our documented coding standards with stricter thresholds
 
-# COGNITIVE COMPLEXITY - The real function complexity limit
-# This replaces line-of-code limits with meaningful complexity measurement
-# 25 is reasonable for systems programming with error handling
-cognitive-complexity-threshold = 25
+# COMPLEXITY LIMITS - Stricter thresholds for better code quality
+# Cognitive complexity is the real measure of function difficulty
+cognitive-complexity-threshold = 20
+too-many-lines-threshold = 400
+too-many-arguments-threshold = 5
 
-# MODULE SIZE - Warning only, ratchet mechanism in tidy.rs handles hard limits
-# Set high threshold since our ratchet system handles this more intelligently
-too-many-lines-threshold = 1000
+# IMPORT DISCIPLINE - Prevent wildcard imports
+# Enforces explicit imports to prevent use module::*;
+warn-on-all-wildcard-imports = true
 
-# NAMING AND STYLE - Let clippy guide us with warnings
-# Allow slightly longer argument lists for builder patterns common in ROHC
-too-many-arguments-threshold = 8
-
-# DOCUMENTATION - Public APIs must be documented (enforced in tidy.rs)
-# Enable checking for missing docs in public crate items
+# DOCUMENTATION - Public APIs must be documented
 missing-docs-in-crate-items = true
-
-# PERFORMANCE - Standard thresholds for performance lints
-# These are handled by clippy's built-in lints, no configuration needed here

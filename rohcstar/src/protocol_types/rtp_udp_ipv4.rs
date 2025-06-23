@@ -82,7 +82,8 @@ pub struct RtpUdpIpv4Headers {
     pub rtp_sequence_number: SequenceNumber,
     /// RTP timestamp. Reflects the sampling instant of the first octet in the RTP data packet.
     pub rtp_timestamp: Timestamp,
-    /// RTP Synchronization Source (SSRC) identifier. Uniquely identifies the source of an RTP stream.
+    /// RTP Synchronization Source (SSRC) identifier. Uniquely identifies the source of an RTP
+    /// stream.
     pub rtp_ssrc: Ssrc,
     /// List of RTP Contributing Source (CSRC) identifiers.
     pub rtp_csrc_list: Vec<u32>,

@@ -3,17 +3,16 @@
 //! This module handles the compression logic for IR packets, including determining
 //! when IR packets are required and building them according to RFC 3095.
 
-use crate::crc::CrcCalculators;
-use crate::error::RohcError;
-use crate::packet_defs::RohcProfile;
-use crate::types::Timestamp;
-
 use super::super::constants::*;
 use super::super::context::{Profile1CompressorContext, Profile1CompressorMode};
 use super::super::packet_types::IrPacket;
 use super::super::serialization::ir_packets::serialize_ir;
 use super::{min_wrapping_distance_u16, min_wrapping_distance_u32};
+use crate::crc::CrcCalculators;
+use crate::error::RohcError;
+use crate::packet_defs::RohcProfile;
 use crate::protocol_types::RtpUdpIpv4Headers;
+use crate::types::Timestamp;
 
 /// Determines if an IR packet must be sent by the compressor.
 ///
@@ -78,7 +77,8 @@ pub fn compress_as_ir(
 ) -> Result<usize, RohcError> {
     debug_assert_eq!(
         context.rtp_ssrc, headers.rtp_ssrc,
-        "SSRC mismatch in compress_as_ir; context should have been initialized or SSRC change handled."
+        "SSRC mismatch in compress_as_ir; context should have been initialized or SSRC change \
+         handled."
     );
 
     let previous_ts_before_ir = context.last_sent_rtp_ts_full;
@@ -204,9 +204,10 @@ fn is_lsb_window_exceeded(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::crc::CrcCalculators;
-    use std::time::Instant;
 
     fn create_test_context(
         ssrc: u32,

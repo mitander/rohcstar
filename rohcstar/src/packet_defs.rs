@@ -21,7 +21,8 @@ pub enum RohcProfile {
     /// Used for passthrough of uncompressed packets.
     Uncompressed = 0x00,
     /// ROHC RTP/UDP/IP Profile (Profile 0x0001).
-    /// Compresses Real-time Transport Protocol, User Datagram Protocol, and Internet Protocol headers.
+    /// Compresses Real-time Transport Protocol, User Datagram Protocol, and Internet Protocol
+    /// headers.
     RtpUdpIp = 0x01,
     /// ROHC UDP/IP Profile (Profile 0x0002).
     /// Compresses User Datagram Protocol and Internet Protocol headers.
@@ -75,7 +76,8 @@ pub enum GenericUncompressedHeaders {
     RtpUdpIpv4(RtpUdpIpv4Headers),
 
     /// A raw byte payload primarily for testing or for profiles that handle opaque data.
-    /// This allows mock profile handlers to easily construct and inspect `GenericUncompressedHeaders`.
+    /// This allows mock profile handlers to easily construct and inspect
+    /// `GenericUncompressedHeaders`.
     TestRaw(Bytes),
 }
 

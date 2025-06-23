@@ -4,10 +4,10 @@
 //! performance degrades below acceptable thresholds. Unlike regression tests,
 //! these represent absolute minimum performance requirements for production use.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rohcstar::crc::CrcCalculators;
 use rohcstar::encodings::{decode_lsb, decode_lsb_uo0_sn, encode_lsb};
 use rohcstar::engine::RohcEngine;

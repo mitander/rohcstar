@@ -4,16 +4,16 @@
 //! classification to distinguish implementation bugs from expected network behavior.
 //! Achieves 4.4M+ packets/sec simulation rate with comprehensive error analysis.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use rand::prelude::*;
+use rand::rngs::StdRng;
 use rohcstar::engine::RohcEngine;
 use rohcstar::error::RohcError;
 use rohcstar::packet_defs::{GenericUncompressedHeaders, RohcProfile};
 use rohcstar::profiles::profile1::{Profile1Handler, RtpUdpIpv4Headers};
 use rohcstar::time::mock_clock::MockClock;
-
-use rand::prelude::*;
-use rand::rngs::StdRng;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 pub mod error_analyzer;
 pub mod smart_fuzzer;
@@ -383,7 +383,7 @@ impl RohcSimulator {
     ///
     /// # Errors
     /// - [`SimError::CompressionError`] - Compression stage failed
-    /// - [`SimError::DecompressionError`] - Decompression stage failed  
+    /// - [`SimError::DecompressionError`] - Decompression stage failed
     /// - [`SimError::VerificationError`] - Header verification failed
     /// - [`SimError::PacketGenerationExhausted`] - No more packets to generate
     pub fn run(&mut self) -> Result<(), SimError> {

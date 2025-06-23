@@ -6,8 +6,10 @@
 //!
 //! Key components:
 //! - `handler`: Implements the `ProfileHandler` trait for Profile 1.
-//! - `compression`: Contains focused compression modules for Profile 1 packet building and compression decisions.
-//! - `decompression`: Contains focused decompression modules for Profile 1 packet parsing and header reconstruction.
+//! - `compression`: Contains focused compression modules for Profile 1 packet building and
+//!   compression decisions.
+//! - `decompression`: Contains focused decompression modules for Profile 1 packet parsing and
+//!   header reconstruction.
 //! - `state_machine`: Handles decompressor state transitions for Profile 1.
 //! - `context`: Defines `Profile1CompressorContext` and `Profile1DecompressorContext`.
 //! - `discriminator`: Defines `Profile1PacketType` for structured packet type identification.

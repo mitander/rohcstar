@@ -149,8 +149,8 @@ mod tests {
         );
         if CRC_3_ROHC.check != expected_crc {
             eprintln!(
-                "Note for direct CRC-3 test: `crc` crate's CRC_3_ROHC.check value \
-                (0x{:02X}) differs from ROHC examples (0x06).",
+                "Note for direct CRC-3 test: `crc` crate's CRC_3_ROHC.check value (0x{:02X}) \
+                 differs from ROHC examples (0x06).",
                 CRC_3_ROHC.check
             );
         }
