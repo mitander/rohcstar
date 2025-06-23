@@ -16,12 +16,8 @@ use crate::types::ContextId;
 /// LSBs and CRC when all other fields (timestamp, IP-ID, marker) remain static.
 /// Used for minimal compression overhead in stable RTP streams.
 ///
-/// # Parameters
-/// - `packet_data`: Data for the UO-0 packet.
-/// - `out`: Output buffer to write the serialized packet into.
-///
-/// # Returns
-/// The number of bytes written to the output buffer.
+/// # Errors
+/// - `RohcError::Building` - Serialization failed due to invalid packet data
 ///
 /// # Errors
 /// - [`RohcBuildingError`] - Invalid field values for UO-0 packet
@@ -97,13 +93,6 @@ pub fn serialize_uo0(packet_data: &Uo0Packet, out: &mut [u8]) -> Result<usize, R
 }
 
 /// Deserializes a ROHC Profile 1 UO-0 packet.
-///
-/// # Parameters
-/// - `core_packet_data`: Byte slice of the core UO-0 packet (single byte).
-/// - `cid_from_engine`: Optional CID if Add-CID was processed by the engine.
-///
-/// # Returns
-/// The deserialized UO-0 packet data.
 ///
 /// # Errors
 /// - [`RohcParsingError`] - Incorrect length or invalid packet type

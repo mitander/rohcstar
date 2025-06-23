@@ -27,17 +27,13 @@ pub struct ContextManager {
 
 impl ContextManager {
     /// Creates a new, empty `ContextManager`.
-    ///
-    /// # Returns
-    /// A new `ContextManager` instance with no active contexts.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Adds a new compressor context to the manager.
     ///
-    /// If a context with the same CID already exists, it will be overwritten.
-    /// Typically called by the ROHC engine after a `ProfileHandler` creates a new context.
+    /// Overwrites any existing context with the same CID.
     pub fn add_compressor_context(
         &mut self,
         cid: ContextId,
@@ -48,7 +44,7 @@ impl ContextManager {
 
     /// Adds a new decompressor context to the manager.
     ///
-    /// If a context with the same CID already exists, it will be overwritten.
+    /// Overwrites any existing context with the same CID.
     pub fn add_decompressor_context(
         &mut self,
         cid: ContextId,
@@ -117,8 +113,6 @@ impl ContextManager {
             .ok_or(RohcError::ContextNotFound(cid.into()))
     }
     /// Removes a compressor context by its CID.
-    ///
-    /// Returns the removed context if it existed, otherwise `None`.
     pub fn remove_compressor_context(
         &mut self,
         cid: ContextId,
@@ -127,8 +121,6 @@ impl ContextManager {
     }
 
     /// Removes a decompressor context by its CID.
-    ///
-    /// Returns the removed context if it existed, otherwise `None`.
     pub fn remove_decompressor_context(
         &mut self,
         cid: ContextId,
@@ -161,40 +153,28 @@ impl ContextManager {
         self.clear_decompressor_contexts();
     }
 
-    /// Returns the number of active compressor contexts.
-    ///
-    /// # Returns
-    /// The count of currently managed compressor contexts.
+    /// Number of active compressor contexts.
     pub fn compressor_context_count(&self) -> usize {
         self.compressor_contexts.len()
     }
 
-    /// Returns the number of active decompressor contexts.
-    ///
-    /// # Returns
-    /// The count of currently managed decompressor contexts.
+    /// Number of active decompressor contexts.
     pub fn decompressor_context_count(&self) -> usize {
         self.decompressor_contexts.len()
     }
 
-    /// Returns an immutable iterator over compressor contexts.
+    /// Immutable iterator over compressor contexts.
     ///
     /// Used by the RohcEngine for operations like pruning stale contexts.
-    ///
-    /// # Returns
-    /// An iterator yielding (CID, context) pairs for all active compressor contexts.
     pub fn compressor_contexts_iter(
         &self,
     ) -> impl Iterator<Item = (&ContextId, &Box<dyn RohcCompressorContext>)> {
         self.compressor_contexts.iter()
     }
 
-    /// Returns an immutable iterator over decompressor contexts.
+    /// Immutable iterator over decompressor contexts.
     ///
     /// Used by the RohcEngine for operations like pruning stale contexts.
-    ///
-    /// # Returns
-    /// An iterator yielding (CID, context) pairs for all active decompressor contexts.
     pub fn decompressor_contexts_iter(
         &self,
     ) -> impl Iterator<Item = (&ContextId, &Box<dyn RohcDecompressorContext>)> {

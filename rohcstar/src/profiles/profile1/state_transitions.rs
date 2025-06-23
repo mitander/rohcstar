@@ -19,10 +19,6 @@ pub enum TransitionEvent {
 }
 
 /// Processes state transitions based on current mode and event.
-///
-/// # Returns
-/// - `Some(mode)`: New mode if transition occurred
-/// - `None`: No transition, mode unchanged
 pub fn process_transition(
     current_mode: &mut Profile1DecompressorMode,
     counters: &mut StateCounters,

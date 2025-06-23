@@ -15,44 +15,44 @@ use crate::types::ContextId;
 
 /// Defines the capabilities of a ROHC compressor context.
 pub trait RohcCompressorContext: Send + Sync + Debug {
-    /// Returns the ROHC Profile Identifier this context is configured for.
+    /// ROHC Profile Identifier this context is configured for.
     fn profile_id(&self) -> RohcProfile;
-    /// Returns the Context Identifier (CID) uniquely identifying this compression flow.
+    /// Context Identifier (CID) uniquely identifying this compression flow.
     fn cid(&self) -> ContextId;
-    /// Provides a reference to the context as `&dyn Any` for downcasting.
+    /// Context as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
-    /// Provides a mutable reference to the context as `&mut dyn Any` for downcasting.
+    /// Context as `&mut dyn Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    /// Returns the `Instant` when this context was last successfully accessed.
+    /// Last successful access time.
     fn last_accessed(&self) -> Instant;
-    /// Updates the last accessed time of this context.
+    /// Updates last accessed time.
     fn update_access_time(&mut self, now: Instant);
 }
 
 /// Defines the capabilities of a ROHC decompressor context.
 pub trait RohcDecompressorContext: Send + Sync + Debug {
-    /// Returns the ROHC Profile Identifier this context is configured for.
+    /// ROHC Profile Identifier this context is configured for.
     fn profile_id(&self) -> RohcProfile;
-    /// Returns the Context Identifier (CID) of this decompression flow.
+    /// Context Identifier (CID) of this decompression flow.
     fn cid(&self) -> ContextId;
-    /// Assigns a new Context Identifier (CID) for this context.
+    /// Assigns new Context Identifier (CID).
     fn assign_cid(&mut self, cid: ContextId);
-    /// Provides a reference to the context as `&dyn Any` for downcasting.
+    /// Context as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
-    /// Provides a mutable reference to the context as `&mut dyn Any` for downcasting.
+    /// Context as `&mut dyn Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    /// Returns the `Instant` when this context was last successfully accessed.
+    /// Last successful access time.
     fn last_accessed(&self) -> Instant;
-    /// Updates the last accessed time of this context.
+    /// Updates last accessed time.
     fn update_access_time(&mut self, now: Instant);
 }
 
 /// Defines the interface for a ROHC profile handler.
 pub trait ProfileHandler: Send + Sync + Debug {
-    /// Returns the ROHC Profile Identifier that this handler implements.
+    /// ROHC Profile Identifier this handler implements.
     fn profile_id(&self) -> RohcProfile;
 
-    /// Creates a new, profile-specific compressor context.
+    /// Creates new profile-specific compressor context.
     fn create_compressor_context(
         &self,
         cid: ContextId,
@@ -60,7 +60,7 @@ pub trait ProfileHandler: Send + Sync + Debug {
         creation_time: Instant,
     ) -> Box<dyn RohcCompressorContext>;
 
-    /// Creates a new, profile-specific decompressor context.
+    /// Creates new profile-specific decompressor context.
     fn create_decompressor_context(
         &self,
         cid: ContextId,

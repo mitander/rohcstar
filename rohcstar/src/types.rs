@@ -27,7 +27,7 @@ macro_rules! rohc_newtype {
                 Self(value)
             }
 
-            /// Returns the raw value
+            /// Raw value
             #[inline]
             pub const fn value(self) -> $inner {
                 self.0

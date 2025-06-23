@@ -20,14 +20,9 @@ use crate::time::{Clock, SystemClock};
 use crate::traits::ProfileHandler;
 use crate::types::ContextId;
 
-/// The main ROHC processing engine.
-///
 /// Central orchestrator for ROHC compression and decompression operations.
 ///
-/// The `RohcEngine` manages profile handlers, compression/decompression contexts, and provides
-/// the primary API for processing packets. It supports multiple ROHC profiles through a
-/// pluggable architecture where profile handlers are registered and contexts are managed
-/// automatically.
+/// Manages profile handlers and contexts with automatic cleanup and timeout handling.
 ///
 /// ## Usage
 ///
@@ -59,9 +54,7 @@ pub struct RohcEngine {
 impl RohcEngine {
     /// Creates a new ROHC engine with specified configuration.
     ///
-    /// Initializes an empty engine with no registered profile handlers. Profile handlers
-    /// must be registered separately using [`register_profile_handler`] before the engine
-    /// can compress or decompress packets.
+    /// Profile handlers must be registered separately before processing packets.
     ///
     /// [`register_profile_handler`]: Self::register_profile_handler
     pub fn new(
@@ -100,7 +93,7 @@ impl RohcEngine {
 
     /// Compresses uncompressed headers into ROHC packet.
     ///
-    /// Updates the context's last accessed time on success.
+    /// Creates new context if needed using profile hint. Updates context access time on success.
     ///
     /// # Errors
     /// - `RohcError::Internal` - Context issues or handler missing
@@ -426,17 +419,11 @@ impl RohcEngine {
     }
 
     /// Provides access to the underlying `ContextManager`.
-    ///
-    /// # Returns
-    /// A reference to the internal context manager.
     pub fn context_manager(&self) -> &ContextManager {
         &self.context_manager
     }
 
     /// Provides mutable access to the underlying `ContextManager`.
-    ///
-    /// # Returns
-    /// A mutable reference to the internal context manager.
     pub fn context_manager_mut(&mut self) -> &mut ContextManager {
         &mut self.context_manager
     }

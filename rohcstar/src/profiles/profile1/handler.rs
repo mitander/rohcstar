@@ -43,9 +43,6 @@ pub struct Profile1Handler {
 
 impl Profile1Handler {
     /// Creates a new Profile 1 handler instance.
-    ///
-    /// Initializes the handler with pre-configured CRC calculators for performance
-    /// optimization during packet processing.
     pub fn new() -> Self {
         Profile1Handler {
             crc_calculators: CrcCalculators::new(),
@@ -54,15 +51,12 @@ impl Profile1Handler {
 }
 
 impl ProfileHandler for Profile1Handler {
-    /// Returns the ROHC Profile Identifier for Profile 1.
+    /// ROHC Profile Identifier for Profile 1.
     fn profile_id(&self) -> RohcProfile {
         RohcProfile::RtpUdpIp
     }
 
     /// Creates a new Profile 1 compressor context.
-    ///
-    /// Initializes a context ready for packet compression operations with
-    /// the specified configuration parameters.
     fn create_compressor_context(
         &self,
         cid: ContextId,
@@ -78,9 +72,8 @@ impl ProfileHandler for Profile1Handler {
 
     /// Creates a new Profile 1 decompressor context.
     ///
-    /// Initializes a context ready for packet decompression operations. The context
-    /// begins in NoContext mode and must receive a well-formed and CRC-verified
-    /// IR packet for the decompression flow.
+    /// Context begins in NoContext mode and requires a CRC-verified IR packet
+    /// to establish decompression state.
     fn create_decompressor_context(
         &self,
         cid: ContextId,
@@ -93,9 +86,8 @@ impl ProfileHandler for Profile1Handler {
 
     /// Compresses RTP/UDP/IP headers into ROHC packet.
     ///
-    /// Analyzes the uncompressed headers and context state to determine the optimal
-    /// packet type (IR, UO-0, UO-1, etc.) and generates the corresponding ROHC packet.
-    /// Updates the compressor context state and statistics.
+    /// Selects optimal packet type based on context state and header changes.
+    /// Updates compressor statistics and context state.
     ///
     /// # Errors
     /// - `RohcError::Internal` - Context downcast failed

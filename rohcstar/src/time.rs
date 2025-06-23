@@ -5,7 +5,7 @@ use std::time::Instant;
 
 /// A trait abstracting the concept of "now" to allow for time mocking in tests.
 pub trait Clock: Send + Debug {
-    /// Returns the current `Instant`.
+    /// Current `Instant`.
     fn now(&self) -> Instant;
 }
 
@@ -33,9 +33,6 @@ pub mod mock_clock {
 
     impl MockClock {
         /// Creates a new `MockClock` starting at the given `start_time`.
-        ///
-        /// # Returns
-        /// A new `MockClock` instance initialized with the specified start time.
         pub fn new(start_time: Instant) -> Self {
             Self {
                 current_time: Mutex::new(start_time),

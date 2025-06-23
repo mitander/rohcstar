@@ -124,19 +124,14 @@ impl Default for RtpUdpIpv4Headers {
 
 impl RtpUdpIpv4Headers {
     /// Validates that the CSRC count matches the length of the CSRC list and max count.
-    ///
-    /// # Returns
-    /// `true` if CSRC count is valid, `false` otherwise.
     pub fn is_csrc_count_valid(&self) -> bool {
         self.rtp_csrc_count as usize == self.rtp_csrc_list.len()
             && self.rtp_csrc_count <= RTP_MAX_CSRC_COUNT
     }
 
     /// Sets the IP Identification field for these headers.
-    /// Primarily a test helper.
     ///
-    /// # Returns
-    /// Headers with the specified IP identification value.
+    /// Primarily a test helper.
     pub fn with_ip_id(mut self, ip_id: IpId) -> Self {
         self.ip_identification = ip_id;
         self

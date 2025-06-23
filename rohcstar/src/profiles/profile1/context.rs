@@ -225,12 +225,9 @@ impl Profile1CompressorContext {
         self.debug_validate_invariants();
     }
 
-    /// Returns the small CID value for this context, if applicable.
+    /// Small CID value for this context, if applicable.
     ///
     /// Small CIDs are in the range 1-15 and can be embedded directly in certain packet types.
-    ///
-    /// # Returns
-    /// The CID as a `u8` if it qualifies as a small CID, otherwise `None`.
     pub fn get_small_cid_for_packet(&self) -> Option<ContextId> {
         if self.cid > 0 && self.cid <= 15 {
             Some(self.cid)

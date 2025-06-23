@@ -21,13 +21,8 @@ use super::super::packet_types::IrPacket;
 /// the required size and CRC. It handles the optional Add-CID octet for small CIDs
 /// and the optional TS_STRIDE extension within the dynamic chain.
 ///
-/// # Parameters
-/// - `ir_data`: A reference to `IrPacket` containing all necessary field values.
-/// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 computation.
-/// - `out`: Output buffer to write the serialized packet into.
-///
-/// # Returns
-/// The number of bytes written to the output buffer.
+/// # Errors
+/// - `RohcError::Building` - Serialization failed due to invalid packet data
 ///
 /// # Errors
 /// - [`RohcBuildingError::BufferTooSmall`] - Output buffer is insufficient.
@@ -114,14 +109,6 @@ pub fn serialize_ir(
 /// This function validates the packet's CRC-8 checksum before attempting to
 /// deserialize the static and dynamic chains. It assumes the Add-CID octet,
 /// if present, has already been processed by the caller.
-///
-/// # Parameters
-/// - `core_packet_bytes`: Byte slice of the core IR packet (without Add-CID octet).
-/// - `cid_from_engine`: The Context ID determined by the ROHC engine.
-/// - `crc_calculators`: An instance of `CrcCalculators` for CRC-8 verification.
-///
-/// # Returns
-/// An `IrPacket` structure containing all deserialized header fields.
 ///
 /// # Errors
 /// - [`RohcParsingError::NotEnoughData`] - The packet is too small for its claimed content.

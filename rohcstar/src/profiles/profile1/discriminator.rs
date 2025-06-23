@@ -37,9 +37,6 @@ impl Profile1PacketType {
     /// This function assumes the input `byte` is the first byte of the ROHC packet
     /// *after* any Add-CID octet processing has been handled by the ROHC engine.
     /// The order of checks is important to correctly discriminate between UO-1 variants.
-    ///
-    ///
-    /// Returns the corresponding `Profile1PacketType` based on the packet discriminator.
     pub fn from_first_byte(byte: u8) -> Self {
         // Check for IR / IR-DYN packets (Type: 1111110D)
         if (byte & !P1_ROHC_IR_PACKET_TYPE_D_BIT_MASK) == P1_ROHC_IR_PACKET_TYPE_BASE {
@@ -75,10 +72,7 @@ impl Profile1PacketType {
         }
     }
 
-    /// Returns `true` if the packet type is `IrStatic` or `IrDynamic`.
-    ///
-    /// # Returns
-    /// `true` for IR packet types, `false` otherwise.
+    /// Checks if the packet type is `IrStatic` or `IrDynamic`.
     pub fn is_ir(&self) -> bool {
         matches!(
             self,
@@ -86,18 +80,12 @@ impl Profile1PacketType {
         )
     }
 
-    /// Returns `true` if the packet type is `Uo0`.
-    ///
-    /// # Returns
-    /// `true` for UO-0 packet type, `false` otherwise.
+    /// Checks if the packet type is `Uo0`.
     pub fn is_uo0(&self) -> bool {
         matches!(self, Profile1PacketType::Uo0)
     }
 
-    /// Returns `true` if the packet type is any UO-1 variant.
-    ///
-    /// # Returns
-    /// `true` for any UO-1 packet type variant, `false` otherwise.
+    /// Checks if the packet type is any UO-1 variant.
     pub fn is_uo1(&self) -> bool {
         matches!(
             self,
@@ -109,9 +97,6 @@ impl Profile1PacketType {
     }
 
     /// Identifies packets that normally update the dynamic part of the ROHC context.
-    ///
-    /// # Returns
-    /// `true` if the packet type is considered a dynamic updater, `false` otherwise.
     pub fn is_dynamic_updating(&self) -> bool {
         match self {
             Profile1PacketType::IrDynamic

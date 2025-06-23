@@ -159,13 +159,6 @@ pub(super) fn reconstruct_headers_from_context(
 ///
 /// Uses the established or potential TS stride to calculate the timestamp based
 /// on sequence number advancement when TS is not explicitly carried.
-///
-/// # Parameters
-/// - `context`: Decompressor context with stride information
-/// - `decoded_sn`: Decoded sequence number for timestamp calculation
-///
-/// # Returns
-/// Reconstructed RTP timestamp value.
 pub(super) fn calculate_reconstructed_ts_implicit(
     context: &Profile1DecompressorContext,
     decoded_sn: SequenceNumber,
@@ -193,12 +186,6 @@ pub(super) fn calculate_reconstructed_ts_implicit(
 ///
 /// Specialized version for packet types where the sequence number is always
 /// last_reconstructed_sn + 1 (e.g., UO-1-ID, UO-1-RTP packets).
-///
-/// # Parameters
-/// - `context`: Decompressor context with stride information
-///
-/// # Returns
-/// Reconstructed RTP timestamp value.
 pub(super) fn calculate_reconstructed_ts_implicit_sn_plus_one(
     context: &Profile1DecompressorContext,
 ) -> Timestamp {

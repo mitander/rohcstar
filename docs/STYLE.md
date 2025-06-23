@@ -147,32 +147,65 @@ fn calculate_k_value(v_ref: u16, v: u16) -> u8
 
 **Documentation Pattern:**
 
-- **Purpose-focused descriptions**: "Compresses headers" not "Returns compressed data"
-- **Document returns only when non-obvious**:
+Focus on behavior and purpose, not restating signatures:
 
-  ```rust
-  /// Returns `None` if stride is not established or result exceeds 8 bits.
-  fn calculate_ts_scaled(&self, ts: u32) -> Option<u8>
+```rust
+// GOOD - explains behavior and context
+/// Compresses RTP/UDP/IP headers into ROHC packet.
+///
+/// Selects optimal packet type based on context state and header changes.
+/// Updates compressor statistics and context state.
+///
+/// # Errors
+/// - `RohcError::ContextNotFound` - No context for CID
+/// - `RohcError::Building` - Packet construction failed
+fn compress(&mut self, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
 
-  /// Returns a slice valid until the next compression operation.
-  fn get_buffer(&mut self) -> &[u8]
-  ```
+// BAD - verbose and redundant
+/// Compresses the provided headers into a ROHC packet.
+///
+/// # Parameters
+/// - `headers`: The headers to compress
+/// - `out`: Output buffer for compressed packet
+///
+/// # Returns
+/// Returns the size of the compressed packet on success, or RohcError on failure.
+fn compress(&mut self, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
+```
 
-- **Skip return docs when obvious**:
+**Return Documentation Rules:**
 
-  ```rust
-  // GOOD - signature tells the story
-  /// Creates a new ROHC engine.
-  fn new() -> RohcEngine
+Only document returns when non-obvious from name + signature:
 
-  // BAD - redundant with signature
-  /// Returns a new ROHC engine.
-  fn new() -> RohcEngine
-  ```
+```rust
+// GOOD - unclear behavior needs explanation
+/// Returns `None` if stride not established or result exceeds 8 bits.
+fn calculate_ts_scaled(&self, ts: u32) -> Option<u8>
 
-- `# Errors` section with specific error variants
-- `# Examples` section showing typical usage
-- No `# Parameters` - good parameter names and types are self-documenting
+/// Returns slice valid until next compression operation.
+fn get_buffer(&mut self) -> &[u8]
+
+/// Returns previous value.
+fn replace(&mut self, value: T) -> T
+
+// BAD - obvious from signature
+/// Returns the length.
+fn len(&self) -> usize
+
+/// Returns true if empty.
+fn is_empty(&self) -> bool
+
+/// Returns a new engine.
+fn new() -> Engine
+```
+
+**Structure:**
+
+- Brief purpose (required)
+- Behavior details (if complex)
+- `# Errors` (for fallible functions)
+- `# Examples` (for public APIs)
+- **Never** `# Parameters` - names and types are self-documenting
 
 ### Inline Comments
 

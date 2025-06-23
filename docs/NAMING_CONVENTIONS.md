@@ -141,46 +141,65 @@ mod state_machine;    // Not states or state_mgmt
 
 ## Documentation
 
-**Purpose-focused descriptions** - Describe what the function does, not what it returns:
+**Focus on behavior and purpose**, not restating signatures:
 
 ```rust
-// GOOD - describes purpose
+// GOOD - explains behavior and context
 /// Compresses RTP/UDP/IP headers into ROHC packet.
-fn compress(&mut self, headers: &Headers) -> Result<&[u8], RohcError>
+///
+/// Selects optimal packet type based on context state and header changes.
+/// Updates compressor statistics and context state.
+///
+/// # Errors
+/// - `RohcError::ContextNotFound` - No context for CID
+/// - `RohcError::Building` - Packet construction failed
+fn compress(&mut self, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
 
-/// Creates a new ROHC engine with specified configuration.
-fn new(config: Config) -> RohcEngine
-
-// BAD - restates signature
-/// Returns compressed packet data.
-/// Returns a new ROHC engine.
+// BAD - verbose and redundant
+/// Compresses the provided headers into a ROHC packet.
+///
+/// # Parameters
+/// - `headers`: The headers to compress
+/// - `out`: Output buffer for compressed packet
+///
+/// # Returns
+/// Returns the size of the compressed packet on success, or RohcError on failure.
+fn compress(&mut self, headers: &Headers, out: &mut [u8]) -> Result<usize, RohcError>
 ```
 
-**Document returns only when non-obvious:**
+**Return Documentation Rules:**
+
+Only document returns when non-obvious from name + signature:
 
 ```rust
-// GOOD - return semantics aren't clear from signature
-/// Returns `None` if stride is not established or result exceeds 8 bits.
+// GOOD - unclear behavior needs explanation
+/// Returns `None` if stride not established or result exceeds 8 bits.
 fn calculate_ts_scaled(&self, ts: u32) -> Option<u8>
 
-/// Returns a slice valid until the next compression operation.
+/// Returns slice valid until next compression operation.
 fn get_buffer(&mut self) -> &[u8]
 
-/// Returns the previous value.
-fn replace(&mut self, new_value: T) -> T
+/// Returns previous value.
+fn replace(&mut self, value: T) -> T
 
-// BAD - obvious from signature + name
+// BAD - obvious from signature
 /// Returns the length.
 fn len(&self) -> usize
+
+/// Returns true if empty.
+fn is_empty(&self) -> bool
+
+/// Returns a new engine.
+fn new() -> Engine
 ```
 
-**Standard pattern:**
+**Standard Structure:**
 
-- Brief purpose statement (required)
-- Longer explanation if behavior is complex (optional)
-- `# Errors` section for fallible functions (required)
-- `# Examples` section for public APIs (encouraged)
-- No `# Parameters` - good names and types are self-documenting
+- Brief purpose (required)
+- Behavior details (if complex)
+- `# Errors` (for fallible functions)
+- `# Examples` (for public APIs)
+- **Never** `# Parameters` - names and types are self-documenting
 
 ## Error Types
 

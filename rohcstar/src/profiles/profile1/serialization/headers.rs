@@ -70,12 +70,8 @@ struct ParsedUdpHeader<'a> {
 ///
 /// This function acts as an orchestrator for the individual layer parsers.
 ///
-/// # Parameters
-/// - `data`: Raw packet bytes containing IPv4, UDP, and RTP headers
-///
-/// # Returns
-/// - `Ok(RtpUdpIpv4Headers)`: Parsed header structure with all extracted fields
-/// - `Err(RohcParsingError)`: Invalid packet format or insufficient data
+/// # Errors
+/// - `RohcParsingError` - Invalid packet format or insufficient data
 pub fn deserialize_rtp_udp_ipv4_headers(
     data: &[u8],
 ) -> Result<RtpUdpIpv4Headers, RohcParsingError> {

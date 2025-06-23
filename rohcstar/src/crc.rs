@@ -29,9 +29,6 @@ impl fmt::Debug for CrcCalculators {
 
 impl CrcCalculators {
     /// Creates a new `CrcCalculators` instance, initializing the ROHC CRC-3 and CRC-8 algorithms.
-    ///
-    /// # Returns
-    /// A new `CrcCalculators` instance with pre-initialized CRC algorithm instances.
     pub fn new() -> Self {
         Self {
             crc3_calculator: Crc::<u8>::new(&CRC_3_ROHC),
@@ -53,16 +50,16 @@ impl CrcCalculators {
 }
 
 impl Default for CrcCalculators {
-    /// Creates a default `CrcCalculators` instance.
+    /// Creates default `CrcCalculators` instance.
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Calculates the ROHC 8-bit CRC (CRC-8/ROHC) directly.
+/// Calculates ROHC 8-bit CRC directly.
 ///
-/// This function creates a new `Crc<u8>` instance on each call. For frequent calculations
-/// within a single context (like Profile1Handler), using `CrcCalculators` is preferred.
+/// Creates a new `Crc<u8>` instance on each call - prefer using `CrcCalculators`
+/// for performance when calculating multiple CRCs.
 ///
 /// The ROHC CRC-8 parameters are:
 /// - Polynomial: `0x07` (equivalent to `x^8 + x^2 + x^1 + 1`)
@@ -70,15 +67,12 @@ impl Default for CrcCalculators {
 /// - Reflect Input: `false`
 /// - Reflect Output: `false`
 /// - XOR Output: `0x00`
-///
-/// Creates a new `Crc<u8>` instance on each call - prefer using `CrcCalculators`
-/// for performance when calculating multiple CRCs.
 pub fn calculate_rohc_crc8(input: &[u8]) -> u8 {
     let crc_calc: Crc<u8> = Crc::<u8>::new(&CRC_8_ROHC);
     crc_calc.checksum(input)
 }
 
-/// Calculates ROHC 3-bit CRC for packet integrity verification.
+/// Calculates ROHC 3-bit CRC directly.
 ///
 /// Creates a new `Crc<u8>` instance on each call - prefer using `CrcCalculators`
 /// for performance when calculating multiple CRCs.
